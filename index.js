@@ -10,6 +10,9 @@ import { query } from "./db/pool.js";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe.js";
 
 const app = express();
+// Render (and most PaaS hosts) terminates TLS and proxies requests
+// through their own edge — exactly one hop.
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "200kb" }));
 app.use(cookieParser());
 
