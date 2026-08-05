@@ -8,7 +8,7 @@ import { adminRouter } from "./admin/routes.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { query } from "./db/pool.js";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe.js";
-
+import { hashPassword } from "./admin/auth.js";
 const app = express();
 // Render (and most PaaS hosts) terminates TLS and proxies requests
 // through their own edge — exactly one hop.
@@ -265,6 +265,32 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
 });
 
 app.use("/admin", adminRouter);
+app.post("/api/setup/create-first-admin", async (req, res) => {
+  try {
+    const setupToken = process.env.SETUP_TOKEN;
+    if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
+    const { token, name, email, password } = req.body || {};
+    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    const { rows: existing } = await query(`SELECT count(*)::int AS n FROM admin_users`);
+    if (existing[0].n > 0) return res.status(409).json({ error: "admin_already_exists" });
+    if (!name?.trim() || !email?.trim() || !password) {
+      return res.status(400).json({ error: "name_email_password_required" });
+    }
+    if (password.length < 15) {
+      return res.status(400).json({ error: "password_must_be_at_least_15_chars" });
+    }
+    const passwordHash = await hashPassword(password);
+    const { rows } = await query(
+      `INSERT INTO admin_users (name, email, password_hash, role) VALUES ($1, $2, $3, 'owner')
+       RETURNING id, name, email, role`,
+      [name.trim(), email.trim().toLowerCase(), passwordHash]
+    );
+    res.status(201).json({ ok: true, admin: rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
 app.use("/api/payments", paymentsRouter);
 
 const PORT = process.env.PORT || 3001;
