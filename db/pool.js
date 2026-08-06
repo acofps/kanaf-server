@@ -2,10 +2,28 @@ import pg from "pg";
 
 const { Pool } = pg;
 
+// Real-world back-and-forth found during actual deployment: the DB
+// host's pg_hba.conf first rejected connections with "SSL off"
+// (implying SSL was required), then after enabling SSL client-side,
+// the server rejected the handshake with "the server does not
+// support SSL connections" — meaning the pg_hba.conf rule demands
+// something the Postgres server itself isn't configured to do.
+// That's a server-side misconfiguration to fix on their end, but we
+// don't want a new code deploy every time this setting might change
+// on their side — so it's a direct, explicit env var instead of
+// automatic host-based detection.
+//
+// Set DB_SSL=true on the host once SSL is actually enabled and its
+// pg_hba.conf rule is satisfiable; leave it unset/false until then.
+const connectionString = process.env.DATABASE_URL;
+const sslMode = (process.env.DB_SSL || "false").toLowerCase();
+const ssl = sslMode === "true" ? { rejectUnauthorized: false } : false;
+
 // A single shared connection pool. Import { pool } from this file
 // anywhere you need to run a query — never create a second Pool.
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
+  ssl,
   // Reasonable defaults for a small VPS; raise max if you outgrow it.
   max: 10,
   idleTimeoutMillis: 30000,
