@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 import Anthropic from "@anthropic-ai/sdk";
+import nodemailer from "nodemailer";
 import { adminRouter } from "./admin/routes.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { query } from "./db/pool.js";
@@ -167,23 +168,33 @@ app.post("/api/plan", async (req, res) => {
 --------------------------------------------------------- */
 const verificationCodes = new Map(); // email -> { code, expiresAt }
 
+// Sends real mail through the user's own cPanel-hosted mailbox via
+// SMTP, instead of a third-party transactional email service — they
+// already pay for this email hosting as part of their plan.
+// Requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS to be set;
+// falls back to a console log in local dev when they're not.
+let smtpTransporter = null;
+function getSmtpTransporter() {
+  if (smtpTransporter) return smtpTransporter;
+  smtpTransporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: Number(process.env.SMTP_PORT || 465) === 465, // true for port 465 (implicit TLS), false for 587 (STARTTLS)
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+  return smtpTransporter;
+}
+
 async function sendEmail(to, subject, text) {
-  if (!process.env.RESEND_API_KEY) {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
     console.log(`[dev] Would send email to ${to}: ${subject}\n${text}`);
     return;
   }
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: process.env.EMAIL_FROM || "Kanaf <noreply@example.com>",
-      to,
-      subject,
-      text,
-    }),
+  await getSmtpTransporter().sendMail({
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    text,
   });
 }
 
