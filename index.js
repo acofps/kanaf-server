@@ -8,8 +8,20 @@ import { adminRouter } from "./admin/routes.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { query } from "./db/pool.js";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe.js";
+import { hashPassword } from "./admin/auth.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+// Render (and most PaaS hosts) terminates TLS and proxies requests
+// through their own edge — exactly one hop. Trusting that specific
+// hop (not an arbitrary number) lets express-rate-limit correctly
+// read the real client IP from X-Forwarded-For instead of either
+// rate-limiting everyone as a single client, or trusting a
+// spoofable header from an untrusted number of hops.
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "200kb" }));
 app.use(cookieParser());
 
@@ -262,7 +274,69 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
 });
 
 app.use("/admin", adminRouter);
+
+/* ---------------------------------------------------------
+   One-time bootstrap: create the first owner admin account.
+   Exists because this deployment has no SSH/Shell access to run
+   db/seed_first_admin.js directly. Protected by two independent
+   safeguards: a secret token (SETUP_TOKEN env var) AND a check that
+   admin_users is completely empty — so even if the token ever leaks
+   after setup, this can never create a second admin account or be
+   used as a backdoor. Safe to leave the code in place permanently;
+   once one admin exists, every call is rejected regardless of token.
+--------------------------------------------------------- */
+app.post("/api/setup/create-first-admin", async (req, res) => {
+  try {
+    const setupToken = process.env.SETUP_TOKEN;
+    if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
+
+    const { token, name, email, password } = req.body || {};
+    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+
+    const { rows: existing } = await query(`SELECT count(*)::int AS n FROM admin_users`);
+    if (existing[0].n > 0) return res.status(409).json({ error: "admin_already_exists" });
+
+    if (!name?.trim() || !email?.trim() || !password) {
+      return res.status(400).json({ error: "name_email_password_required" });
+    }
+    if (password.length < 15) {
+      return res.status(400).json({ error: "password_must_be_at_least_15_chars" });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const { rows } = await query(
+      `INSERT INTO admin_users (name, email, password_hash, role) VALUES ($1, $2, $3, 'owner')
+       RETURNING id, name, email, role`,
+      [name.trim(), email.trim().toLowerCase(), passwordHash]
+    );
+    res.status(201).json({ ok: true, admin: rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
 app.use("/api/payments", paymentsRouter);
+
+/* ---------------------------------------------------------
+   Admin UI — served from this same origin, on purpose.
+   The admin panel's cookies use SameSite=Strict (see admin/auth.js),
+   which browsers never send on cross-site requests, no matter how
+   the CORS/domain config is tuned on either side. Hosting the admin
+   frontend on a different domain (e.g. a separate admin.yourdomain
+   on different infrastructure) than this API is what breaks login —
+   confirmed by testing during actual deployment. Serving the built
+   admin UI directly from this same Express app makes every request
+   genuinely same-origin, which is the only configuration where
+   SameSite=Strict cookies work with no further changes needed.
+--------------------------------------------------------- */
+const adminUiPath = path.join(__dirname, "admin-ui");
+app.use(express.static(adminUiPath));
+// SPA catch-all: any GET that isn't an API route falls through to
+// index.html so client-side routing (React state, not real URLs)
+// still works correctly on a hard refresh or direct link.
+app.get(/^(?!\/admin|\/api).*/, (req, res) => {
+  res.sendFile(path.join(adminUiPath, "index.html"));
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Kanaf backend running on port ${PORT}`));
