@@ -3,6 +3,7 @@ import { query, withTransaction } from "../db/pool.js";
 import { createInvoice, fetchInvoice, isGenuineWebhook } from "./moyasar.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { processRefund } from "./refund.js";
+import { requireUserAuth, requireVerifiedUser } from "../auth/middleware.js";
 
 export const paymentsRouter = express.Router();
 
@@ -42,21 +43,25 @@ paymentsRouter.get("/plans", async (req, res) => {
 });
 
 /**
- * POST /api/payments/create-invoice  { userId, planId }
+ * POST /api/payments/create-invoice  { planId }
  *
- * HONEST GAP: this trusts a client-supplied userId because marsa-server
- * has no real consumer authentication yet (registration/login are
- * still simulated client-side in the consumer app — see engineering
- * audit finding F2/F3). Anyone could currently claim any userId here.
- * DO NOT deploy this endpoint publicly until real consumer auth
- * exists; wire requireConsumerAuth-style middleware here first, the
- * same way admin/middleware.js gates the admin API.
+ * The gap this comment used to describe is now closed. userId came
+ * from the request body, unverified, which meant anyone could bill
+ * against any account id they cared to type. It now comes from
+ * req.userId, set by requireVerifiedUser after validating the Bearer
+ * token — the client no longer asserts who it is.
+ *
+ * requireVerifiedUser (not the lighter requireUserAuth) because this
+ * route spends money: it re-checks that the account still exists,
+ * isn't soft-deleted, and has a verified address, rather than
+ * trusting a JWT that may be up to 15 minutes stale.
  */
-paymentsRouter.post("/create-invoice", async (req, res) => {
+paymentsRouter.post("/create-invoice", requireVerifiedUser, async (req, res) => {
   try {
-    const { userId, planId } = req.body || {};
+    const { planId } = req.body || {};
+    const userId = req.userId;
     const plan = await getActivePlan(planId);
-    if (!userId || !plan) return res.status(400).json({ error: "userId_and_valid_planId_required" });
+    if (!plan) return res.status(400).json({ error: "valid_planId_required" });
 
     const invoiceId = await withTransaction(async (client) => {
       // Create our own pending row first so we have something to
@@ -96,9 +101,18 @@ paymentsRouter.post("/create-invoice", async (req, res) => {
  * browser redirect can be replayed or hit manually by a user without
  * ever actually paying.
  */
-paymentsRouter.get("/status/:invoiceId", async (req, res) => {
+paymentsRouter.get("/status/:invoiceId", requireUserAuth, async (req, res) => {
   try {
-    const { rows } = await query(`SELECT id, status, amount_sar FROM invoices WHERE id = $1`, [req.params.invoiceId]);
+    // Scoped to the owner now that ownership is knowable. Previously
+    // any invoice's status and amount were readable by id alone —
+    // survivable only because the ids are unguessable UUIDs, which is
+    // obscurity rather than access control. Same 404 for "no such
+    // invoice" and "not yours", so this can't be used to probe which
+    // ids exist.
+    const { rows } = await query(
+      `SELECT id, status, amount_sar FROM invoices WHERE id = $1 AND user_id = $2`,
+      [req.params.invoiceId, req.userId]
+    );
     if (!rows[0]) return res.status(404).json({ error: "not_found" });
     res.json(rows[0]);
   } catch (err) {

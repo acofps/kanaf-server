@@ -4,10 +4,12 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 import Anthropic from "@anthropic-ai/sdk";
-import nodemailer from "nodemailer";
 import { adminRouter } from "./admin/routes.js";
 import { paymentsRouter } from "./payments/routes.js";
+import { authRouter } from "./auth/routes.js";
+import { sendEmail, verifySmtpConnection } from "./mail/send.js";
 import { query } from "./db/pool.js";
+import { runMigrations, migrationStatus } from "./db/migrate.js";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe.js";
 import { hashPassword } from "./admin/auth.js";
 import path from "path";
@@ -161,67 +163,22 @@ app.post("/api/plan", async (req, res) => {
 });
 
 /* ---------------------------------------------------------
-   Email verification codes (in-memory demo store).
-   For real production, swap the Map for Redis or a DB table
-   with an expiry column, especially if you run more than one
-   server process.
+   Consumer authentication — registration, email verification, login.
+
+   Replaces the old /api/send-code and /api/verify-code pair, which
+   are GONE. They stored codes in a process-local Map (wiped on every
+   redeploy, invisible to a second instance), generated them with
+   Math.random, had no attempt limit, and — the core problem — never
+   wrote a users row or issued a session. Nothing downstream could
+   prove a verification had happened, and the admin panel's user list
+   stayed empty because no INSERT INTO users existed anywhere.
+
+   The consumer app must be updated to call /api/auth/* instead. The
+   old paths are not aliased on purpose: silently redirecting them
+   would leave the app appearing to work while sessions behaved
+   differently.
 --------------------------------------------------------- */
-const verificationCodes = new Map(); // email -> { code, expiresAt }
-
-// Sends real mail through the user's own cPanel-hosted mailbox via
-// SMTP, instead of a third-party transactional email service — they
-// already pay for this email hosting as part of their plan.
-// Requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS to be set;
-// falls back to a console log in local dev when they're not.
-let smtpTransporter = null;
-function getSmtpTransporter() {
-  if (smtpTransporter) return smtpTransporter;
-  smtpTransporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: Number(process.env.SMTP_PORT || 465) === 465, // true for port 465 (implicit TLS), false for 587 (STARTTLS)
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-  return smtpTransporter;
-}
-
-async function sendEmail(to, subject, text) {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.log(`[dev] Would send email to ${to}: ${subject}\n${text}`);
-    return;
-  }
-  await getSmtpTransporter().sendMail({
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
-    to,
-    subject,
-    text,
-  });
-}
-
-app.post("/api/send-code", async (req, res) => {
-  try {
-    const { email } = req.body || {};
-    if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email is required" });
-
-    const code = String(Math.floor(1000 + Math.random() * 9000));
-    verificationCodes.set(email, { code, expiresAt: Date.now() + 10 * 60 * 1000 });
-
-    await sendEmail(email, "كود التحقق — Kanaf", `كود التحقق الخاص بك هو: ${code}\nصالح لمدة 10 دقائق.`);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
-
-app.post("/api/verify-code", (req, res) => {
-  const { email, code } = req.body || {};
-  const entry = verificationCodes.get(email);
-  if (!entry || entry.expiresAt < Date.now()) return res.json({ verified: false, reason: "expired_or_missing" });
-  const ok = entry.code === code;
-  if (ok) verificationCodes.delete(email);
-  res.json({ verified: ok });
-});
+app.use("/api/auth", authRouter);
 
 /* ---------------------------------------------------------
    POST /api/contact  { name, email, message }
@@ -326,6 +283,47 @@ app.post("/api/setup/create-first-admin", async (req, res) => {
     res.status(500).json({ error: "internal_error" });
   }
 });
+/* ---------------------------------------------------------
+   Schema migrations over HTTP — same reasoning, and the same two
+   safeguards, as create-first-admin above: this deployment has no
+   shell access, and cPanel provides no PostgreSQL SQL console
+   (phpMyAdmin is MySQL only).
+
+   Gated by SETUP_TOKEN. It is not a SQL executor — it can only apply
+   .sql files already committed to db/migrations/, in order, once
+   each. Re-running it after everything is applied is a no-op, so it's
+   safe to leave in place.
+--------------------------------------------------------- */
+app.get("/api/setup/migration-status", async (req, res) => {
+  try {
+    const setupToken = process.env.SETUP_TOKEN;
+    if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
+    if (req.query.token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+
+    res.json({ migrations: await migrationStatus() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "internal_error", detail: err.message });
+  }
+});
+
+app.post("/api/setup/run-migrations", async (req, res) => {
+  try {
+    const setupToken = process.env.SETUP_TOKEN;
+    if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
+
+    const { token } = req.body || {};
+    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+
+    const results = await runMigrations();
+    const failed = results.find((r) => r.status === "failed");
+    res.status(failed ? 500 : 200).json({ ok: !failed, results });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "internal_error", detail: err.message });
+  }
+});
+
 app.use("/api/payments", paymentsRouter);
 
 /* ---------------------------------------------------------
@@ -350,4 +348,10 @@ app.get(/^(?!\/admin|\/api).*/, (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Kanaf backend running on port ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`Kanaf backend running on port ${PORT}`);
+  // Surfaces a broken mail config in the deploy logs rather than on a
+  // real user's first signup. Never blocks startup — the rest of the
+  // API is still useful if mail is down.
+  await verifySmtpConnection();
+});
