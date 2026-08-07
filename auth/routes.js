@@ -267,8 +267,7 @@ authRouter.post("/verify-email", async (req, res) => {
 
     const { rows } = await query(
       `UPDATE users
-       SET email_verified_at = COALESCE(email_verified_at, now()),
-           failed_login_count = 0, locked_until = NULL, updated_at = now()
+       SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
        WHERE LOWER(email) = $1 AND deleted_at IS NULL
        RETURNING id, name, email, email_verified_at, confirmed_adult, reminders_on, dark_mode, created_at`,
       [cleanEmail]
@@ -280,6 +279,16 @@ authRouter.post("/verify-email", async (req, res) => {
       // between issuing and verifying.
       return res.status(404).json({ error: "account_not_found" });
     }
+
+    // Lockout state lives in its own table now, so clearing it is a
+    // second statement. Only touch an existing row — there's no
+    // reason to create one just to record zeros.
+    await query(
+      `UPDATE user_auth_state
+       SET failed_login_count = 0, locked_until = NULL, updated_at = now()
+       WHERE user_id = $1`,
+      [user.id]
+    );
 
     const session = await issueSession(user, req);
     res.json({ ok: true, user: publicUser(user), ...session });
@@ -341,10 +350,17 @@ authRouter.post("/login", async (req, res) => {
       return res.status(400).json({ error: "email_and_password_required" });
     }
 
+    // LEFT JOIN, and COALESCE the counter: user_auth_state rows are
+    // created lazily on the first failed attempt, so a missing row is
+    // the normal case and means "clean slate", not an error.
     const { rows } = await query(
-      `SELECT id, name, email, password_hash, email_verified_at, confirmed_adult,
-              reminders_on, dark_mode, created_at, failed_login_count, locked_until
-       FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL`,
+      `SELECT u.id, u.name, u.email, u.password_hash, u.email_verified_at, u.confirmed_adult,
+              u.reminders_on, u.dark_mode, u.created_at,
+              COALESCE(s.failed_login_count, 0) AS failed_login_count,
+              s.locked_until
+       FROM users u
+       LEFT JOIN user_auth_state s ON s.user_id = u.id
+       WHERE LOWER(u.email) = $1 AND u.deleted_at IS NULL`,
       [cleanEmail]
     );
     const user = rows[0];
@@ -365,8 +381,13 @@ authRouter.post("/login", async (req, res) => {
           ? new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000).toISOString()
           : null;
         await query(
-          `UPDATE users SET failed_login_count = $1, locked_until = COALESCE($2, locked_until) WHERE id = $3`,
-          [next, lock, user.id]
+          `INSERT INTO user_auth_state (user_id, failed_login_count, locked_until)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (user_id) DO UPDATE
+             SET failed_login_count = EXCLUDED.failed_login_count,
+                 locked_until = COALESCE(EXCLUDED.locked_until, user_auth_state.locked_until),
+                 updated_at = now()`,
+          [user.id, next, lock]
         );
       }
       return res.status(401).json({ error: "invalid_credentials" });
@@ -380,7 +401,10 @@ authRouter.post("/login", async (req, res) => {
     }
 
     await query(
-      `UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = now() WHERE id = $1`,
+      `INSERT INTO user_auth_state (user_id, failed_login_count, locked_until, last_login_at)
+       VALUES ($1, 0, NULL, now())
+       ON CONFLICT (user_id) DO UPDATE
+         SET failed_login_count = 0, locked_until = NULL, last_login_at = now(), updated_at = now()`,
       [user.id]
     );
 
@@ -522,7 +546,7 @@ authRouter.post("/reset-password", async (req, res) => {
     const passwordHash = await hashPassword(req.body.newPassword);
     const { rows } = await query(
       `UPDATE users
-       SET password_hash = $1, failed_login_count = 0, locked_until = NULL, updated_at = now()
+       SET password_hash = $1, updated_at = now()
        WHERE LOWER(email) = $2 AND deleted_at IS NULL AND email_verified_at IS NOT NULL
        RETURNING id, name, email, email_verified_at, confirmed_adult, reminders_on, dark_mode, created_at`,
       [passwordHash, cleanEmail]
@@ -530,6 +554,16 @@ authRouter.post("/reset-password", async (req, res) => {
 
     const user = rows[0];
     if (!user) return res.status(404).json({ error: "account_not_found" });
+
+    // Clearing the lockout here is what lets someone who forgot their
+    // password and tripped the 8-attempt lock recover immediately,
+    // instead of the lock turning into a punishment for forgetting.
+    await query(
+      `UPDATE user_auth_state
+       SET failed_login_count = 0, locked_until = NULL, updated_at = now()
+       WHERE user_id = $1`,
+      [user.id]
+    );
 
     await revokeAllUserSessions(user.id);
 
