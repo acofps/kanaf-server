@@ -357,7 +357,7 @@ authRouter.post("/login", async (req, res) => {
       `SELECT u.id, u.name, u.email, u.password_hash, u.email_verified_at, u.confirmed_adult,
               u.reminders_on, u.dark_mode, u.created_at,
               COALESCE(s.failed_login_count, 0) AS failed_login_count,
-              s.locked_until
+              s.locked_until, s.suspended_at
        FROM users u
        LEFT JOIN user_auth_state s ON s.user_id = u.id
        WHERE LOWER(u.email) = $1 AND u.deleted_at IS NULL`,
@@ -400,6 +400,13 @@ authRouter.post("/login", async (req, res) => {
       return res.status(403).json({ error: "email_not_verified", next: "verify" });
     }
 
+    // Checked AFTER the password, on purpose. Answering
+    // "account_suspended" before verifying credentials would let
+    // anyone probe which addresses have been suspended.
+    if (user.suspended_at) {
+      return res.status(403).json({ error: "account_suspended" });
+    }
+
     await query(
       `INSERT INTO user_auth_state (user_id, failed_login_count, locked_until, last_login_at)
        VALUES ($1, 0, NULL, now())
@@ -426,12 +433,19 @@ authRouter.post("/refresh", async (req, res) => {
     if (!rotated) return res.status(401).json({ error: "invalid_refresh_token" });
 
     const { rows } = await query(
-      `SELECT id, name, email, email_verified_at, confirmed_adult, reminders_on, dark_mode, created_at
-       FROM users WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT u.id, u.name, u.email, u.email_verified_at, u.confirmed_adult,
+              u.reminders_on, u.dark_mode, u.created_at, s.suspended_at
+       FROM users u
+       LEFT JOIN user_auth_state s ON s.user_id = u.id
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
       [rotated.userId]
     );
     const user = rows[0];
     if (!user) return res.status(401).json({ error: "account_not_found" });
+    // Suspension must close this door as well. Refresh tokens live 30
+    // days, so a suspended account could otherwise keep minting fresh
+    // access tokens for a month.
+    if (user.suspended_at) return res.status(403).json({ error: "account_suspended" });
 
     res.json({
       ok: true,

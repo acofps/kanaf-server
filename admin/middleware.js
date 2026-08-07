@@ -66,6 +66,42 @@ export async function logSensitiveAccess({ adminUserId, targetUserId = null, act
 }
 
 /**
+ * Writes one row to admin_action_log — the MUTATION log, as opposed
+ * to logSensitiveAccess above which records reads.
+ *
+ * Call this AFTER the database change succeeds, inside the same
+ * try block, so a failed update never leaves a log entry claiming it
+ * happened. That is the opposite of the read logger's ordering, and
+ * deliberately so: for reads the risk is data escaping unlogged, for
+ * writes the risk is the log claiming a change that was rolled back.
+ *
+ * `oldValue`/`newValue` are stored as JSONB. Never put password
+ * hashes, tokens, PINs, or journal content in them — the log is
+ * readable by owners and is not the place for secrets.
+ */
+export async function logAdminAction({
+  adminUserId, targetUserId = null, action, oldValue = null,
+  newValue = null, reason, metadata = null, ipAddress = null,
+}) {
+  if (!reason || !String(reason).trim()) {
+    throw new Error("logAdminAction: a non-empty reason is required");
+  }
+  await query(
+    `INSERT INTO admin_action_log
+       (admin_user_id, target_user_id, action, old_value, new_value, reason, metadata, ip_address)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      adminUserId, targetUserId, action,
+      oldValue === null ? null : JSON.stringify(oldValue),
+      newValue === null ? null : JSON.stringify(newValue),
+      String(reason).trim(),
+      metadata === null ? null : JSON.stringify(metadata),
+      ipAddress,
+    ]
+  );
+}
+
+/**
  * Express middleware factory: requires a non-empty `reason` field in
  * the request body, and logs the access automatically once the route
  * handler calls next(). Use on any route that returns raw sensitive

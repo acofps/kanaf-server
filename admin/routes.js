@@ -2,7 +2,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { query, withTransaction } from "../db/pool.js";
 import { verifyAdminCredentials, issueAccessToken, issueRefreshToken, verifyToken, touchLastLogin, setAuthCookies, clearAuthCookies, hashPassword } from "./auth.js";
-import { requireAdminAuth, requireRole, requireReasonAndLog, logSensitiveAccess } from "./middleware.js";
+import { requireAdminAuth, requireRole, requireReasonAndLog, logSensitiveAccess, logAdminAction } from "./middleware.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { processRefund } from "../payments/refund.js";
 import { sendBroadcast } from "../notifications/broadcast.js";
@@ -213,26 +213,158 @@ adminRouter.get("/overview", requireAdminAuth, requireRole("support"), async (re
    ============================================================ */
 
 // GET /admin/users?search=&page=
+/* ------------------------------------------------------------
+   Account status is DERIVED, never stored — see
+   003_admin_user_operations.sql for why. This CASE is the single
+   definition of it and is reused by the list and the detail route,
+   so the two can't disagree.
+   ------------------------------------------------------------ */
+const ACCOUNT_STATUS_SQL = `
+  CASE
+    WHEN u.deleted_at IS NOT NULL     THEN 'deleted'
+    WHEN s.suspended_at IS NOT NULL   THEN 'suspended'
+    WHEN u.email_verified_at IS NULL  THEN 'pending_verification'
+    ELSE 'active'
+  END`;
+
+// Whitelist. The sort column is interpolated into the query text —
+// which is safe ONLY because the value can never come from the
+// request directly, just a key lookup here. Never add a branch that
+// passes req.query through.
+const USER_SORT_COLUMNS = {
+  created_at: "u.created_at",
+  name: "u.name",
+  email: "u.email",
+  last_login: "s.last_login_at",
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GET /admin/users?search=&page=&pageSize=&status=&subscription=&from=&to=&sort=&dir=
 adminRouter.get("/users", requireAdminAuth, requireRole("support"), async (req, res) => {
   try {
-    const search = (req.query.search || "").trim();
+    const search = String(req.query.search || "").trim();
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const pageSize = 25;
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
     const offset = (page - 1) * pageSize;
 
-    const { rows } = await query(
-      `SELECT id, name, email, created_at,
-              (SELECT status FROM subscriptions s WHERE s.user_id = u.id ORDER BY created_at DESC LIMIT 1) AS subscription_status
-       FROM users u
-       WHERE deleted_at IS NULL
-         AND ($1 = '' OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
-       ORDER BY created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [search, pageSize, offset]
+    const status = String(req.query.status || "all");
+    const subscription = String(req.query.subscription || "all");
+    const from = String(req.query.from || "").trim();
+    const to = String(req.query.to || "").trim();
+
+    const sortCol = USER_SORT_COLUMNS[String(req.query.sort || "created_at")] || "u.created_at";
+    const dir = String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+
+    const where = [];
+    const params = [];
+    const p = (v) => `$${params.push(v)}`;
+
+    // Deleted accounts are hidden unless explicitly asked for. They
+    // still exist (soft delete) and an owner may need to see them.
+    if (status === "deleted") {
+      where.push(`u.deleted_at IS NOT NULL`);
+    } else {
+      where.push(`u.deleted_at IS NULL`);
+      if (status === "active") {
+        where.push(`s.suspended_at IS NULL AND u.email_verified_at IS NOT NULL`);
+      } else if (status === "suspended") {
+        where.push(`s.suspended_at IS NOT NULL`);
+      } else if (status === "pending_verification") {
+        where.push(`u.email_verified_at IS NULL AND s.suspended_at IS NULL`);
+      }
+    }
+
+    if (search) {
+      // An exact id match is a different question from a name search,
+      // so treat it as one: pasting a UUID should return that user,
+      // not zero rows because the id isn't in name or email.
+      if (UUID_RE.test(search)) {
+        where.push(`u.id = ${p(search)}`);
+      } else {
+        const term = `%${search.replace(/[%_\\]/g, "\\$&")}%`;
+        where.push(`(u.name ILIKE ${p(term)} OR u.email ILIKE ${p(term)})`);
+      }
+    }
+
+    if (subscription === "active") {
+      where.push(`sub.status = 'active'`);
+    } else if (subscription === "none") {
+      where.push(`(sub.status IS NULL OR sub.status <> 'active')`);
+    }
+
+    if (from) where.push(`u.created_at >= ${p(from)}`);
+    // Inclusive end-of-day: a date-only `to` would otherwise silently
+    // exclude everyone who registered on that day.
+    if (to) where.push(`u.created_at < (${p(to)}::date + interval '1 day')`);
+
+    const filterSql = where.join(" AND ");
+
+    /* --------------------------------------------------------
+       Latest subscription per user, resolved in ONE pass with
+       DISTINCT ON instead of the previous correlated subquery in
+       the SELECT list — that ran an extra query for every row
+       returned, an N+1 hidden inside a single statement.
+
+       LATERAL ... LIMIT 1 would be marginally better at large
+       scale, because it does an index lookup per returned row
+       instead of ranking every subscription. It is not used here
+       for one honest reason: the test harness (pg-mem) does not
+       implement LATERAL, and shipping a query no test can execute
+       is worse than the difference. With `subscriptions` in the
+       low thousands the cost is not measurable. Revisit if that
+       table passes ~100k rows, and add an index on
+       (user_id, created_at DESC) at the same time.
+       -------------------------------------------------------- */
+    const latestSubscription = `
+      LEFT JOIN (
+        SELECT DISTINCT ON (user_id) user_id, status, plan_id, current_period_end
+        FROM subscriptions
+        ORDER BY user_id, created_at DESC
+      ) sub ON sub.user_id = u.id`;
+
+    const fromAndJoins = `
+      FROM users u
+      LEFT JOIN user_auth_state s ON s.user_id = u.id
+      ${latestSubscription}
+      WHERE ${filterSql}`;
+
+    // Counted with the identical filter set, so the total can never
+    // describe a different population than the rows shown.
+    const { rows: countRows } = await query(
+      `SELECT count(*)::int AS total ${fromAndJoins}`,
+      params
     );
-    res.json({ users: rows, page, pageSize });
+    const total = countRows[0].total;
+
+    const limitParam = p(pageSize);
+    const offsetParam = p(offset);
+
+    const { rows: users } = await query(
+      `SELECT u.id, u.name, u.email, u.created_at, u.email_verified_at,
+              s.last_login_at, s.suspended_at,
+              ${ACCOUNT_STATUS_SQL} AS account_status,
+              sub.status AS subscription_status,
+              sub.plan_id AS subscription_plan
+       ${fromAndJoins}
+       -- u.id is the tiebreaker, and it is not optional: without it,
+       -- rows sharing a created_at can reorder between requests, so
+       -- page 2 may repeat or skip records from page 1.
+       ORDER BY ${sortCol} ${dir} NULLS LAST, u.id DESC
+       LIMIT ${limitParam} OFFSET ${offsetParam}`,
+      params
+    );
+
+    res.json({
+      users,
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      filters: { search, status, subscription, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
+    });
   } catch (err) {
-    console.error(err);
+    console.error("[admin/users] list failed:", err);
     res.status(500).json({ error: "internal_error" });
   }
 });
@@ -241,14 +373,171 @@ adminRouter.get("/users", requireAdminAuth, requireRole("support"), async (req, 
 adminRouter.get("/users/:id", requireAdminAuth, requireRole("support"), async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, name, email, age_range, gender, confirmed_adult, created_at, updated_at
-       FROM users WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT u.id, u.name, u.email, u.age_range, u.gender, u.confirmed_adult,
+              u.created_at, u.updated_at, u.email_verified_at, u.deleted_at,
+              s.last_login_at, s.suspended_at, s.suspended_reason,
+              COALESCE(s.failed_login_count, 0) AS failed_login_count,
+              s.locked_until,
+              ${ACCOUNT_STATUS_SQL} AS account_status,
+              sub.status AS subscription_status,
+              sub.plan_id AS subscription_plan,
+              sub.current_period_end AS subscription_renews_at
+       FROM users u
+       LEFT JOIN user_auth_state s ON s.user_id = u.id
+       LEFT JOIN (
+         SELECT DISTINCT ON (user_id) user_id, status, plan_id, current_period_end
+         FROM subscriptions ORDER BY user_id, created_at DESC
+       ) sub ON sub.user_id = u.id
+       WHERE u.id = $1`,
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: "not_found" });
+
+    // Deliberately absent from this payload: password_hash, pin_hash,
+    // and every session token. They have no operational use in the
+    // admin panel, and a field that is never sent can never leak.
     res.json(rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error("[admin/users] detail failed:", err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+/* ============================================================
+   ACCOUNT STATUS ACTIONS
+
+   Suspension is enforced in three places, and all three are needed
+   for it to mean anything:
+     1. here — the state is written
+     2. auth/routes.js login — a suspended account can't sign in
+     3. auth/middleware.js requireVerifiedUser — existing access stops
+
+   Step 3 is why sessions are revoked below. Without that, a
+   suspended user keeps a valid 15-minute access token and stays
+   signed in until it expires — a suspension that doesn't suspend.
+   ============================================================ */
+
+// POST /admin/users/:id/suspend  { reason }
+adminRouter.post("/users/:id/suspend", requireAdminAuth, requireRole("admin"), async (req, res) => {
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason) {
+    return res.status(400).json({ error: "reason_required", message: "لازم تكتب سبب التعليق." });
+  }
+  if (reason.length > 500) {
+    return res.status(400).json({ error: "reason_too_long", maxLength: 500 });
+  }
+
+  try {
+    const { rows: existing } = await query(
+      `SELECT u.id, u.deleted_at, s.suspended_at
+       FROM users u LEFT JOIN user_auth_state s ON s.user_id = u.id
+       WHERE u.id = $1`,
+      [req.params.id]
+    );
+    const user = existing[0];
+    if (!user) return res.status(404).json({ error: "not_found" });
+    if (user.deleted_at) return res.status(409).json({ error: "account_deleted" });
+    if (user.suspended_at) return res.status(409).json({ error: "already_suspended" });
+
+    await query(
+      `INSERT INTO user_auth_state (user_id, suspended_at, suspended_reason, suspended_by)
+       VALUES ($1, now(), $2, $3)
+       ON CONFLICT (user_id) DO UPDATE
+         SET suspended_at = now(), suspended_reason = EXCLUDED.suspended_reason,
+             suspended_by = EXCLUDED.suspended_by, updated_at = now()`,
+      [req.params.id, reason, req.admin.id]
+    );
+
+    // Immediate effect, not "on next login".
+    const { rowCount: revoked } = await query(
+      `UPDATE user_sessions SET revoked_at = now()
+       WHERE user_id = $1 AND revoked_at IS NULL`,
+      [req.params.id]
+    );
+
+    // Logged only after the write succeeded — the log must never
+    // claim a change that didn't land.
+    await logAdminAction({
+      adminUserId: req.admin.id,
+      targetUserId: req.params.id,
+      action: "suspend_account",
+      oldValue: { account_status: "active" },
+      newValue: { account_status: "suspended" },
+      reason,
+      metadata: { sessions_revoked: revoked },
+      ipAddress: req.ip,
+    });
+
+    res.json({ ok: true, account_status: "suspended", sessionsRevoked: revoked });
+  } catch (err) {
+    console.error("[admin/users] suspend failed:", err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+// POST /admin/users/:id/restore  { reason }
+adminRouter.post("/users/:id/restore", requireAdminAuth, requireRole("admin"), async (req, res) => {
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason) {
+    return res.status(400).json({ error: "reason_required", message: "لازم تكتب سبب رفع التعليق." });
+  }
+  if (reason.length > 500) {
+    return res.status(400).json({ error: "reason_too_long", maxLength: 500 });
+  }
+
+  try {
+    const { rows: existing } = await query(
+      `SELECT u.id, u.deleted_at, u.email_verified_at, s.suspended_at, s.suspended_reason
+       FROM users u LEFT JOIN user_auth_state s ON s.user_id = u.id
+       WHERE u.id = $1`,
+      [req.params.id]
+    );
+    const user = existing[0];
+    if (!user) return res.status(404).json({ error: "not_found" });
+    if (user.deleted_at) return res.status(409).json({ error: "account_deleted" });
+    if (!user.suspended_at) return res.status(409).json({ error: "not_suspended" });
+
+    await query(
+      `UPDATE user_auth_state
+       SET suspended_at = NULL, suspended_reason = NULL, suspended_by = NULL,
+           failed_login_count = 0, locked_until = NULL, updated_at = now()
+       WHERE user_id = $1`,
+      [req.params.id]
+    );
+
+    const newStatus = user.email_verified_at ? "active" : "pending_verification";
+
+    await logAdminAction({
+      adminUserId: req.admin.id,
+      targetUserId: req.params.id,
+      action: "restore_account",
+      oldValue: { account_status: "suspended", suspended_reason: user.suspended_reason },
+      newValue: { account_status: newStatus },
+      reason,
+      ipAddress: req.ip,
+    });
+
+    res.json({ ok: true, account_status: newStatus });
+  } catch (err) {
+    console.error("[admin/users] restore failed:", err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+// GET /admin/users/:id/actions — the mutation history for one user.
+adminRouter.get("/users/:id/actions", requireAdminAuth, requireRole("admin"), async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, admin_user_id, action, old_value, new_value, reason, metadata, created_at
+       FROM admin_action_log
+       WHERE target_user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [req.params.id]
+    );
+    res.json({ actions: rows });
+  } catch (err) {
+    console.error("[admin/users] action log failed:", err);
     res.status(500).json({ error: "internal_error" });
   }
 });

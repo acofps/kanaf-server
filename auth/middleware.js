@@ -44,12 +44,20 @@ export async function requireVerifiedUser(req, res, next) {
   requireUserAuth(req, res, async () => {
     try {
       const { rows } = await query(
-        `SELECT id, email, email_verified_at FROM users WHERE id = $1 AND deleted_at IS NULL`,
+        `SELECT u.id, u.email, u.email_verified_at, s.suspended_at
+         FROM users u
+         LEFT JOIN user_auth_state s ON s.user_id = u.id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
         [req.userId]
       );
       const user = rows[0];
       if (!user) return res.status(401).json({ error: "account_not_found" });
       if (!user.email_verified_at) return res.status(403).json({ error: "email_not_verified" });
+      // Suspension has to bite here too, not only at login. An
+      // access token issued before the suspension stays
+      // cryptographically valid for up to 15 minutes; without this
+      // check the account keeps working for that window.
+      if (user.suspended_at) return res.status(403).json({ error: "account_suspended" });
       req.user = user;
       return next();
     } catch (err) {
