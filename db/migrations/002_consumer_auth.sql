@@ -11,14 +11,41 @@
 -- psql if you ever have shell access.
 
 /* ---------------------------------------------------------
-   Login throttling lives on the users row itself.
-   Counting failures in memory would reset on every Render
-   redeploy and wouldn't be shared across server instances —
-   the same flaw the old in-memory verification-code Map had.
+   Login throttling state.
+
+   These three fields belong on the users row conceptually, and the
+   first version of this migration put them there with ALTER TABLE.
+   That failed in production with "must be owner of relation users":
+   the original 15 tables are owned by the `postgres` superuser (the
+   schema was loaded with that account), while the application
+   connects as `kanaf_adel`, which is not a member of that role.
+   ALTER TABLE requires ownership, so those columns can never be
+   added by the app's own database user.
+
+   A separate table sidesteps that entirely — `kanaf_adel` owns
+   anything it creates. The foreign key is real, not decorative:
+   the app user does hold REFERENCES on users, so ON DELETE CASCADE
+   still cleans this up if a row is ever hard-deleted.
+
+   Counting failures in memory instead was never an option: it would
+   reset on every Render redeploy and wouldn't be shared across
+   server instances — the same flaw the old in-memory
+   verification-code Map had.
 --------------------------------------------------------- */
-ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INT NOT NULL DEFAULT 0;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until       TIMESTAMPTZ;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at      TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS user_auth_state (
+  user_id             UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  failed_login_count  INT NOT NULL DEFAULT 0,
+  locked_until        TIMESTAMPTZ,
+  last_login_at       TIMESTAMPTZ,
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- A row here is created lazily, on the first login attempt. Absence
+-- means "no failures, never locked", so every read must COALESCE
+-- rather than assume the row exists.
+CREATE INDEX IF NOT EXISTS idx_user_auth_state_locked
+  ON user_auth_state (locked_until)
+  WHERE locked_until IS NOT NULL;
 
 /* ---------------------------------------------------------
    Email verification codes.
