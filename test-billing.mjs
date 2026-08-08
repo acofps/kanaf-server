@@ -214,7 +214,7 @@ async function run() {
   log("A9 الدفعة مربوطة بالاشتراك والفاتورة", !!payRows[0]?.subscription_id && payRows[0]?.invoice_id === co1.invoiceId);
 
   const { rows: invRows } = await query(`SELECT * FROM invoices WHERE id = $1`, [co1.invoiceId]);
-  log("A10 الفاتورة مدفوعة ولها رقم ضريبي", invRows[0].status === "paid" && /^INV-\d{4}-000001$/.test(invRows[0].zatca_invoice_number), invRows[0].zatca_invoice_number);
+  log("A10 الفاتورة مدفوعة ولها رقم ضريبي", invRows[0].status === "paid" && /^INV-KANAF-000001$/.test(invRows[0].zatca_invoice_number), invRows[0].zatca_invoice_number);
   log("A11 الفاتورة تحمل ملف PDF وحمولة QR", !!invRows[0].pdf_data && !!invRows[0].zatca_qr_payload, String(invRows[0].pdf_data?.length));
   log("A12 الفاتورة مربوطة بالاشتراك (subscription_id لم يعد فارغاً)", !!invRows[0].subscription_id);
   log("A13 تفصيل الضريبة صحيح 29 = 25.22 + 3.78",
@@ -259,7 +259,7 @@ async function run() {
     r.body.subscription?.renewalDate);
 
   const { rows: inv2 } = await query(`SELECT zatca_invoice_number, subtotal_sar, vat_sar FROM invoices WHERE user_id = $1`, [u2.id]);
-  log("B3 رقم الفاتورة تسلسلي وفريد", inv2[0].zatca_invoice_number === `INV-${new Date().getFullYear()}-000002`, inv2[0].zatca_invoice_number);
+  log("B3 رقم الفاتورة تسلسلي وفريد", inv2[0].zatca_invoice_number === 'INV-KANAF-000002', inv2[0].zatca_invoice_number);
   log("B4 ضريبة السنوي 229 = 199.13 + 29.87", Number(inv2[0].subtotal_sar) === 199.13 && Number(inv2[0].vat_sar) === 29.87, `${inv2[0].subtotal_sar}+${inv2[0].vat_sar}`);
 
   /* ========================================================
@@ -421,7 +421,7 @@ async function run() {
 
   const { rows: g6 } = await query(`SELECT zatca_credit_note_number, amount_sar FROM credit_notes WHERE user_id=$1`, [u5.id]);
   log("G6 صدر إشعار دائن بمبلغ الاسترداد الجزئي وحده",
-    g6.length === 1 && Number(g6[0].amount_sar) === 10 && /^CN-\d{4}-000001$/.test(g6[0].zatca_credit_note_number),
+    g6.length === 1 && Number(g6[0].amount_sar) === 10 && /^CN-KANAF-000001$/.test(g6[0].zatca_credit_note_number),
     JSON.stringify(g6[0]));
 
   r = await post(`/admin/billing/payments/${payment5.id}/refund`, { amountSar: 25, reason: "تجاوز المتاح" });

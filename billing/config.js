@@ -24,6 +24,12 @@ const FALLBACK = Object.freeze({
   invoiceNumberPrefix: "INV",
   creditNoteNumberPrefix: "CN",
   reportingTimezone: "Asia/Riyadh",
+  // بيانات عرض الفاتورة (الترحيل 006). القيم هنا مطابقة لما يزرعه
+  // الترحيل، حتى تبقى الفاتورة كاملة لو صدرت قبل تطبيقه.
+  documentNumberToken: "KANAF",
+  sellerEmail: null,
+  sellerPhone: null,
+  sellerDisplaySuffix: null,
 });
 
 /**
@@ -39,19 +45,29 @@ const FALLBACK = Object.freeze({
 export async function getBillingSettings(client) {
   const runner = client || { query };
   try {
+    // to_jsonb بدل قائمة أعمدة صريحة: أعمدة العرض أُضيفت في الترحيل
+    // 006، وخادم لم يطبّقه بعد كان سيفشل الاستعلام كاملاً فيسقط
+    // حتى نسبة الضريبة إلى القيم الافتراضية. الصف كـJSON يجعل
+    // العمود الناقص قيمة غائبة لا خطأ.
     const { rows } = await runner.query(
-      `SELECT vat_rate, prices_include_vat, currency,
-              invoice_number_prefix, credit_note_number_prefix, reporting_timezone
-       FROM billing_settings LIMIT 1`
+      `SELECT to_jsonb(b) AS row FROM billing_settings b LIMIT 1`
     );
-    if (!rows[0]) return { ...FALLBACK, source: "fallback" };
+    const row = rows[0]?.row;
+    if (!row) return { ...FALLBACK, source: "fallback" };
     return {
-      vatRate: Number(rows[0].vat_rate),
-      pricesIncludeVat: rows[0].prices_include_vat,
-      currency: rows[0].currency,
-      invoiceNumberPrefix: rows[0].invoice_number_prefix,
-      creditNoteNumberPrefix: rows[0].credit_note_number_prefix,
-      reportingTimezone: rows[0].reporting_timezone,
+      vatRate: Number(row.vat_rate),
+      pricesIncludeVat: row.prices_include_vat,
+      currency: row.currency,
+      invoiceNumberPrefix: row.invoice_number_prefix,
+      creditNoteNumberPrefix: row.credit_note_number_prefix,
+      reportingTimezone: row.reporting_timezone,
+      documentNumberToken:
+        row.document_number_token === undefined
+          ? FALLBACK.documentNumberToken
+          : row.document_number_token,
+      sellerEmail: row.seller_email ?? null,
+      sellerPhone: row.seller_phone ?? null,
+      sellerDisplaySuffix: row.seller_display_suffix ?? null,
       source: "database",
     };
   } catch (err) {
@@ -104,6 +120,22 @@ export function splitVat(amount, { vatRate, pricesIncludeVat }) {
 export function formatVatRate(vatRate) {
   const pct = Number(vatRate) * 100;
   return `${Number.isInteger(pct) ? pct : pct.toFixed(2)}%`;
+}
+
+/**
+ * رقم الوثيقة: <البادئة>-<الرمز>-<تسلسل بست خانات>
+ *   INV-KANAF-000001 · CN-KANAF-000001
+ *
+ * الرمز اختياري؛ إن كان فارغاً صار الرقم INV-000001. لا تُقحم سنة
+ * الإصدار: التسلسل لا يُصفَّر سنوياً، فوضع السنة فيه يوحي بترقيم
+ * سنوي غير قائم.
+ */
+export function formatDocumentNumber(prefix, token, sequenceValue) {
+  const parts = [String(prefix || "DOC")];
+  const cleanToken = String(token || "").trim();
+  if (cleanToken) parts.push(cleanToken);
+  parts.push(String(sequenceValue).padStart(6, "0"));
+  return parts.join("-");
 }
 
 export const BILLING_FALLBACK = FALLBACK;

@@ -1110,8 +1110,16 @@ adminRouter.post("/invoices/:id/regenerate", requireAdminAuth, requireRole("admi
       // one admin double-clicking) could otherwise both pass the
       // "no invoice number yet" check before either write lands.
       const { rows } = await client.query(
-        `SELECT i.id, i.user_id, i.plan_id, i.amount_sar, i.zatca_invoice_number, u.email AS user_email
-         FROM invoices i JOIN users u ON u.id = i.user_id
+        // اسم العميل وفترة الخدمة يُقرآن هنا أيضاً: الفاتورة المعاد
+        // إصدارها وثيقة كاملة لا نسخة منقوصة، وغياب اسم المشتري عنها
+        // عيب نظامي لا تفصيل تجميلي.
+        `SELECT i.id, i.user_id, i.plan_id, i.amount_sar, i.zatca_invoice_number,
+                u.email AS user_email, u.name AS user_name,
+                ss.current_period_start, s.current_period_end, ss.billing_cycle
+         FROM invoices i
+         JOIN users u ON u.id = i.user_id
+         LEFT JOIN subscriptions s ON s.id = i.subscription_id
+         LEFT JOIN subscription_state ss ON ss.subscription_id = s.id
          WHERE i.id = $1 AND i.status = 'paid' FOR UPDATE OF i`,
         [req.params.id]
       );
@@ -1119,11 +1127,21 @@ adminRouter.post("/invoices/:id/regenerate", requireAdminAuth, requireRole("admi
       if (!invoice) return { httpStatus: 404, body: { error: "not_found_or_not_paid" } };
       if (invoice.zatca_invoice_number) return { httpStatus: 409, body: { error: "already_has_invoice_number" } };
 
-      const { rows: planRows } = await client.query(`SELECT name FROM subscription_plans WHERE plan_key = $1`, [invoice.plan_id]);
+      const { rows: planRows } = await client.query(
+        `SELECT plan_key, name FROM subscription_plans WHERE plan_key = $1`, [invoice.plan_id]
+      );
       if (!planRows[0]) return { httpStatus: 422, body: { error: "unknown_plan_cannot_regenerate" } };
 
       const generated = await generateAndStoreInvoice(
-        { invoiceId: invoice.id, userId: invoice.user_id, planName: planRows[0].name, totalSar: invoice.amount_sar, buyerEmail: invoice.user_email },
+        {
+          invoiceId: invoice.id, userId: invoice.user_id,
+          planName: planRows[0].name, planKey: planRows[0].plan_key,
+          totalSar: invoice.amount_sar,
+          buyerEmail: invoice.user_email, buyerName: invoice.user_name,
+          billingCycle: invoice.billing_cycle,
+          periodStart: invoice.current_period_start,
+          periodEnd: invoice.current_period_end,
+        },
         client
       );
       if (!generated) return { httpStatus: 422, body: { error: "tax_settings_not_configured" } };

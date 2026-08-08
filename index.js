@@ -12,6 +12,7 @@ import { query } from "./db/pool.js";
 import { runMigrations, migrationStatus } from "./db/migrate.js";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe.js";
 import { hashPassword } from "./admin/auth.js";
+import { verifyRenderer, closeBrowser } from "./invoicing/render.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -364,10 +365,37 @@ app.get(/^(?!\/admin|\/api).*/, (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`Kanaf backend running on port ${PORT}`);
   // Surfaces a broken mail config in the deploy logs rather than on a
   // real user's first signup. Never blocks startup — the rest of the
   // API is still useful if mail is down.
   await verifySmtpConnection();
+
+  // نفس المنطق للفواتير: الوثيقة الضريبية تُطبع في Chromium، ونشرٌ
+  // بلا متصفّح يعني دفعات صحيحة بلا فواتير — وهو عطب لا يظهر إلا
+  // عند أول عملية دفع حقيقية. الفحص هنا يُظهره في سجل النشر فوراً.
+  // لا يمنع الإقلاع: بقية الـAPI تعمل، والفواتير الناقصة تُصلَّح من
+  // زر «إعادة الإصدار» في اللوحة بعد الإصلاح.
+  if (process.env.SKIP_PDF_BOOT_CHECK !== "1") {
+    try {
+      const { bytes, ms } = await verifyRenderer();
+      console.log(`[invoice] مولّد الفواتير جاهز (${bytes} بايت في ${ms}ms).`);
+    } catch (err) {
+      console.error(
+        "[invoice] ⚠️ مولّد الفواتير غير جاهز — لن تصدر فواتير ضريبية. " +
+        "تأكد أن أمر البناء ينزّل Chromium وأن PUPPETEER_CACHE_DIR مضبوط. السبب:", err.message
+      );
+    }
+  }
 });
+
+// إغلاق نظيف: Render يرسل SIGTERM عند كل نشر. متصفّح لا يُغلق
+// يبقى عملية يتيمة تأكل ذاكرة الحاوية حتى تُقتل.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    console.log(`[shutdown] ${signal} — إغلاق نظيف.`);
+    server.close(() => {});
+    closeBrowser().finally(() => process.exit(0));
+  });
+}

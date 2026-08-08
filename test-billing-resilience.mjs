@@ -115,7 +115,7 @@ try {
   ok("★ إعادة تشغيل حدث معالَج مسموحة (كانت مرفوضة 409)", rp.status === 200, JSON.stringify(rp.body).slice(0, 90));
 
   const { rows: i2 } = await query(`SELECT status, zatca_invoice_number, (pdf_data IS NOT NULL) AS pdf FROM invoices WHERE id=$1`, [invoiceId]);
-  ok("★ الفاتورة الضريبية صدرت بعد الإصلاح", /^INV-\d{4}-\d{6}$/.test(i2[0].zatca_invoice_number || ""), String(i2[0].zatca_invoice_number));
+  ok("★ الفاتورة الضريبية صدرت بعد الإصلاح", /^INV-KANAF-\d{6}$/.test(i2[0].zatca_invoice_number || ""), String(i2[0].zatca_invoice_number));
   ok("★ ومعها ملف PDF", i2[0].pdf === true);
   const { rows: p2 } = await query(`SELECT count(*)::int n FROM payments`);
   ok("★ إعادة التشغيل لم تُنشئ دفعة مكررة", p2[0].n === 1, String(p2[0].n));

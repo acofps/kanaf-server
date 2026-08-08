@@ -1,6 +1,29 @@
 import { query } from "../db/pool.js";
 import { generateInvoicePdf, generateCreditNotePdf } from "./pdf.js";
-import { getBillingSettings } from "../billing/config.js";
+import { getBillingSettings, formatDocumentNumber } from "../billing/config.js";
+
+/**
+ * وسيلة الدفع كما سُجّلت على الدفعة نفسها.
+ *
+ * تُقرأ من جدول payments لا من الويبهوك، لأن إعادة توليد فاتورة من
+ * لوحة الإدارة تجري بعد أشهر أحياناً ولا حمولة ويبهوك في يدها.
+ * الغياب مقبول ويُعرض شرطة — تخمين وسيلة الدفع على وثيقة ضريبية
+ * أسوأ من تركها فارغة.
+ *
+ * ⚠️ الخطأ هنا لا يُلتقط عمداً: أي عبارة فاشلة تُفسد المعاملة كاملة،
+ * والـCOMMIT بعدها يتحوّل ROLLBACK صامتاً — وهذا بالضبط ما أضاع أول
+ * دفعة حقيقية. يُترك ليصعد إلى المسار المستقل الذي يلتقطه.
+ */
+async function readPaymentInstrument(runner, invoiceId) {
+  const { rows } = await runner.query(
+    `SELECT method, card_brand FROM payments
+      WHERE invoice_id = $1 AND status IN ('paid', 'refunded', 'partially_refunded')
+      ORDER BY captured_at DESC NULLS LAST, created_at DESC
+      LIMIT 1`,
+    [invoiceId]
+  );
+  return { paymentMethod: rows[0]?.method || null, paymentBrand: rows[0]?.card_brand || null };
+}
 
 /**
  * يولّد ويحفظ الفاتورة الضريبية لفاتورة صار حالها مدفوعاً.
@@ -24,8 +47,8 @@ import { getBillingSettings } from "../billing/config.js";
  *   الفاتورة وثيقة قانونية — ما فيها يجب أن يكون مقروءاً بالاستعلام.
  */
 export async function generateAndStoreInvoice({
-  invoiceId, userId, planName, planKey, totalSar, buyerEmail, buyerName,
-  billingCycle, periodStart, periodEnd,
+  invoiceId, userId, planName, planKey, totalSar, buyerEmail, buyerName, buyerPhone,
+  billingCycle, periodStart, periodEnd, discountSar,
 }, client) {
   const runner = client || { query };
 
@@ -45,16 +68,35 @@ export async function generateAndStoreInvoice({
   const settings = await getBillingSettings(client);
 
   const { rows: seqRows } = await runner.query(`SELECT nextval('kanaf_invoice_number_seq') AS n`);
-  const seqNumber = seqRows[0].n;
-  const year = new Date().getFullYear();
-  const invoiceNumber = `${settings.invoiceNumberPrefix}-${year}-${String(seqNumber).padStart(6, "0")}`;
+  const invoiceNumber = formatDocumentNumber(
+    settings.invoiceNumberPrefix, settings.documentNumberToken, seqRows[0].n
+  );
   const issuedAt = new Date();
 
-  const { pdfBuffer, qrPayload, subtotalSar, vatSar, totalSar: totalFormatted } = await generateInvoicePdf({
-    taxSettings,
-    settings,
-    invoice: { invoiceNumber, planName, totalSar, issuedAt, buyerEmail, buyerName, periodStart, periodEnd },
-  });
+  const { paymentMethod, paymentBrand } = await readPaymentInstrument(runner, invoiceId);
+  const discount = Number(discountSar || 0);
+
+  let generated;
+  try {
+    generated = await generateInvoicePdf({
+      taxSettings,
+      settings,
+      invoice: {
+        invoiceNumber, planName, totalSar, issuedAt, buyerEmail, buyerName, buyerPhone,
+        periodStart, periodEnd, discountSar: discount, paymentMethod, paymentBrand,
+      },
+    });
+  } catch (err) {
+    // nextval لا يتراجع مع الـROLLBACK — الرقم استُهلك فعلاً. نسجّله
+    // صراحةً حتى تكون الفجوة في التسلسل مفسَّرة عند أي مراجعة، لا
+    // ثغرة مجهولة. ثم نُعيد رمي الخطأ ليتراجع كل شيء آخر.
+    console.error(
+      `[invoice] فشل رسم الفاتورة ${invoiceNumber} للفاتورة ${invoiceId}. ` +
+      `الرقم استُهلك من التسلسل ولن يُعاد استخدامه — فجوة مفسَّرة في الترقيم. السبب:`, err
+    );
+    throw err;
+  }
+  const { pdfBuffer, qrPayload, subtotalSar, vatSar, totalSar: totalFormatted } = generated;
 
   await runner.query(
     `UPDATE invoices SET
@@ -70,10 +112,13 @@ export async function generateAndStoreInvoice({
     description: `اشتراك كنف+ — ${planName}`,
     plan_key: planKey || null,
     quantity: 1,
-    unit_price_sar: Number(totalSar),
+    unit_price_sar: Number(totalFormatted) + discount,
+    discount_sar: discount,
     subtotal_sar: Number(subtotalSar),
     vat_sar: Number(vatSar),
     total_sar: Number(totalFormatted),
+    payment_method: paymentMethod,
+    payment_brand: paymentBrand,
   }];
 
   await runner.query(
@@ -82,7 +127,7 @@ export async function generateAndStoreInvoice({
         seller_legal_name, seller_vat_number, seller_address,
         buyer_name, buyer_email, line_items, discount_sar,
         billing_cycle, period_start, period_end)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $15, $12, $13, $14)
      ON CONFLICT (invoice_id) DO UPDATE SET
        currency = EXCLUDED.currency, vat_rate = EXCLUDED.vat_rate,
        prices_include_vat = EXCLUDED.prices_include_vat,
@@ -90,14 +135,14 @@ export async function generateAndStoreInvoice({
        seller_vat_number = EXCLUDED.seller_vat_number,
        seller_address = EXCLUDED.seller_address,
        buyer_name = EXCLUDED.buyer_name, buyer_email = EXCLUDED.buyer_email,
-       line_items = EXCLUDED.line_items,
+       line_items = EXCLUDED.line_items, discount_sar = EXCLUDED.discount_sar,
        billing_cycle = EXCLUDED.billing_cycle,
        period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end`,
     [
       invoiceId, userId, settings.currency, settings.vatRate, settings.pricesIncludeVat,
       taxSettings.legalName, taxSettings.vatNumber, taxSettings.address || null,
       buyerName || null, buyerEmail || null, JSON.stringify(lineItems),
-      billingCycle || null, periodStart || null, periodEnd || null,
+      billingCycle || null, periodStart || null, periodEnd || null, discount,
     ]
   );
 
@@ -117,7 +162,7 @@ export async function generateAndStoreInvoice({
  */
 export async function generateAndStoreCreditNote({
   originalInvoiceId, userId, planName, amountSar, reason,
-  buyerEmail, buyerName, providerRefundId,
+  buyerEmail, buyerName, buyerPhone, providerRefundId,
 }, client) {
   const runner = client || { query };
 
@@ -161,16 +206,22 @@ export async function generateAndStoreCreditNote({
   };
 
   const { rows: seqRows } = await runner.query(`SELECT nextval('kanaf_credit_note_number_seq') AS n`);
-  const year = new Date().getFullYear();
-  const creditNoteNumber = `${currentSettings.creditNoteNumberPrefix}-${year}-${String(seqRows[0].n).padStart(6, "0")}`;
+  const creditNoteNumber = formatDocumentNumber(
+    currentSettings.creditNoteNumberPrefix, currentSettings.documentNumberToken, seqRows[0].n
+  );
   const issuedAt = new Date();
+
+  // وسيلة الدفع تُقرأ من دفعة الفاتورة الأصلية: الاسترداد يعود على
+  // نفس الوسيلة التي دُفع بها، وهذا ما يجب أن يقرأه العميل.
+  const { paymentMethod, paymentBrand } = await readPaymentInstrument(runner, originalInvoiceId);
 
   const { pdfBuffer, qrPayload, subtotalSar, vatSar, totalSar } = await generateCreditNotePdf({
     taxSettings,
     settings,
     creditNote: {
       creditNoteNumber, originalInvoiceNumber, planName,
-      totalSar: amountSar, reason, issuedAt, buyerEmail, buyerName,
+      totalSar: amountSar, reason, issuedAt, buyerEmail, buyerName, buyerPhone,
+      paymentMethod, paymentBrand,
     },
   });
 
