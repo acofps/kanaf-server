@@ -49,12 +49,21 @@ const BCRYPT_ROUNDS = 12;
 const MIN_PASSWORD_CHARS = 8;
 const MAX_PASSWORD_BYTES = 72;
 
-// Not a serious blocklist — just the handful that show up constantly.
-// A real check would use a k-anonymity lookup against Have I Been
-// Pwned's range API; worth adding later.
+/* ---------------------------------------------------------
+   ثمانية أحرف فأكثر، وبلا أي قاعدة تركيب: لا حرف كبير ولا رمز ولا
+   رقم إجباري. المستخدم يكتب ما يريد.
+
+   هذا اختيار مقصود لا تساهل. قواعد التركيب تدفع الناس إلى أنماط
+   متوقعة مثل "Password1!" — أقصر فعلياً وأسهل تخميناً من عبارة
+   طويلة بسيطة، وتزيد نسيان كلمة المرور بلا مقابل أمني حقيقي. وهذا
+   ما توصي به NIST SP 800-63B صراحةً: الطول وقائمة المنع، لا
+   التركيب.
+--------------------------------------------------------- */
 const OBVIOUS_PASSWORDS = new Set([
   "password", "12345678", "123456789", "1234567890", "qwertyui", "qwerty123",
   "11111111", "00000000", "iloveyou", "password1", "abc12345", "1q2w3e4r",
+  "qwertyuiop", "letmein1", "welcome1", "sunshine", "princess", "football",
+  "trustno1", "iloveyou1", "kanaf123", "12345678a", "a12345678",
 ]);
 
 export function validatePassword(plaintext) {
