@@ -1,7 +1,8 @@
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { shapeBidiLine } from "./bidi.js";
-import { buildZatcaQrPayload, splitVatInclusiveAmount } from "./zatca.js";
+import { buildZatcaQrPayload } from "./zatca.js";
+import { splitVat, formatVatRate, BILLING_FALLBACK } from "../billing/config.js";
 import { fileURLToPath } from "url";
 import path from "path";
 
@@ -14,10 +15,16 @@ const FONT_PATH = path.join(__dirname, "fonts", "IBMPlexSansArabic-Regular.ttf")
  *
  * `taxSettings`: { legalName, vatNumber, address } — the seller's own
  * registered details, managed from the admin panel's Tax Settings page.
- * `invoice`: { invoiceNumber, planName, totalSar, issuedAt, buyerEmail }
+ * `invoice`: { invoiceNumber, planName, totalSar, issuedAt, buyerEmail,
+ *              buyerName, periodStart, periodEnd }
+ * `settings`: الإعداد المالي المركزي — النسبة والعملة. النسبة تُطبع
+ *   من نفس القيمة التي حُسبت بها الأرقام، فلا يمكن أن يقول النص
+ *   شيئاً وتقول الأرقام غيره.
  */
-export async function generateInvoicePdf({ taxSettings, invoice }) {
-  const { subtotal, vat, total } = splitVatInclusiveAmount(invoice.totalSar);
+export async function generateInvoicePdf({ taxSettings, invoice, settings = BILLING_FALLBACK }) {
+  const { subtotal, vat, total } = splitVat(invoice.totalSar, settings);
+  const vatLabel = formatVatRate(settings.vatRate);
+  const currency = settings.currency === "SAR" ? "ريال" : settings.currency;
   const issuedAtIso = invoice.issuedAt.toISOString();
 
   const qrPayload = buildZatcaQrPayload({
@@ -56,6 +63,9 @@ export async function generateInvoicePdf({ taxSettings, invoice }) {
     // Invoice meta
     R(`رقم الفاتورة: ${invoice.invoiceNumber}`);
     R(`تاريخ الإصدار: ${issuedAtIso.slice(0, 19).replace("T", " ")}`);
+    // بيانات المشتري: مطلوبة في الفاتورة، وكان الاسم غائباً عنها
+    // تماماً — البريد وحده لا يكفي تعريفاً للعميل.
+    if (invoice.buyerName) R(`العميل: ${invoice.buyerName}`);
     if (invoice.buyerEmail) R(`البريد الإلكتروني: ${invoice.buyerEmail}`);
     doc.moveDown();
 
@@ -63,15 +73,18 @@ export async function generateInvoicePdf({ taxSettings, invoice }) {
     doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#ccc").stroke();
     doc.moveDown(0.5);
     R(`اشتراك كنف+ — ${invoice.planName}`);
+    if (invoice.periodStart && invoice.periodEnd) {
+      R(`فترة الخدمة: ${new Date(invoice.periodStart).toISOString().slice(0, 10)} — ${new Date(invoice.periodEnd).toISOString().slice(0, 10)}`);
+    }
     doc.moveDown(0.5);
     doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#ccc").stroke();
     doc.moveDown();
 
     // Totals
-    R(`المبلغ قبل الضريبة: ${subtotal} ريال`);
-    R(`ضريبة القيمة المضافة (15%): ${vat} ريال`);
+    R(`المبلغ قبل الضريبة: ${subtotal} ${currency}`);
+    R(`ضريبة القيمة المضافة (${vatLabel}): ${vat} ${currency}`);
     doc.fontSize(13);
-    R(`الإجمالي شامل الضريبة: ${total} ريال`);
+    R(`الإجمالي شامل الضريبة: ${total} ${currency}`);
     doc.fontSize(11);
     doc.moveDown(1.5);
 
@@ -96,8 +109,10 @@ export async function generateInvoicePdf({ taxSettings, invoice }) {
  * structure as the invoice, but the document must reference the
  * original invoice number it corrects (checked, not assumed).
  */
-export async function generateCreditNotePdf({ taxSettings, creditNote }) {
-  const { subtotal, vat, total } = splitVatInclusiveAmount(creditNote.totalSar);
+export async function generateCreditNotePdf({ taxSettings, creditNote, settings = BILLING_FALLBACK }) {
+  const { subtotal, vat, total } = splitVat(creditNote.totalSar, settings);
+  const vatLabel = formatVatRate(settings.vatRate);
+  const currency = settings.currency === "SAR" ? "ريال" : settings.currency;
   const issuedAtIso = creditNote.issuedAt.toISOString();
 
   const qrPayload = buildZatcaQrPayload({
@@ -138,6 +153,7 @@ export async function generateCreditNotePdf({ taxSettings, creditNote }) {
     doc.fillColor("#0a6").font(FONT_PATH);
     R(`مرجع الفاتورة الأصلية: ${creditNote.originalInvoiceNumber}`);
     doc.fillColor("#000");
+    if (creditNote.buyerName) R(`العميل: ${creditNote.buyerName}`);
     if (creditNote.buyerEmail) R(`البريد الإلكتروني: ${creditNote.buyerEmail}`);
     doc.moveDown();
 
@@ -149,10 +165,10 @@ export async function generateCreditNotePdf({ taxSettings, creditNote }) {
     doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor("#ccc").stroke();
     doc.moveDown();
 
-    R(`المبلغ قبل الضريبة (مسترد): ${subtotal} ريال`);
-    R(`ضريبة القيمة المضافة المستردة (15%): ${vat} ريال`);
+    R(`المبلغ قبل الضريبة (مسترد): ${subtotal} ${currency}`);
+    R(`ضريبة القيمة المضافة المستردة (${vatLabel}): ${vat} ${currency}`);
     doc.fontSize(13);
-    R(`إجمالي المبلغ المسترد: ${total} ريال`);
+    R(`إجمالي المبلغ المسترد: ${total} ${currency}`);
     doc.fontSize(11);
     doc.moveDown(1.5);
 

@@ -4,10 +4,28 @@ import { query, withTransaction } from "../db/pool.js";
 import { verifyAdminCredentials, issueAccessToken, issueRefreshToken, verifyToken, touchLastLogin, setAuthCookies, clearAuthCookies, hashPassword } from "./auth.js";
 import { requireAdminAuth, requireRole, requireReasonAndLog, logSensitiveAccess, logAdminAction } from "./middleware.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
-import { processRefund } from "../payments/refund.js";
+import { executeRefund } from "../payments/refund.js";
 import { sendBroadcast } from "../notifications/broadcast.js";
+import { billingRouter } from "./billing.js";
+import { entitledSql } from "../billing/subscription.js";
 
 export const adminRouter = express.Router();
+
+/* ============================================================
+   الصفحات المالية للمرحلة 3 — اشتراكات، مدفوعات، فواتير، إشعارات
+   دائنة، مؤشرات، سجل أحداث الدفع، وتقرير تكامل البيانات.
+
+   في ملف منفصل (admin/billing.js) لا لأن هذا الملف طويل فحسب، بل
+   لأن المسارات المالية لها قواعد مختلفة: كلها مشروطة بسبب مكتوب،
+   وكلها تُسجَّل في admin_action_log، وأي تعديل عليها يُراجع كتغيير
+   مالي لا كتغيير واجهة.
+
+   المسارات القديمة أدناه (/admin/invoices و/admin/credit-notes)
+   محفوظة كما هي عن قصد: حزمة لوحة الإدارة المبنية داخل المستودع
+   تناديها، ومصدرها غير موجود على GitHub (القسم 12.8 من وثيقة
+   الحالة) فلا يمكن إعادة بنائها الآن. حذفها كان سيكسر صفحات تعمل.
+   ============================================================ */
+adminRouter.use("/billing", billingRouter);
 
 // Login attempts are the highest-value target for brute-forcing —
 // much tighter limit than the general /api/ limiter in index.js.
@@ -186,19 +204,48 @@ adminRouter.patch("/admin-users/:id", requireAdminAuth, requireRole("owner"), as
 // GET /admin/overview
 adminRouter.get("/overview", requireAdminAuth, requireRole("support"), async (req, res) => {
   try {
-    const [{ rows: userCount }, { rows: activeSubs }, { rows: unreadMessages }, { rows: crisisEvents }] = await Promise.all([
+    const [{ rows: userCount }, { rows: activeSubs }, { rows: unreadMessages }, { rows: crisisEvents }, { rows: money }] = await Promise.all([
       query(`SELECT count(*)::int AS n FROM users WHERE deleted_at IS NULL`),
-      query(`SELECT count(*)::int AS n FROM subscriptions WHERE status = 'active'`),
+      /* --------------------------------------------------------
+         كان هذا العدّاد: WHERE status = 'active' — حرفياً.
+
+         وهو خطأ صامت ومتراكم: انتهاء الاشتراك لا يُكتب في العمود
+         (لا cron في المشروع، القسم 12.9)، فاشتراك انتهت مدته من
+         ستة أشهر يبقى status = 'active' إلى الأبد. الرقم المعروض
+         في الصفحة الرئيسية كان مجموع كل من اشترك يوماً ما، لا عدد
+         المشتركين الفعليين، والفارق يتسع كل شهر.
+
+         الآن يُقاس بشرط الاستحقاق الموحّد، وعلى **أحدث** اشتراك
+         لكل مستخدم حتى لا يُحتسب من ألغى ثم عاد أكثر من مرة.
+         -------------------------------------------------------- */
+      query(
+        `SELECT count(*)::int AS n FROM (
+           SELECT DISTINCT ON (user_id) id, user_id, status, current_period_end
+           FROM subscriptions ORDER BY user_id, created_at DESC
+         ) s WHERE ${entitledSql("s")}`
+      ),
       query(`SELECT count(*)::int AS n FROM contact_messages WHERE status = 'unread'`),
       // Categorical/aggregate only — never joined to a specific user here.
       query(`SELECT trigger_source, count(*)::int AS n FROM crisis_trigger_events
              WHERE occurred_at > now() - interval '30 days' GROUP BY trigger_source`),
+      query(
+        `SELECT COALESCE(SUM(amount) FILTER (WHERE status IN ('paid','refunded','partially_refunded')), 0) AS gross,
+                COALESCE(SUM(refunded_amount), 0) AS refunded,
+                count(*) FILTER (WHERE status = 'failed')::int AS failed
+         FROM payments WHERE COALESCE(captured_at, created_at) > now() - interval '30 days'`
+      ),
     ]);
     res.json({
       totalUsers: userCount[0].n,
       activeSubscriptions: activeSubs[0].n,
       unreadMessages: unreadMessages[0].n,
       crisisEventsLast30Days: crisisEvents, // [{ trigger_source, n }, ...]
+      last30Days: {
+        grossRevenue: Number(Number(money[0].gross).toFixed(2)),
+        refunds: Number(Number(money[0].refunded).toFixed(2)),
+        netRevenue: Number((Number(money[0].gross) - Number(money[0].refunded)).toFixed(2)),
+        failedPayments: money[0].failed,
+      },
     });
   } catch (err) {
     console.error(err);
@@ -569,63 +616,131 @@ adminRouter.get(
   }
 );
 
-// POST /admin/users/:id/subscription/cancel  { reason }
-// Immediate cancellation — access is revoked right away, NOT "runs
-// out the current paid period first". Use for disputes/mistakes
-// where continued access isn't appropriate. This does NOT touch
-// invoices or issue a credit note — no money moves. For "customer
-// wants their money back", use /subscription/refund instead.
+// POST /admin/users/:id/subscription/cancel  { reason, atPeriodEnd? }
+//
+// الافتراضي إلغاء فوري (سلوك هذا المسار منذ البداية، ولا يُغيَّر
+// بلا طلب)، و atPeriodEnd: true يحوّله إلى إلغاء بنهاية المدة.
+//
+// لا يلمس فاتورة ولا يصدر إشعاراً دائناً — لا مال يتحرك هنا.
+// لـ"العميل يبي فلوسه" استخدم /admin/billing/payments/:id/refund.
+//
+// أُصلح فيه عطبان: كان يتجاهل canceled_at تماماً (فالاشتراك يُلغى
+// ولا يُعرف متى، ومؤشر "الملغاة في الفترة" يستحيل حسابه)، وكان
+// يشترط status = 'active' حرفياً فلا يقدر على إلغاء اشتراك متعثّر
+// السداد — وهو أكثر ما يُطلب إلغاؤه فعلاً.
 adminRouter.post(
   "/users/:id/subscription/cancel",
   requireAdminAuth,
   requireRole("admin"),
   requireReasonAndLog("manual_subscription_cancel"),
   async (req, res) => {
+    const atPeriodEnd = req.body?.atPeriodEnd === true;
+    const reason = String(req.body?.reason || req.query?.reason || "").trim();
+
     try {
-      const { rows } = await query(
-        `UPDATE subscriptions SET status = 'canceled', updated_at = now()
-         WHERE user_id = $1 AND status = 'active' RETURNING id`,
-        [req.params.id]
-      );
-      if (!rows[0]) return res.status(404).json({ error: "no_active_subscription" });
-      res.json({ ok: true });
+      const result = await withTransaction(async (client) => {
+        const { rows } = await client.query(
+          `SELECT id, status, current_period_end FROM subscriptions
+           WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due')
+           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+          [req.params.id]
+        );
+        const sub = rows[0];
+        if (!sub) throw Object.assign(new Error("no_active_subscription"), { status: 404 });
+
+        if (atPeriodEnd) {
+          await client.query(
+            `INSERT INTO subscription_state (subscription_id, user_id, cancel_at_period_end, cancel_requested_at, cancel_reason)
+             VALUES ($1, $2, true, now(), $3)
+             ON CONFLICT (subscription_id) DO UPDATE
+               SET cancel_at_period_end = true, cancel_requested_at = now(),
+                   cancel_reason = EXCLUDED.cancel_reason, updated_at = now()`,
+            [sub.id, req.params.id, reason || null]
+          );
+          return { subscriptionId: sub.id, mode: "at_period_end", accessUntil: sub.current_period_end, previousStatus: sub.status };
+        }
+
+        await client.query(
+          `UPDATE subscriptions SET status = 'canceled', canceled_at = now(), updated_at = now() WHERE id = $1`,
+          [sub.id]
+        );
+        return { subscriptionId: sub.id, mode: "immediate", accessUntil: null, previousStatus: sub.status };
+      });
+
+      await logAdminAction({
+        adminUserId: req.admin.id,
+        targetUserId: req.params.id,
+        action: "manual_subscription_cancel",
+        oldValue: { status: result.previousStatus },
+        newValue: { mode: result.mode, status: result.mode === "immediate" ? "canceled" : "canceling" },
+        reason: reason || "—",
+        metadata: { subscription_id: result.subscriptionId },
+        ipAddress: req.ip,
+      });
+
+      res.json({ ok: true, ...result });
     } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message });
       console.error(err);
       res.status(500).json({ error: "internal_error" });
     }
   }
 );
 
-// POST /admin/users/:id/subscription/refund  { reason }
-// The full refund path (invoice marked refunded, subscription
-// canceled, real credit note issued) — same underlying logic the
-// Moyasar webhook uses, just triggered manually here for cases like
-// "customer emailed asking for a refund" that never went through the
-// gateway's own refund flow (or did, but the webhook needs a manual
-// nudge). Reuses processRefund(), so it inherits the exact same
-// idempotency protection already tested for the webhook path.
+// POST /admin/users/:id/subscription/refund  { reason, amountSar? }
+//
+// ⚠️ هذا المسار كان أخطر ما في الطبقة المالية كلها.
+//
+// كان يعلّم الفاتورة "مستردة"، ويلغي الاشتراك، ويصدر إشعاراً دائناً
+// حقيقياً بختم ZATCA — **دون أن ينادي Moyasar إطلاقاً**. النتيجة أن
+// الدفاتر والوثيقة الضريبية تقولان إن المبلغ رُدّ، والمال لم يغادر
+// الحساب. وثيقة نظامية صحيحة الشكل تصف واقعة لم تحدث، وموظف الدعم
+// يرى "تم" فيغلق التذكرة، والعميل ينتظر مالاً لن يصل.
+//
+// الآن يمر بـexecuteRefund: نداء حقيقي للمزوّد أولاً، ولا يُسجَّل
+// شيء ولا يصدر إشعار إلا بعد نجاحه. ويدعم الاسترداد الجزئي عبر
+// amountSar. ويعمل على **الدفعة** لا على الفاتورة، لأن الفاتورة قد
+// تحمل أكثر من محاولة دفع وواحدة فقط منها هي المحصَّلة فعلاً.
 adminRouter.post(
   "/users/:id/subscription/refund",
   requireAdminAuth,
   requireRole("admin"),
   requireReasonAndLog("manual_subscription_refund"),
   async (req, res) => {
+    const reason = String(req.body?.reason || req.query?.reason || "").trim();
     try {
-      const reason = req.body?.reason;
-      const result = await withTransaction(async (client) => {
-        const { rows: lockedRows } = await client.query(
-          `SELECT id, user_id, plan_id, amount_sar, status FROM invoices
-           WHERE user_id = $1 AND status = 'paid' ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-          [req.params.id]
-        );
-        const invoiceRow = lockedRows[0];
-        if (!invoiceRow) throw Object.assign(new Error("no_paid_invoice_found"), { status: 404 });
-        return processRefund({ invoiceRow, reason, providerRefundId: null }, client);
+      const { rows } = await query(
+        `SELECT id, amount, refunded_amount, status FROM payments
+         WHERE user_id = $1 AND status IN ('paid', 'partially_refunded')
+         ORDER BY captured_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+        [req.params.id]
+      );
+      const payment = rows[0];
+      if (!payment) return res.status(404).json({ error: "no_refundable_payment_found" });
+
+      const result = await executeRefund({
+        paymentId: payment.id,
+        amountSar: req.body?.amountSar === undefined || req.body?.amountSar === null || req.body?.amountSar === ""
+          ? undefined : Number(req.body.amountSar),
+        reason,
+        adminUserId: req.admin.id,
       });
-      if (result.alreadyRefunded) return res.status(409).json({ error: "already_refunded" });
-      res.json({ ok: true, creditNoteNumber: result.creditNote?.creditNoteNumber || null });
+      if (result.alreadyRecorded) return res.status(409).json({ error: "already_refunded" });
+
+      await logAdminAction({
+        adminUserId: req.admin.id,
+        targetUserId: req.params.id,
+        action: "manual_subscription_refund",
+        oldValue: { payment_status: payment.status, refunded_amount: Number(payment.refunded_amount) },
+        newValue: { kind: result.kind, refunded_amount: result.totalRefunded, credit_note: result.creditNoteNumber },
+        reason: reason || "—",
+        metadata: { payment_id: payment.id },
+        ipAddress: req.ip,
+      });
+
+      res.json({ ok: true, kind: result.kind, amount: result.amount, creditNoteNumber: result.creditNoteNumber || null });
     } catch (err) {
-      if (err.status) return res.status(err.status).json({ error: err.message });
+      if (err.status) return res.status(err.status).json({ error: err.message, detail: err.detail });
       console.error(err);
       res.status(500).json({ error: "internal_error" });
     }
@@ -957,10 +1072,24 @@ adminRouter.get("/invoices", requireAdminAuth, requireRole("admin"), async (req,
        LIMIT $1 OFFSET $2`,
       [pageSize, (page - 1) * pageSize]
     );
-    // Surface this clearly rather than letting it hide in a "null" column
-    // an admin has to notice on their own — see /invoices/:id/regenerate.
-    const needsAttention = rows.filter((r) => !r.zatca_invoice_number).length;
-    res.json({ invoices: rows, page, pageSize, needsAttention });
+    /* --------------------------------------------------------
+       needsAttention كان يُحسب على **الصفحة المعروضة وحدها**:
+       rows.filter(...). فيقول صفراً بينما الصفحة الثالثة فيها خمس
+       فواتير مدفوعة بلا رقم ضريبي. عدّاد تحذير يقول "لا شيء" وهو
+       لا يعرف أسوأ من غيابه.
+       الآن يُحسب على كامل المجموعة، ومعه الإجمالي وعدد الصفحات
+       اللذان كانا ناقصين أصلاً.
+       -------------------------------------------------------- */
+    const [{ rows: totalRows }, { rows: attentionRows }] = await Promise.all([
+      query(`SELECT count(*)::int AS n FROM invoices WHERE status = 'paid'`),
+      query(`SELECT count(*)::int AS n FROM invoices WHERE status = 'paid' AND zatca_invoice_number IS NULL`),
+    ]);
+    const total = totalRows[0].n;
+    res.json({
+      invoices: rows, page, pageSize, total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      needsAttention: attentionRows[0].n,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "internal_error" });
@@ -1097,10 +1226,30 @@ adminRouter.post("/messages/:id/status", requireAdminAuth, requireRole("support"
    worth restricting past the 'support' tier.
    ============================================================ */
 
+/* ------------------------------------------------------------
+   الجمهور يُحدَّد بشرط الاستحقاق الموحّد نفسه، لا بـ status = 'active'.
+
+   العطب الذي كان: رسالة موجّهة "للمشتركين" كانت تصل كل من اشترك
+   يوماً ما، بما فيهم من انتهى اشتراكه من سنة. والأسوأ أن جمهور
+   "المجاني" كان يستثنيهم — فمن انتهى اشتراكه لا يصله عرض التجديد
+   ولا رسالة المشتركين. أي أن الفئة الأولى بالاستهداف تجارياً كانت
+   الوحيدة التي لا تصلها رسالة إطلاقاً.
+   ------------------------------------------------------------ */
+const LATEST_SUB = `
+  SELECT DISTINCT ON (user_id) id, user_id, status, current_period_end
+  FROM subscriptions ORDER BY user_id, created_at DESC`;
+
 const AUDIENCE_QUERIES = {
   all: `SELECT id AS "userId", email FROM users WHERE deleted_at IS NULL AND marketing_opt_out = false`,
-  active_subscribers: `SELECT DISTINCT u.id AS "userId", u.email FROM users u JOIN subscriptions s ON s.user_id = u.id WHERE u.deleted_at IS NULL AND u.marketing_opt_out = false AND s.status = 'active'`,
-  trial_or_free: `SELECT u.id AS "userId", u.email FROM users u WHERE u.deleted_at IS NULL AND u.marketing_opt_out = false AND u.id NOT IN (SELECT user_id FROM subscriptions WHERE status = 'active')`,
+  active_subscribers: `
+    SELECT u.id AS "userId", u.email FROM users u
+    JOIN (${LATEST_SUB}) s ON s.user_id = u.id
+    WHERE u.deleted_at IS NULL AND u.marketing_opt_out = false AND ${entitledSql("s")}`,
+  trial_or_free: `
+    SELECT u.id AS "userId", u.email FROM users u
+    LEFT JOIN (${LATEST_SUB}) s ON s.user_id = u.id
+    WHERE u.deleted_at IS NULL AND u.marketing_opt_out = false
+      AND (s.id IS NULL OR NOT ${entitledSql("s")})`,
 };
 
 // GET /admin/broadcasts/audience-count?audience=all

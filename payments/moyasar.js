@@ -54,13 +54,16 @@ async function moyasarRequest(path, { method = "GET", body } = {}) {
  * function does the halala conversion (SAR × 100) so callers never
  * have to remember Moyasar wants the smallest currency unit.
  */
-export async function createInvoice({ amountSar, description, callbackUrl, successUrl, backUrl, expiresAt }) {
+export async function createInvoice({ amountSar, description, callbackUrl, successUrl, backUrl, expiresAt, currency = "SAR", metadata }) {
   const amountHalalas = Math.round(amountSar * 100);
   return moyasarRequest("/invoices", {
     method: "POST",
     body: {
       amount: amountHalalas,
-      currency: "SAR",
+      // العملة تأتي من الإعداد المركزي (billing_settings) بدل نص
+      // ثابت هنا — القيمة الافتراضية مطابقة للسلوك السابق.
+      currency,
+      ...(metadata ? { metadata } : {}),
       description,
       callback_url: callbackUrl,
       success_url: successUrl,
@@ -73,6 +76,77 @@ export async function createInvoice({ amountSar, description, callbackUrl, succe
 export async function fetchInvoice(invoiceId) {
   return moyasarRequest(`/invoices/${invoiceId}`);
 }
+
+/**
+ * يقرأ حالة دفعة واحدة من المزوّد مباشرة.
+ *
+ * هذه هي "الحقيقة النهائية" حين تختلف قاعدتنا مع المزوّد: تُستخدم
+ * في مسار التسوية اليدوية من اللوحة، وفي إعادة تشغيل حدث webhook
+ * فشلت معالجته، بدل الاعتماد على حمولة قديمة قد تكون تجاوزها
+ * الواقع.
+ */
+export async function fetchPayment(paymentId) {
+  return moyasarRequest(`/payments/${paymentId}`);
+}
+
+/**
+ * استرداد حقيقي عبر المزوّد — كامل أو جزئي.
+ *
+ * هذه الدالة هي ما كان ناقصاً فعلياً: مسار الاسترداد الإداري كان
+ * يعلّم الفاتورة "مستردة" ويصدر إشعاراً دائناً **دون أن ينادي
+ * Moyasar إطلاقاً**. النتيجة دفاتر تقول إن المبلغ رُدّ، وحساب بنكي
+ * لم يغادره ريال. أسوأ من عطل ظاهر لأنه يبدو ناجحاً.
+ *
+ * `amountSar` اختياري: تركه فارغاً يعني استرداداً كاملاً — وهذا
+ * سلوك Moyasar الافتراضي، لا افتراض من عندنا. تمريره يحوّل العملية
+ * إلى استرداد جزئي، والتحويل إلى الهللات يتم هنا مرة واحدة حتى لا
+ * يتكرر في كل مُنادٍ.
+ */
+export async function refundPayment(paymentId, amountSar) {
+  const body = {};
+  if (amountSar !== undefined && amountSar !== null) {
+    const halalas = Math.round(Number(amountSar) * 100);
+    if (!Number.isFinite(halalas) || halalas <= 0) {
+      throw new Error(`refundPayment: مبلغ استرداد غير صالح (${amountSar})`);
+    }
+    body.amount = halalas;
+  }
+  return moyasarRequest(`/payments/${paymentId}/refund`, { method: "POST", body });
+}
+
+/**
+ * قائمة الأحداث التي يدعمها المزوّد فعلاً.
+ *
+ * موجودة لأن سكربت تسجيل الـwebhook كان يسجّل حدثين فقط
+ * (payment_paid و payment_failed) بينما الكود يعالج
+ * payment_refunded — أي أن معالج الاسترداد لم يكن ليُستدعى أبداً في
+ * الإنتاج مهما كان صحيحاً. يُستدعى هذا المسار قبل التسجيل لتقاطع
+ * ما نريده مع ما هو مدعوم فعلاً، بدل تخمين الأسماء.
+ *
+ * يعيد null لو لم يكن المسار متاحاً — والمُنادي يتراجع عندها إلى
+ * القائمة المطلوبة كما هي بدل أن يفشل.
+ */
+export async function fetchAvailableWebhookEvents() {
+  try {
+    const data = await moyasarRequest("/webhooks/available_events");
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.events)) return data.events;
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * الأحداث التي يعالجها هذا الخادم فعلياً. أي حدث خارج هذه القائمة
+ * يُسجَّل ويُتجاهل بوعي، لا يُسقط بصمت.
+ */
+export const HANDLED_WEBHOOK_EVENTS = Object.freeze([
+  "payment_paid",
+  "payment_failed",
+  "payment_refunded",
+  "payment_voided",
+]);
 
 /**
  * Registers a real Moyasar webhook against your account. Run this

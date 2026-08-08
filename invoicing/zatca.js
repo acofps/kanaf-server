@@ -52,19 +52,33 @@ export function buildZatcaQrPayload({ sellerName, vatNumber, timestampIso, invoi
   return buf.toString("base64");
 }
 
-const VAT_RATE = 0.15; // Saudi standard VAT rate
+/* ------------------------------------------------------------
+   نسبة الضريبة لم تعد ثابتة هنا.
+
+   كانت `const VAT_RATE = 0.15` في هذا الملف، ونص "(15%)" مكتوباً
+   حرفياً مرتين في invoicing/pdf.js. أي تعديل مستقبلي على النسبة كان
+   يتطلب تذكّر أربعة مواضع، ونسيان أحدها يُنتج فاتورة أرقامها لا
+   تطابق نصّها — وهي وثيقة قانونية.
+
+   المصدر الآن جدول billing_settings عبر billing/config.js. الدالة
+   أدناه محفوظة كما هي للتوافق مع أي مُنادٍ قديم، بقيمة افتراضية
+   مطابقة تماماً للسلوك السابق، لكن المسارات الحيّة كلها تمرّر النسبة
+   المقروءة من الإعداد صراحةً.
+   ------------------------------------------------------------ */
+export const DEFAULT_VAT_RATE = 0.15;
 
 /**
- * Our subscription prices are VAT-INCLUSIVE (the "29 SAR/month" shown
- * to the customer already includes VAT — standard practice for
- * consumer-facing pricing in KSA). This backs out the subtotal and
- * VAT amount from that inclusive total for the invoice breakdown.
- * Returns strings formatted to 2 decimals, ready for both the PDF
- * and the QR TLV fields.
+ * يفصل الإجمالي الشامل للضريبة إلى وعاء وضريبة.
+ * أسعار كنف معروضة شاملة الضريبة، وهذا يستخرج التفصيل منها.
+ * يعيد نصوصاً بمنزلتين — نفس القيمة بالضبط تدخل الـPDF وحمولة الـQR.
  */
-export function splitVatInclusiveAmount(totalInclVat) {
+export function splitVatInclusiveAmount(totalInclVat, vatRate = DEFAULT_VAT_RATE) {
   const total = Number(totalInclVat);
-  const subtotal = total / (1 + VAT_RATE);
+  const rate = Number(vatRate);
+  if (!Number.isFinite(rate) || rate < 0 || rate >= 1) {
+    throw new Error(`splitVatInclusiveAmount: نسبة ضريبة غير صالحة (${vatRate})`);
+  }
+  const subtotal = total / (1 + rate);
   const vat = total - subtotal;
   return {
     subtotal: subtotal.toFixed(2),

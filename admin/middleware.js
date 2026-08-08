@@ -109,17 +109,43 @@ export async function logAdminAction({
  *
  *   router.get("/users/:id/sensitive", requireAdminAuth,
  *     requireReasonAndLog("view_sensitive_data"), handler)
+ *
+ * ============================================================
+ * options.resolveTargetUserId — أُضيف في المرحلة 3، وسببه عطب حقيقي
+ * ============================================================
+ * كان الهدف يُستنتج دائماً بـ`req.params.userId || req.params.id`.
+ * الافتراض الضمني: كل مسار محمي بهذه الوسيطة معرّفه في المسار هو
+ * معرّف مستخدم. كان صحيحاً حين كُتب — كل المسارات وقتها كانت
+ * /users/:id/... — وسقط فور وجود مسار مالي معرّفه معرّف **دفعة**:
+ *
+ *   POST /admin/billing/payments/:id/refund
+ *
+ * فيُكتب معرّف دفعة في عمود admin_access_log.target_user_id الذي له
+ * مفتاح أجنبي إلى users، فيرفضه القيد، فترد الوسيطة 500
+ * audit_log_failed — و**الاسترداد كله يتوقف قبل أن يبدأ**.
+ *
+ * الحمد لله أن ترتيب الفشل كان في الاتجاه الآمن: العملية لم تُنفَّذ
+ * أصلاً لأن السجل يُكتب قبل المعالج. لو كان الترتيب معكوساً لكان
+ * المال قد استُرد بلا أثر في سجل التدقيق.
+ *
+ * الحل: المسار يعلن كيف يُشتق هدفه — دالة قد تكون غير متزامنة، أو
+ * () => null لمسار لا هدف مستخدم له أصلاً (تعديل الإعداد الضريبي
+ * مثلاً). والسلوك الافتراضي كما كان تماماً.
  */
-export function requireReasonAndLog(action) {
+export function requireReasonAndLog(action, options = {}) {
+  const resolveTargetUserId =
+    options.resolveTargetUserId || ((req) => req.params.userId || req.params.id || null);
+
   return async (req, res, next) => {
     const reason = req.body?.reason || req.query?.reason;
     if (!reason || !String(reason).trim()) {
       return res.status(400).json({ error: "reason_required", message: "لازم تكتب سبب قبل ما تشوف بيانات حساسة." });
     }
     try {
+      const targetUserId = (await resolveTargetUserId(req)) || null;
       await logSensitiveAccess({
         adminUserId: req.admin.id,
-        targetUserId: req.params.userId || req.params.id || null,
+        targetUserId,
         action,
         reason: String(reason),
         ipAddress: req.ip,
