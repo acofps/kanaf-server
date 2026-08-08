@@ -1,7 +1,7 @@
 import { withTransaction } from "../db/pool.js";
 import { isGenuineWebhook, HANDLED_WEBHOOK_EVENTS } from "./moyasar.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
-import { recordRefund } from "./refund.js";
+import { recordRefund, issueCreditNoteDocument } from "./refund.js";
 import { activateOrExtendSubscription, markPastDueIfEntitled } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
 
@@ -197,7 +197,18 @@ async function handlePaymentPaid(client, providerPayment) {
   const { payment, alreadyTerminal } = await upsertPayment(client, {
     invoice, providerPayment, status: "paid",
   });
-  if (alreadyTerminal) return { outcome: "payment_already_recorded", invoiceId: invoice.id };
+  if (alreadyTerminal) {
+    /* الدفعة مسجّلة من قبل، فلا نلمس المال. لكن قد تكون الفاتورة
+       الضريبية لم تصدر (فشل مستند سابق) — وإعادة التشغيل يجب أن
+       تصلح ذلك، لا أن تتوقف عند "مسجّلة أصلاً" وتترك فاتورة مدفوعة
+       بلا رقم قانوني إلى الأبد. */
+    return {
+      outcome: "payment_already_recorded",
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.zatca_invoice_number || null,
+      needsInvoiceDocument: invoice.status === "paid" && !invoice.zatca_invoice_number,
+    };
+  }
 
   // الفاتورة تُرفع إلى paid حتى لو كانت failed — وهذا جوهر الإصلاح:
   // محاولة فاشلة سابقة لا تُغلق الفاتورة أمام محاولة ناجحة لاحقة.
@@ -230,37 +241,38 @@ async function handlePaymentPaid(client, providerPayment) {
     paymentId: payment.id,
   });
 
-  // الفاتورة الضريبية تُصدر داخل نفس المعاملة، فلا يُستهلك رقم
-  // تسلسلي لدفعة لم تُسجَّل. وفشل توليد المستند لا يُرجّع تفعيل
-  // اشتراك دفع العميل ثمنه فعلاً — يُسجَّل للمتابعة اليدوية.
-  let invoiceNumber = invoice.zatca_invoice_number || null;
-  if (!invoiceNumber) {
-    const { rows: userRows } = await client.query(`SELECT name, email FROM users WHERE id = $1`, [invoice.user_id]);
-    try {
-      const generated = await generateAndStoreInvoice({
-        invoiceId: invoice.id,
-        userId: invoice.user_id,
-        planName: plan.name,
-        planKey: plan.plan_key,
-        totalSar: invoice.amount_sar,
-        buyerEmail: userRows[0]?.email,
-        buyerName: userRows[0]?.name,
-        billingCycle: activation.planName ? undefined : undefined,
-        periodStart: activation.periodStart,
-        periodEnd: activation.periodEnd,
-      }, client);
-      invoiceNumber = generated?.invoiceNumber || null;
-    } catch (invoiceErr) {
-      console.error(`[webhook] فشل توليد الفاتورة الضريبية للفاتورة ${invoice.id}:`, invoiceErr);
-    }
-  }
+  /* --------------------------------------------------------
+     🔴 الفاتورة الضريبية **لا** تُولَّد هنا. كانت تُولَّد داخل هذه
+     المعاملة بالضبط، وأسقطت أول دفعة حقيقية على الإنتاج.
 
+     ما حدث: nextval على تسلسل الأرقام فشل بـ
+     «permission denied for sequence» (التسلسل مملوك للمستخدم
+     الفائق، والتطبيق يتصل بمستخدم آخر). التقط try/catch الخطأ
+     وأكمل التنفيذ — لكن PostgreSQL كان قد وضع المعاملة في حالة
+     مُجهَضة عند أول عبارة فاشلة، و COMMIT على معاملة مُجهَضة
+     **ينجح ظاهرياً وينفّذ ROLLBACK فعلياً**، بلا خطأ يُرفع.
+
+     فضاع كل شيء: الدفعة، وحالة الفاتورة، والاشتراك — بينما سجل
+     الأحداث يقول "processed" ويعطي معرّفات لصفوف لم تعد موجودة.
+     العميل دفع، والنظام يظن أنه نجح، ولا أثر لشيء.
+
+     الدرس: **لا يجوز التقاط خطأ داخل معاملة ثم الاستمرار.** أي
+     خطأ من قاعدة البيانات يُجهض المعاملة كلها، فالالتقاط لا يعزل
+     شيئاً — يخفي الانهيار فقط.
+
+     الإصلاح: تلتزم هذه المعاملة بالمال وحده (دفعة + فاتورة
+     مدفوعة + اشتراك). وإصدار المستند يجري في معاملة مستقلة بعد
+     التثبيت، فيتحقق المقصود الأصلي فعلياً: فشل المستند لا يمسّ
+     اشتراكاً دفع العميل ثمنه.
+     -------------------------------------------------------- */
   return {
     outcome: activation.isRenewal ? "renewal_activated" : "subscription_activated",
     invoiceId: invoice.id,
     paymentId: payment.id,
     subscriptionId: activation.subscriptionId,
-    invoiceNumber,
+    invoiceNumber: invoice.zatca_invoice_number || null,
+    // يقرؤه المُنادي بعد نجاح المعاملة — انظر issueInvoiceDocument.
+    needsInvoiceDocument: !invoice.zatca_invoice_number,
   };
 }
 
@@ -333,6 +345,9 @@ async function handlePaymentRefunded(client, providerPayment, eventId) {
     paymentId: payment.id,
     creditNoteNumber: result.creditNoteNumber || null,
     refundedTotal: providerTotalRefunded,
+    // يُصدره المُنادي بعد تثبيت المعاملة، لا داخلها.
+    refundId: result.refundId || null,
+    needsCreditNote: Boolean(result.needsCreditNote),
   };
 }
 
@@ -350,6 +365,66 @@ async function handlePaymentVoided(client, providerPayment) {
     [invoice.id]
   );
   return { outcome: "payment_voided", invoiceId: invoice.id, paymentId: payment.id };
+}
+
+/**
+ * يُصدر الفاتورة الضريبية لفاتورة مدفوعة، **في معاملة مستقلة**.
+ *
+ * يُنادى بعد نجاح معاملة الدفع وتثبيتها. فشله هنا لا يمسّ الدفعة
+ * ولا الاشتراك — وهذا هو المقصود الذي فشل تنفيذه من قبل حين كان
+ * التوليد داخل نفس المعاملة.
+ *
+ * يعيد رقم الفاتورة عند النجاح، و null عند الفشل. والفاتورة
+ * المدفوعة بلا رقم تظهر في تقرير التكامل تحت
+ * paid_invoice_without_tax_number، وتُعاد محاولتها من زر
+ * «إعادة توليد» في صفحة الفواتير.
+ */
+export async function issueInvoiceDocument(invoiceId) {
+  if (!invoiceId) return null;
+  try {
+    return await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `SELECT i.id, i.user_id, i.plan_id, i.amount_sar, i.zatca_invoice_number,
+                u.name AS user_name, u.email AS user_email,
+                ss.current_period_start, s.current_period_end, ss.billing_cycle
+         FROM invoices i
+         JOIN users u ON u.id = i.user_id
+         LEFT JOIN subscriptions s ON s.id = i.subscription_id
+         LEFT JOIN subscription_state ss ON ss.subscription_id = s.id
+         WHERE i.id = $1 AND i.status IN ('paid', 'refunded')
+         FOR UPDATE OF i`,
+        [invoiceId]
+      );
+      const invoice = rows[0];
+      if (!invoice) return null;
+      if (invoice.zatca_invoice_number) return invoice.zatca_invoice_number;
+
+      const { rows: planRows } = await client.query(
+        `SELECT plan_key, name FROM subscription_plans WHERE plan_key = $1`, [invoice.plan_id]
+      );
+
+      const generated = await generateAndStoreInvoice({
+        invoiceId: invoice.id,
+        userId: invoice.user_id,
+        planName: planRows[0]?.name || invoice.plan_id,
+        planKey: planRows[0]?.plan_key || invoice.plan_id,
+        totalSar: invoice.amount_sar,
+        buyerEmail: invoice.user_email,
+        buyerName: invoice.user_name,
+        billingCycle: invoice.billing_cycle,
+        periodStart: invoice.current_period_start,
+        periodEnd: invoice.current_period_end,
+      }, client);
+
+      return generated?.invoiceNumber || null;
+    });
+  } catch (err) {
+    console.error(
+      `[invoice] تعذّر إصدار الفاتورة الضريبية للفاتورة ${invoiceId}. ` +
+      `الدفعة والاشتراك سليمان ولم يتأثرا. السبب:`, err
+    );
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------
@@ -432,6 +507,16 @@ export async function handleMoyasarWebhook(req, res) {
 
   try {
     const result = await withTransaction((client) => processWebhookEvent(client, { eventType, body }));
+
+    // بعد التثبيت لا قبله: إصدار المستند لا يشارك معاملة المال.
+    if (result.needsInvoiceDocument) {
+      result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
+      delete result.needsInvoiceDocument;
+    }
+    if (result.needsCreditNote) {
+      result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
+      delete result.needsCreditNote;
+    }
 
     const ignoredOutcomes = [
       "unmatched_invoice", "unmatched_payment", "payment_already_recorded",

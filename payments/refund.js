@@ -140,48 +140,84 @@ export async function recordRefund(client, {
     );
   }
 
-  // الإشعار الدائن بمبلغ هذا الاسترداد وحده — استردادان جزئيان
-  // ينتجان إشعارين، وهذا هو الصحيح: كل إشعار يصحّح مبلغاً محدداً.
-  let creditNote = null;
-  try {
-    const { rows: invRows } = await client.query(
-      `SELECT plan_id FROM invoices WHERE id = $1`, [payment.invoice_id]
-    );
-    const { rows: planRows } = await client.query(
-      `SELECT name FROM subscription_plans WHERE plan_key = $1`, [invRows[0]?.plan_id]
-    );
-    const { rows: userRows } = await client.query(`SELECT name, email FROM users WHERE id = $1`, [payment.user_id]);
+  /* --------------------------------------------------------
+     🔴 الإشعار الدائن **لا** يُصدر هنا — للسبب نفسه الذي أسقط أول
+     دفعة حقيقية على الإنتاج (انظر التعليق المفصّل في
+     payments/webhook.js).
 
-    creditNote = await generateAndStoreCreditNote({
-      originalInvoiceId: payment.invoice_id,
-      userId: payment.user_id,
-      planName: planRows[0]?.name || invRows[0]?.plan_id || "اشتراك",
-      amountSar: amount,
-      reason: reason || "استرداد",
-      buyerEmail: userRows[0]?.email,
-      buyerName: userRows[0]?.name,
-      providerRefundId,
-    }, client);
+     التقاط خطأ داخل معاملة ثم الاستمرار لا يعزل شيئاً: أي خطأ من
+     قاعدة البيانات يُجهض المعاملة كلها، و COMMIT بعده ينجح ظاهرياً
+     وينفّذ ROLLBACK فعلياً. فكان فشل إصدار الإشعار سيمحو الاسترداد
+     نفسه — والمال يكون قد غادر حساب المزوّد فعلاً.
 
-    if (creditNote?.creditNoteId) {
-      await client.query(`UPDATE refunds SET credit_note_id = $1, updated_at = now() WHERE id = $2`,
-        [creditNote.creditNoteId, refundRowId]);
-    }
-  } catch (err) {
-    // مستند فاشل لا يُرجِّع استرداداً استحقّه العميل فعلاً — يُسجَّل
-    // للتسوية اليدوية، ويظهر في تقرير التكامل كاسترداد بلا إشعار.
-    console.error(`[refund] فشل إصدار الإشعار الدائن للاسترداد ${refundRowId}:`, err);
-  }
-
+     الإصدار الآن في معاملة مستقلة عبر issueCreditNoteDocument،
+     يستدعيها المُنادي بعد التثبيت.
+     -------------------------------------------------------- */
   return {
     alreadyRecorded: false,
     refundId: refundRowId,
     kind: isFull ? "full" : "partial",
     amount,
     totalRefunded,
-    creditNoteId: creditNote?.creditNoteId || null,
-    creditNoteNumber: creditNote?.creditNoteNumber || null,
+    creditNoteId: null,
+    creditNoteNumber: null,
+    needsCreditNote: true,
   };
+}
+
+/**
+ * يُصدر الإشعار الدائن لاسترداد مسجَّل، **في معاملة مستقلة**.
+ *
+ * فشله لا يمسّ الاسترداد — العميل استحق ماله وقد غادر فعلاً. يظهر
+ * عندها في تقرير التكامل تحت succeeded_refund_without_credit_note.
+ */
+export async function issueCreditNoteDocument(refundId) {
+  if (!refundId) return null;
+  try {
+    return await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `SELECT r.id, r.user_id, r.invoice_id, r.amount, r.reason, r.provider_refund_id,
+                r.credit_note_id, i.plan_id, u.name AS user_name, u.email AS user_email
+         FROM refunds r
+         JOIN users u ON u.id = r.user_id
+         LEFT JOIN invoices i ON i.id = r.invoice_id
+         WHERE r.id = $1 AND r.status = 'succeeded'
+         FOR UPDATE OF r`,
+        [refundId]
+      );
+      const refund = rows[0];
+      if (!refund || refund.credit_note_id) return null;
+
+      const { rows: planRows } = await client.query(
+        `SELECT name FROM subscription_plans WHERE plan_key = $1`, [refund.plan_id]
+      );
+
+      const creditNote = await generateAndStoreCreditNote({
+        originalInvoiceId: refund.invoice_id,
+        userId: refund.user_id,
+        planName: planRows[0]?.name || refund.plan_id || "اشتراك",
+        amountSar: refund.amount,
+        reason: refund.reason || "استرداد",
+        buyerEmail: refund.user_email,
+        buyerName: refund.user_name,
+        providerRefundId: refund.provider_refund_id,
+      }, client);
+
+      if (creditNote?.creditNoteId) {
+        await client.query(
+          `UPDATE refunds SET credit_note_id = $1, updated_at = now() WHERE id = $2`,
+          [creditNote.creditNoteId, refund.id]
+        );
+      }
+      return creditNote?.creditNoteNumber || null;
+    });
+  } catch (err) {
+    console.error(
+      `[refund] تعذّر إصدار الإشعار الدائن للاسترداد ${refundId}. ` +
+      `الاسترداد نفسه سليم ولم يتأثر. السبب:`, err
+    );
+    return null;
+  }
 }
 
 /**
@@ -256,8 +292,8 @@ export async function executeRefund({ paymentId, amountSar, reason, adminUserId 
     });
   }
 
-  /* 3) تثبيت النتيجة */
-  return withTransaction(async (client) => {
+  /* 3) تثبيت النتيجة، ثم إصدار الإشعار في معاملة مستقلة */
+  const settled = await withTransaction(async (client) => {
     const found = await lockAndComputeAvailable(client, paymentId);
     const payment = found.payment;
 
@@ -278,4 +314,10 @@ export async function executeRefund({ paymentId, amountSar, reason, adminUserId 
       refundId: reservation.refundId,
     });
   });
+
+  if (settled.needsCreditNote) {
+    settled.creditNoteNumber = await issueCreditNoteDocument(settled.refundId);
+    delete settled.needsCreditNote;
+  }
+  return settled;
 }

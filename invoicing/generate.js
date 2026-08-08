@@ -44,7 +44,7 @@ export async function generateAndStoreInvoice({
 
   const settings = await getBillingSettings(client);
 
-  const { rows: seqRows } = await runner.query(`SELECT nextval('zatca_invoice_number_seq') AS n`);
+  const { rows: seqRows } = await runner.query(`SELECT nextval('kanaf_invoice_number_seq') AS n`);
   const seqNumber = seqRows[0].n;
   const year = new Date().getFullYear();
   const invoiceNumber = `${settings.invoiceNumberPrefix}-${year}-${String(seqNumber).padStart(6, "0")}`;
@@ -160,7 +160,7 @@ export async function generateAndStoreCreditNote({
     currency: original?.currency || currentSettings.currency,
   };
 
-  const { rows: seqRows } = await runner.query(`SELECT nextval('zatca_credit_note_number_seq') AS n`);
+  const { rows: seqRows } = await runner.query(`SELECT nextval('kanaf_credit_note_number_seq') AS n`);
   const year = new Date().getFullYear();
   const creditNoteNumber = `${currentSettings.creditNoteNumberPrefix}-${year}-${String(seqRows[0].n).padStart(6, "0")}`;
   const issuedAt = new Date();

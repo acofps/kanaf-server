@@ -3,8 +3,8 @@ import { query, withTransaction } from "../db/pool.js";
 import { requireAdminAuth, requireRole, requireReasonAndLog, logAdminAction } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
 import { effectiveStatusSql, entitledSql } from "../billing/subscription.js";
-import { executeRefund } from "../payments/refund.js";
-import { processWebhookEvent } from "../payments/webhook.js";
+import { executeRefund, issueCreditNoteDocument } from "../payments/refund.js";
+import { processWebhookEvent, issueInvoiceDocument } from "../payments/webhook.js";
 import { fetchPayment } from "../payments/moyasar.js";
 
 export const billingRouter = express.Router();
@@ -709,11 +709,33 @@ billingRouter.post(
       const { rows } = await query(`SELECT id, event_type, payload, status FROM webhook_events WHERE id = $1`, [req.params.id]);
       const event = rows[0];
       if (!event) return res.status(404).json({ error: "not_found" });
-      if (event.status === "processed") return res.status(409).json({ error: "already_processed" });
 
+      /* ------------------------------------------------------
+         إعادة تشغيل حدث "processed" مسموحة عن قصد.
+
+         كان الشرط يرفضها، بافتراض أن المعالَج معالَج فعلاً. وسقط
+         هذا الافتراض على الإنتاج: حدث سُجّل processed بينما معاملته
+         تراجعت بصمت (خطأ صلاحية على تسلسل الأرقام أجهض المعاملة،
+         و COMMIT بعده نفّذ ROLLBACK) — فلم يبقَ ما يُعاد تشغيله ولا
+         طريق لاستعادته.
+
+         وإعادة التشغيل آمنة أصلاً: الحماية الحقيقية من التكرار على
+         مستوى **الدفعة** لا الحدث. فلو كانت الدفعة مسجَّلة تعود
+         النتيجة payment_already_recorded بلا أثر، ولو لم تكن مسجَّلة
+         فهذا بالضبط ما نريد إصلاحه.
+         ------------------------------------------------------ */
       const result = await withTransaction((client) =>
         processWebhookEvent(client, { eventType: event.event_type, body: event.payload })
       );
+
+      if (result.needsInvoiceDocument) {
+        result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
+        delete result.needsInvoiceDocument;
+      }
+      if (result.needsCreditNote) {
+        result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
+        delete result.needsCreditNote;
+      }
 
       await query(
         `UPDATE webhook_events SET status = 'processed', outcome = $1, error = NULL,
@@ -766,6 +788,15 @@ billingRouter.post(
       const result = await withTransaction((client) =>
         processWebhookEvent(client, { eventType, body: { id: null, type: eventType, data: providerPayment } })
       );
+
+      if (result.needsInvoiceDocument) {
+        result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
+        delete result.needsInvoiceDocument;
+      }
+      if (result.needsCreditNote) {
+        result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
+        delete result.needsCreditNote;
+      }
 
       await logAdminAction({
         adminUserId: req.admin.id, action: "payment_reconcile",

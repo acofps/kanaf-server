@@ -168,8 +168,8 @@ async function run() {
                credit_notes, invoices, subscriptions, admin_action_log, admin_access_log,
                user_sessions, user_auth_state, email_verification_codes, users, admin_users
                RESTART IDENTITY CASCADE`);
-  await query(`ALTER SEQUENCE zatca_invoice_number_seq RESTART WITH 1`);
-  await query(`ALTER SEQUENCE zatca_credit_note_number_seq RESTART WITH 1`);
+  await query(`ALTER SEQUENCE kanaf_invoice_number_seq RESTART WITH 1`);
+  await query(`ALTER SEQUENCE kanaf_credit_note_number_seq RESTART WITH 1`);
   // subscription_plans و tax_settings يشيران إلى admin_users، فيمسحهما
   // TRUNCATE ... CASCADE معه. نعيد بذرهما بنفس قيم schema.sql.
   await query(
