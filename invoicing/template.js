@@ -56,7 +56,7 @@ const FONT_FILES = [
 ];
 
 let fontFacesCache = null;
-function fontFaces() {
+export function fontFaces() {
   if (fontFacesCache !== null) return fontFacesCache;
   try {
     const dir = fontsourceDir();

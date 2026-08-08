@@ -231,20 +231,44 @@ async function guardedRender(html, timeoutMs) {
 }
 
 /**
- * فحص إقلاع: يرسم صفحة عربية صغيرة ويتأكد أن الناتج PDF سليم.
+ * فحص إقلاع: يرسم صفحة عربية بخط الفاتورة نفسه ويتأكد أن الناتج
+ * وثيقة سليمة فيها خط مضمَّن فعلاً.
  *
- * الغرض منه أن يظهر عطب النشر في سجل Render فوراً، لا عند أول
- * عملية دفع حقيقية. نشر بلا Chromium يعني دفعات صحيحة بلا
- * فواتير — وهذا بالضبط ما لا نريد تكراره.
+ * الغرض أن يظهر عطب النشر في سجل الخادم فوراً، لا عند أول عملية
+ * دفع حقيقية. نشر بلا متصفّح يعني دفعات صحيحة بلا فواتير — وهذا
+ * بالضبط ما لا نريد تكراره.
+ *
+ * ⚠️ درس من أول تشغيل على الإنتاج: النسخة الأولى من هذا الفحص
+ * كانت ترسم بخط النظام، وخوادم النشر بلا خطوط عربية أصلاً — فخرجت
+ * صفحة بلا حروف (1404 بايت) و«نجح» الفحص. فحصٌ يمرّ بينما لا حرف
+ * عربي على الورق أسوأ من لا فحص، لأنه يمنح طمأنينة كاذبة.
+ *
+ * لذلك صار الفحص يستعمل @font-face الحقيقي للفاتورة، ويشترط أن
+ * يحتوي الناتج على مجرى خط مضمَّن (FontFile) — وهو ما لا يظهر إلا
+ * إذا رُسمت حروف فعلاً بذلك الخط.
  */
 export async function verifyRenderer() {
   const started = Date.now();
+  const { fontFaces } = await import("./template.js");
   const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-<style>@page{size:A4;margin:0}body{padding:10mm;font-size:12pt}</style></head>
-<body>فحص إقلاع مولّد الفواتير — تجربة تشكيل عربي.</body></html>`;
+<style>${fontFaces()}
+@page{size:A4;margin:0}
+body{font-family:"Kanaf",sans-serif;padding:10mm;font-size:12pt}</style></head>
+<body><p>فحص إقلاع مولّد الفواتير — تجربة تشكيل عربي.</p>
+<p>0123456789</p></body></html>`;
+
   const pdf = await renderHtmlToPdf(html, { timeoutMs: 20_000 });
-  if (!Buffer.isBuffer(pdf) || pdf.length < 500 || pdf.subarray(0, 5).toString() !== "%PDF-") {
+  if (!Buffer.isBuffer(pdf) || pdf.subarray(0, 5).toString() !== "%PDF-") {
     throw new Error("ناتج الفحص ليس ملف PDF صالحاً");
+  }
+  // البحث في البايتات مباشرة: أسماء المفاتيح في PDF نصّ لاتيني
+  // عادي حتى داخل ملف مضغوط المحتوى.
+  const raw = pdf.toString("latin1");
+  if (!raw.includes("FontFile")) {
+    throw new Error(
+      "الناتج بلا خط مضمَّن — الحروف لم تُرسم. تحقّق من تثبيت " +
+      "@fontsource/ibm-plex-sans-arabic (شغّل npm install)."
+    );
   }
   await closeBrowser();
   return { bytes: pdf.length, ms: Date.now() - started };
