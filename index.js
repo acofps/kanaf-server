@@ -13,6 +13,15 @@ import { runMigrations, migrationStatus } from "./db/migrate.js";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe.js";
 import { hashPassword } from "./admin/auth.js";
 import { verifyRenderer, closeBrowser } from "./invoicing/render.js";
+/* ---------------------------------------------------------
+   المرحلة 4 — المحتوى والإشعارات والبيانات التشغيلية للمستخدم.
+--------------------------------------------------------- */
+import { contentRouter } from "./content/routes.js";
+import { userDataRouter, pushPublicKeyRouter } from "./userdata/routes.js";
+import { adminContentRouter } from "./admin/content.js";
+import { adminNotificationsRouter } from "./admin/notifications.js";
+import { sweepMiddleware } from "./notifications/scheduler.js";
+import { requireUserAuth } from "./auth/middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -81,9 +90,81 @@ app.use(
        الاستبدال ليس فتحاً للباب: المسار محمي بتحقق السر قبل أي
        كتابة، وبقيد فريد يمنع تكرار الأحداث.
     --------------------------------------------------------- */
-    skip: (req) => req.originalUrl.startsWith("/api/payments/webhook"),
+    /* ------------------------------------------------------------
+       الاستثناءات — أُعيد النظر فيها في المرحلة 4.
+
+       الحد 60 طلباً لكل ربع ساعة كُتب حين كان تحت /api/ ثلاثة
+       مسارات فقط. المرحلة 4 أدخلت تحته **مستوى بيانات التطبيق
+       كاملاً**: الكتالوج، وكل /api/me/*، ومسار الأمان. إقلاع واحد
+       للتطبيق يستهلك خمسة طلبات، وجلسة استخدام عادية تتجاوز
+       الستين بسهولة. والأخطر: العنوان الواحد قد يخدم حياً كاملاً
+       خلف CGNAT، فيُخنق كل مستخدميه معاً.
+
+       والأسوأ من ذلك كله أن المحدِّد يسبق crisisFirewall — أي أن
+       مستخدماً في أزمة على عنوان مزدحم كان يستقبل «طلبات كثيرة»
+       بدل مسار الأمان. وهذا كسر مباشر لالتزام لا يُكسر.
+
+       المستثنى هنا لا يعني بلا حماية:
+         • /api/crisis-signal و /api/chat و /api/plan — مسار الأمان
+           ومحادثته. /api/chat و /api/plan محميان بالمصادقة بعد
+           جدار الأمان، فالتكلفة لا تُستهلك بلا حساب.
+         • /api/me/* — كلها خلف requireVerifiedUser، فالحد الطبيعي
+           هو الحساب الموثَّق لا العنوان.
+         • /api/content/catalog — قراءة عامة بلا بيانات شخصية.
+         • webhook الدفع — أحداث Moyasar تصل من عناوين قليلة فتبدو
+           «عميلاً واحداً»؛ رفضها بـ429 يعني دفعة بلا تفعيل.
+
+       الباقي (التسجيل، الدخول، إعادة التعيين، التواصل) يظل تحت
+       الحد الأصلي، وهو ما يستحق التحديد فعلاً.
+    ------------------------------------------------------------ */
+    skip: (req) => {
+      const u = req.originalUrl;
+      return (
+        u.startsWith("/api/payments/webhook") ||
+        u.startsWith("/api/crisis-signal") ||
+        u.startsWith("/api/chat") ||
+        u.startsWith("/api/plan") ||
+        u.startsWith("/api/me/") ||
+        u.startsWith("/api/content/")
+      );
+    },
   })
 );
+
+/* ---------------------------------------------------------
+   حدّ منفصل وأوسع لمستوى بيانات التطبيق.
+
+   ليس بلا حد — لكنه حد يناسب تطبيقاً يزامن بياناته، لا مسار
+   تسجيل. مفتاحه معرّف المستخدم حين يكون الطلب موثَّقاً، فمستخدمو
+   عنوان مشترك لا يخنق بعضهم بعضاً.
+--------------------------------------------------------- */
+app.use(
+  ["/api/me", "/api/content"],
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      const h = req.headers.authorization || "";
+      // بصمة الرمز لا الرمز نفسه — لا يُسجَّل سر في ذاكرة المحدِّد.
+      if (h.startsWith("Bearer ")) return `t:${h.slice(7, 27)}`;
+      return req.ip;
+    },
+  })
+);
+
+/* ---------------------------------------------------------
+   مسح الإشعارات المجدولة المستحقّة.
+
+   يُوضع بعد المحدِّد وقبل المسارات، ويستدعي next() فوراً ثم يعمل
+   على الهامش — لا طلب ينتظره ولا طلب يفشل بسببه.
+
+   هذا هو كامل "بنية الجدولة" في المشروع: لا Cron ولا Queue ولا
+   Background Job. التفاصيل والحد الصادق لهذه الآلية موثّقان في
+   notifications/scheduler.js وفي 04_NOTIFICATION_FLOW.md.
+--------------------------------------------------------- */
+app.use(sweepMiddleware);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = "claude-sonnet-5";
@@ -99,8 +180,23 @@ const CRISIS_PATTERNS = [
   "suicide", "kill myself", "end my life", "self harm", "self-harm", "hurt myself",
   "i want to die", "don't want to live", "no reason to live",
 ];
+/* ⚠️ التطبيع ليس تجميلاً — هذه دالة في مسار الأمان.
+
+   كانت `text.toLowerCase()` مباشرة. ورسالة Anthropic قد يكون
+   محتواها **مصفوفة كتل** لا نصاً (`[{type:"text",text:"..."}]`)،
+   وهو شكل صحيح تماماً قد يتبناه التطبيق أي يوم. عندها ترمي الدالة
+   TypeError، فيرد المسار 500 — أي أن **فحص إشارة الخطر يُتخطّى
+   بالكامل** لرسالة قد تحمل إشارة خطر حقيقية. أثبتته المراجعة
+   عملياً برسالة تحوي "أفكر في الانتحار" داخل مصفوفة كتل. */
+function normalizeContent(c) {
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) return c.map((b) => (typeof b === "string" ? b : b?.text || "")).join(" ");
+  if (c && typeof c === "object" && typeof c.text === "string") return c.text;
+  return "";
+}
 function containsCrisisSignal(text = "") {
-  const norm = text.toLowerCase();
+  const norm = normalizeContent(text).toLowerCase();
+  if (!norm) return false;
   return CRISIS_PATTERNS.some((p) => norm.includes(p.toLowerCase()));
 }
 
@@ -122,17 +218,52 @@ const PLAN_SYSTEM_PROMPT = `أنت مولّد "خطط تحسين جودة حيا
 قدّم بين ٢ إلى ٣ عناصر في focus_areas فقط.`;
 
 /* ---------------------------------------------------------
+   جدار الأمان قبل المصادقة — الاستثناء الصريح المطلوب.
+
+   ============================================================
+   المشكلة التي يحلها هذا الترتيب
+   ============================================================
+   /api/chat و /api/plan كانا بلا مصادقة إطلاقاً: أي شخص في العالم
+   يقدر يستهلك رصيد Anthropic خلف حدّ 60 طلباً لكل IP فقط — نزيف
+   مالي قابل للتوزيع على عناوين متعددة.
+
+   والحل المباشر (إضافة requireUserAuth) كان يصطدم بالتزام ثابت لا
+   يجوز كسره: **مسار الأمان لا يُحجب خلف تسجيل دخول أبداً**. ولو
+   كانت المحادثة قناة يمر عبرها اكتشاف الخطر، لصار طلب الرمز حاجزاً
+   أمام شخص في أزمة.
+
+   ============================================================
+   لماذا لا تعارض بينهما فعلياً
+   ============================================================
+   اكتشاف الخطر هنا لا يحتاج النموذج إطلاقاً: containsCrisisSignal
+   مطابقة نصوص محلية، وترد { crisis: true } **قبل** أي نداء
+   لـAnthropic. أي أن الجزء الذي يجب ألا يُحجب لا يكلّف شيئاً،
+   والجزء المكلف هو وحده ما يحتاج حماية.
+
+   لذلك الترتيب: الفحص أولاً بلا مصادقة، ثم المصادقة لما بعده.
+   شخص في أزمة يصله مسار الأمان بلا حساب؛ ومن يريد محادثة عامة
+   يحتاج حساباً موثَّقاً.
+--------------------------------------------------------- */
+function crisisFirewall(req, res, next) {
+  const { messages, dataNote } = req.body || {};
+  const raw = Array.isArray(messages)
+    ? [...messages].reverse().find((m) => m.role === "user")?.content
+    : dataNote;
+  const text = normalizeContent(raw);
+  if (text && containsCrisisSignal(text)) {
+    return res.status(200).json({ crisis: true });
+  }
+  next();
+}
+
+/* ---------------------------------------------------------
    POST /api/chat  { messages: [{role, content}] }
 --------------------------------------------------------- */
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", crisisFirewall, requireUserAuth, async (req, res) => {
   try {
     const { messages } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages array is required" });
-    }
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    if (lastUserMsg && containsCrisisSignal(lastUserMsg.content)) {
-      return res.status(200).json({ crisis: true });
     }
 
     const response = await anthropic.messages.create({
@@ -157,7 +288,7 @@ app.post("/api/chat", async (req, res) => {
 /* ---------------------------------------------------------
    POST /api/plan  { dataNote: string }
 --------------------------------------------------------- */
-app.post("/api/plan", async (req, res) => {
+app.post("/api/plan", crisisFirewall, requireUserAuth, async (req, res) => {
   try {
     const { dataNote } = req.body || {};
     if (!dataNote) return res.status(400).json({ error: "dataNote is required" });
@@ -205,17 +336,74 @@ app.post("/api/contact", async (req, res) => {
     const { name, email, message } = req.body || {};
     if (!name || !email || !message) return res.status(400).json({ error: "name, email, and message are required" });
 
-    await sendEmail(
-      process.env.EMAIL_FROM || "you@yourdomain.com",
-      `رسالة تواصل جديدة من ${name}`,
-      `From: ${name} <${email}>\n\n${message}`
+    /* ---------------------------------------------------------
+       كان هذا المسار يرسل بريداً ويرد { ok: true } **بلا كتابة صف
+       واحد**. الأثر: صفحة "الرسائل" في اللوحة تقرأ contact_messages
+       وتبقى فارغة أبداً — وهي تبدو شغالة تماماً، وهذا أخطر ما فيها.
+
+       الصف يُكتب أولاً. لو فشل البريد بعده تبقى الرسالة محفوظة
+       ويراها الدعم؛ العكس كان يعني رسالة عميل تضيع لأن SMTP تعثّر.
+    --------------------------------------------------------- */
+    const { rows } = await query(
+      `INSERT INTO contact_messages (name, email, message)
+       VALUES ($1, $2, $3) RETURNING id, created_at`,
+      [String(name).trim().slice(0, 200), String(email).trim().slice(0, 200), String(message).trim().slice(0, 5000)]
     );
-    res.json({ ok: true });
+
+    try {
+      await sendEmail(
+        process.env.EMAIL_FROM || "you@yourdomain.com",
+        `رسالة تواصل جديدة من ${name}`,
+        `From: ${name} <${email}>\n\n${message}`
+      );
+    } catch (mailErr) {
+      // الرسالة محفوظة — فشل الإشعار البريدي لا يُفشل الطلب، لكنه
+      // يُسجَّل بوضوح بدل أن يُبتلع.
+      console.error("[contact] حُفظت الرسالة ولم يُرسل الإشعار البريدي:", mailErr.message);
+    }
+
+    res.json({ ok: true, id: rows[0].id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "internal_error" });
   }
 });
+
+/* ---------------------------------------------------------
+   POST /api/crisis-signal  { source }
+
+   عدّاد مجهول تماماً لأحداث مسار الأمان.
+
+   جدول crisis_trigger_events موجود منذ schema.sql بلا كاتب واحد،
+   فمؤشر "أحداث الخطر" في لوحة الإدارة صفر أبداً — لا لأن الأحداث
+   لا تقع، بل لأن أحداً لم يكتبها.
+
+   ثلاثة قيود مقصودة، وكلها في اتجاه واحد:
+     • بلا مصادقة — مسار الأمان لا يُحجب، والعدّ لا يجوز أن يكلّف
+       المستخدم في أزمة أي خطوة.
+     • بلا user_id ولا IP ولا نص — الجدول نفسه لا يحوي عموداً
+       لأي منها. المقصود "كم مرة يشتغل مسار الأمان"، لا "من".
+     • بلا رد ذي معنى — { ok: true } فقط، فلا شيء يمكن استنتاجه من
+       الرد عن حالة أي مستخدم.
+--------------------------------------------------------- */
+const CRISIS_SOURCES = ["phq9_item9", "chat_keyword", "journal_keyword", "manual_button", "screening_band"];
+app.post("/api/crisis-signal", async (req, res) => {
+  try {
+    const source = CRISIS_SOURCES.includes(req.body?.source) ? req.body.source : "manual_button";
+    await query(`INSERT INTO crisis_trigger_events (trigger_source) VALUES ($1)`, [source]);
+  } catch (err) {
+    // لا يفشل أبداً أمام المستخدم: مسار الأمان أهم من العدّاد.
+    console.error("[crisis-signal] تعذّر تسجيل الحدث:", err.message);
+  }
+  res.json({ ok: true });
+});
+
+/* ---------------------------------------------------------
+   المحتوى والبيانات التشغيلية للمستخدم — المرحلة 4.
+--------------------------------------------------------- */
+app.use("/api/content", contentRouter);
+app.use("/api", pushPublicKeyRouter);
+app.use("/api/me", userDataRouter);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
@@ -258,6 +446,17 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
   }
 });
 
+/* ---------------------------------------------------------
+   موجّهات الإدارة.
+
+   موجّها المحتوى والإشعارات يُركَّبان قبل adminRouter عمداً: مسارا
+   /admin/content القديمان حُذفا من admin/routes.js في هذه المرحلة،
+   والترتيب هنا يضمن أن أي بقية منهما — في نسخة قديمة مثلاً — لا
+   تحجب النسخة العاملة. طبقة دفاع ثانية ضد انحراف النسخة المنشورة
+   عن المستودع، وهو انحراف حصل فعلاً في هذا المشروع.
+--------------------------------------------------------- */
+app.use("/admin", adminContentRouter);
+app.use("/admin", adminNotificationsRouter);
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
@@ -362,6 +561,23 @@ app.use(express.static(adminUiPath));
 // still works correctly on a hard refresh or direct link.
 app.get(/^(?!\/admin|\/api).*/, (req, res) => {
   res.sendFile(path.join(adminUiPath, "index.html"));
+});
+
+/* ---------------------------------------------------------
+   معالج الأخطاء النهائي.
+
+   لم يكن في المشروع أي معالج أخطاء، فأي استثناء يفلت من مسار كان
+   يمر إلى معالج Express الافتراضي — الذي يرسل **أثر المكدّس
+   كاملاً إلى العميل** خارج NODE_ENV=production. أي أن الحماية
+   الوحيدة كانت متغيّر بيئة، وقد نُسي من قبل في هذا المشروع.
+
+   يوضع بعد كل المسارات وقبل الاستماع. أربعة وسائط إلزامية —
+   Express يميّز معالج الأخطاء بعددها لا باسمها.
+--------------------------------------------------------- */
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  console.error("[unhandled]", req.method, req.originalUrl, err);
+  res.status(err?.status && err.status < 600 ? err.status : 500).json({ error: "internal_error" });
 });
 
 const PORT = process.env.PORT || 3001;

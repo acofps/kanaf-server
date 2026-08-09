@@ -27,6 +27,11 @@ export const pool = new Pool({
   // Reasonable defaults for a small VPS; raise max if you outgrow it.
   max: 10,
   idleTimeoutMillis: 30000,
+  // بلا هذه المهلة، استنفاد المجمّع يعني انتظاراً بلا نهاية — أي
+  // تجمّد صامت للخادم كله بدل خطأ يمكن رؤيته في السجل. أُضيفت في
+  // المرحلة 4 بعد أن أظهرت المراجعة أن مسحاً واحداً للإشعارات قد
+  // يحجز ثلاثة اتصالات في آن واحد.
+  connectionTimeoutMillis: 5000,
 });
 
 pool.on("error", (err) => {

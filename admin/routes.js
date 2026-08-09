@@ -5,7 +5,6 @@ import { verifyAdminCredentials, issueAccessToken, issueRefreshToken, verifyToke
 import { requireAdminAuth, requireRole, requireReasonAndLog, logSensitiveAccess, logAdminAction } from "./middleware.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { executeRefund } from "../payments/refund.js";
-import { sendBroadcast } from "../notifications/broadcast.js";
 import { billingRouter } from "./billing.js";
 import { entitledSql } from "../billing/subscription.js";
 
@@ -814,75 +813,23 @@ adminRouter.post("/break-glass/:id/approve", requireAdminAuth, requireRole("owne
 });
 
 /* ============================================================
-   CONTENT REVIEW — the real, server-side counterpart to
-   clinical_review_status on journeys/notebooks/CBT tools/overlays.
+   إدارة المحتوى — انتقلت إلى admin/content.js
+
+   كانت هنا ثلاثة مسارات (/content و /content/:id/review و
+   /content/:id/toggle-launch) تقرأ وتكتب في content_items — جدول
+   لم يحوِ صفاً واحداً منذ إنشائه في schema.sql، ولم يقرأه تطبيق
+   المستخدم إطلاقاً. أي أنها كانت واجهة فوق فراغ من الطرفين.
+
+   حُذفت من هنا ولم تُترك بجانب البديل عمداً: مساران بنفس العنوان
+   في ملفين يعني أن من يعدّل الخطأ منهما لا يرى أثراً — وهو نمط
+   العطب المتكرر في هذا المشروع (لوحة cPanel القديمة، انحراف النسخة
+   المنشورة). مسار واحد فقط لكل عنوان.
+
+   البديل في admin/content.js: نفس المسارات وقد صارت حقيقية، ومعها
+   الجدولة والطبقة وسجل النسخ والبحث والترقيم. والكتالوج يقرأه
+   التطبيق من /api/content/catalog.
    ============================================================ */
 
-// GET /admin/content?type=journey
-adminRouter.get("/content", requireAdminAuth, requireRole("content_manager"), async (req, res) => {
-  try {
-    const type = req.query.type;
-    const { rows } = await query(
-      `SELECT id, content_type, content_key, content_version, clinical_review_status,
-              reviewer_admin_id, reviewed_at, launch_enabled, updated_at
-       FROM content_items
-       WHERE ($1::text IS NULL OR content_type = $1)
-       ORDER BY updated_at DESC`,
-      [type || null]
-    );
-    res.json({ content: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
-
-// POST /admin/content/:id/review  { status: 'approved'|'rejected', notes }
-// Only 'admin' role and above can approve — matches the requirement
-// that content_manager can prepare/flag content but not self-approve
-// what ships to real users.
-adminRouter.post("/content/:id/review", requireAdminAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const { status, notes } = req.body || {};
-    if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "invalid_status" });
-
-    const { rows } = await query(
-      `UPDATE content_items
-       SET clinical_review_status = $1, reviewer_admin_id = $2, reviewed_at = now(), review_notes = $3,
-           launch_enabled = CASE WHEN $1 = 'approved' THEN launch_enabled ELSE false END,
-           updated_at = now()
-       WHERE id = $4
-       RETURNING id, content_type, content_key, clinical_review_status, launch_enabled`,
-      [status, req.admin.id, notes || null, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: "not_found" });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
-
-// POST /admin/content/:id/toggle-launch  { enabled }
-// The real kill switch — separate action from clinical approval, so
-// an owner can pull a live piece of content instantly without
-// re-running the whole review process to bring it back.
-adminRouter.post("/content/:id/toggle-launch", requireAdminAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const { enabled } = req.body || {};
-    const { rows } = await query(
-      `UPDATE content_items SET launch_enabled = $1, updated_at = now()
-       WHERE id = $2 AND clinical_review_status = 'approved'
-       RETURNING id, content_key, launch_enabled`,
-      [!!enabled, req.params.id]
-    );
-    if (!rows[0]) return res.status(409).json({ error: "cannot_enable_unapproved_content" });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
 
 /* ============================================================
    ACCESS LOG — read-only view for owners; no update/delete route
@@ -1237,95 +1184,19 @@ adminRouter.post("/messages/:id/status", requireAdminAuth, requireRole("support"
 });
 
 /* ============================================================
-   BULK BROADCAST EMAIL — real delivery via Resend's batch endpoint,
-   NOT connected to the consumer app's in-app notification bell (that
-   bell is local-only client state with no backend sync yet). Gated
-   at 'admin' — sending mass email to real users is a real action
-   worth restricting past the 'support' tier.
+   البث الجماعي — انتقل إلى admin/notifications.js
+
+   كانت هنا ثلاثة مسارات /admin/broadcasts ترسل بريداً عبر Resend
+   وتخزّن عدّادين في broadcast_notifications. وحين يغيب
+   RESEND_API_KEY — وهو غائب على Render — كانت طبقة الإرسال تعيد
+   { id: "dev-mock" } و sendBroadcast() تحسبه نجاحاً: تأكيد بعدد
+   المستلمين، وصف "ناجح" في السجل، وصفر رسائل غادرت. عطب أخطر من
+   الظاهر لأنه يبني ثقة كاذبة في قناة اتصال.
+
+   البديل يوحّد الإرسال على mail/send.js (الذي يرمي خطأً صريحاً في
+   الإنتاج بدل mock)، ويضيف قناتي داخل التطبيق وPush، ويحفظ صف
+   تسليم لكل (مستلم، قناة) بحالته وسبب فشله.
+
+   الجدول القديم broadcast_notifications يبقى كما هو بسجلاته
+   السابقة — لا يُحذف منه شيء ولا يُكتب فيه بعد الآن.
    ============================================================ */
-
-/* ------------------------------------------------------------
-   الجمهور يُحدَّد بشرط الاستحقاق الموحّد نفسه، لا بـ status = 'active'.
-
-   العطب الذي كان: رسالة موجّهة "للمشتركين" كانت تصل كل من اشترك
-   يوماً ما، بما فيهم من انتهى اشتراكه من سنة. والأسوأ أن جمهور
-   "المجاني" كان يستثنيهم — فمن انتهى اشتراكه لا يصله عرض التجديد
-   ولا رسالة المشتركين. أي أن الفئة الأولى بالاستهداف تجارياً كانت
-   الوحيدة التي لا تصلها رسالة إطلاقاً.
-   ------------------------------------------------------------ */
-const LATEST_SUB = `
-  SELECT DISTINCT ON (user_id) id, user_id, status, current_period_end
-  FROM subscriptions ORDER BY user_id, created_at DESC`;
-
-const AUDIENCE_QUERIES = {
-  all: `SELECT id AS "userId", email FROM users WHERE deleted_at IS NULL AND marketing_opt_out = false`,
-  active_subscribers: `
-    SELECT u.id AS "userId", u.email FROM users u
-    JOIN (${LATEST_SUB}) s ON s.user_id = u.id
-    WHERE u.deleted_at IS NULL AND u.marketing_opt_out = false AND ${entitledSql("s")}`,
-  trial_or_free: `
-    SELECT u.id AS "userId", u.email FROM users u
-    LEFT JOIN (${LATEST_SUB}) s ON s.user_id = u.id
-    WHERE u.deleted_at IS NULL AND u.marketing_opt_out = false
-      AND (s.id IS NULL OR NOT ${entitledSql("s")})`,
-};
-
-// GET /admin/broadcasts/audience-count?audience=all
-// Lets the admin UI show "هذا سيصل لـ 214 مستخدم" BEFORE they commit
-// to sending — sending mass email is hard to undo once it's out.
-adminRouter.get("/broadcasts/audience-count", requireAdminAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const audience = req.query.audience;
-    if (!AUDIENCE_QUERIES[audience]) return res.status(400).json({ error: "invalid_audience" });
-    const { rows } = await query(`SELECT count(*)::int AS n FROM (${AUDIENCE_QUERIES[audience]}) sub`);
-    res.json({ count: rows[0].n });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
-
-// GET /admin/broadcasts — send history
-adminRouter.get("/broadcasts", requireAdminAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const { rows } = await query(
-      `SELECT b.id, b.subject, b.audience, b.recipient_count, b.failed_count, b.created_at, au.name AS sent_by_name
-       FROM broadcast_notifications b LEFT JOIN admin_users au ON au.id = b.sent_by
-       ORDER BY b.created_at DESC LIMIT 50`
-    );
-    res.json({ broadcasts: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
-
-// POST /admin/broadcasts  { subject, message, audience }
-adminRouter.post("/broadcasts", requireAdminAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const { subject, message, audience } = req.body || {};
-    if (!subject?.trim() || !message?.trim() || !AUDIENCE_QUERIES[audience]) {
-      return res.status(400).json({ error: "subject_message_and_valid_audience_required" });
-    }
-
-    const { rows: recipientRows } = await query(AUDIENCE_QUERIES[audience]);
-    const recipients = recipientRows; // [{ userId, email }] — see notifications/broadcast.js
-
-    if (recipients.length === 0) {
-      return res.status(422).json({ error: "no_recipients_in_audience" });
-    }
-
-    const { sent, failed, errors } = await sendBroadcast({ recipients, subject: subject.trim(), plainTextMessage: message.trim() });
-
-    const { rows } = await query(
-      `INSERT INTO broadcast_notifications (subject, message, audience, recipient_count, failed_count, sent_by)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
-      [subject.trim(), message.trim(), audience, sent, failed, req.admin.id]
-    );
-
-    res.status(201).json({ id: rows[0].id, sent, failed, totalRecipients: recipients.length, errors: errors.slice(0, 3) });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
-  }
-});
