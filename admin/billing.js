@@ -1,6 +1,9 @@
 import express from "express";
 import { query, withTransaction } from "../db/pool.js";
-import { requireAdminAuth, requireRole, requireReasonAndLog, logAdminAction } from "./middleware.js";
+import {
+  requireAdminAuth, requirePermission, requireReasonAndLog, requireUuidParam,
+  logAdminAction, fail,
+} from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
 import { effectiveStatusSql, entitledSql } from "../billing/subscription.js";
 import { executeRefund, issueCreditNoteDocument } from "../payments/refund.js";
@@ -82,7 +85,7 @@ const SUBSCRIPTION_SORT = {
 };
 
 // GET /admin/billing/subscriptions
-billingRouter.get("/subscriptions", requireAdminAuth, requireRole("support"), async (req, res) => {
+billingRouter.get("/subscriptions", requireAdminAuth, requirePermission("subscriptions:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
     const search = String(req.query.search || "").trim();
@@ -160,8 +163,7 @@ billingRouter.get("/subscriptions", requireAdminAuth, requireRole("support"), as
       filters: { search, status, plan: planId, cycle, provider, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
-    console.error("[admin/billing] subscriptions failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:subscriptions", req);
   }
 });
 
@@ -177,7 +179,7 @@ const PAYMENT_SORT = {
 };
 
 // GET /admin/billing/payments
-billingRouter.get("/payments", requireAdminAuth, requireRole("support"), async (req, res) => {
+billingRouter.get("/payments", requireAdminAuth, requirePermission("payments:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
     const search = String(req.query.search || "").trim();
@@ -252,8 +254,7 @@ billingRouter.get("/payments", requireAdminAuth, requireRole("support"), async (
       filters: { search, status, method, provider, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
-    console.error("[admin/billing] payments failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:payments", req);
   }
 });
 
@@ -268,7 +269,7 @@ const INVOICE_SORT = {
   user: "u.name",
 };
 
-billingRouter.get("/invoices", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
     const search = String(req.query.search || "").trim();
@@ -343,8 +344,7 @@ billingRouter.get("/invoices", requireAdminAuth, requireRole("admin"), async (re
       filters: { search, status, plan: planId, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
-    console.error("[admin/billing] invoices failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:invoices", req);
   }
 });
 
@@ -352,7 +352,7 @@ billingRouter.get("/invoices", requireAdminAuth, requireRole("admin"), async (re
    4) الإشعارات الدائنة
    ============================================================ */
 
-billingRouter.get("/credit-notes", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_notes:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
     const search = String(req.query.search || "").trim();
@@ -403,8 +403,7 @@ billingRouter.get("/credit-notes", requireAdminAuth, requireRole("admin"), async
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
     });
   } catch (err) {
-    console.error("[admin/billing] credit notes failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:credit-notes", req);
   }
 });
 
@@ -424,7 +423,8 @@ billingRouter.get("/credit-notes", requireAdminAuth, requireRole("admin"), async
 billingRouter.post(
   "/payments/:id/refund",
   requireAdminAuth,
-  requireRole("admin"),
+  requirePermission("payments:refund"),
+  requireUuidParam("id"),
   // الهدف مستخدم صاحب الدفعة، لا معرّف المسار — معرّف المسار هنا
   // معرّف دفعة، وكتابته في عمود يشير إلى users تُفشل السجل والعملية.
   requireReasonAndLog("payment_refund", { resolveTargetUserId: paymentOwner }),
@@ -466,14 +466,13 @@ billingRouter.post(
       if (err.status) {
         return res.status(err.status).json({ error: err.message, detail: err.detail, available: err.available });
       }
-      console.error("[admin/billing] refund failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return fail(res, err, "admin/billing:refund", req);
     }
   }
 );
 
 /** GET /admin/billing/refunds — سجل الاستردادات، بما فيها الفاشلة. */
-billingRouter.get("/refunds", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/refunds", requireAdminAuth, requirePermission("refunds:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
     const { rows: countRows } = await query(`SELECT count(*)::int AS total FROM refunds`);
@@ -494,8 +493,7 @@ billingRouter.get("/refunds", requireAdminAuth, requireRole("admin"), async (req
       totalPages: Math.max(1, Math.ceil(countRows[0].total / pageSize)),
     });
   } catch (err) {
-    console.error("[admin/billing] refunds list failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:refunds-list", req);
   }
 });
 
@@ -506,7 +504,7 @@ billingRouter.get("/refunds", requireAdminAuth, requireRole("admin"), async (req
    ولا قيمة ثابتة في أي مكان.
    ============================================================ */
 
-billingRouter.get("/kpis", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/kpis", requireAdminAuth, requirePermission("reports:view_kpis"), async (req, res) => {
   try {
     const settings = await getBillingSettings();
     const { from, to } = defaultRange(req);
@@ -626,8 +624,7 @@ billingRouter.get("/kpis", requireAdminAuth, requireRole("admin"), async (req, r
       },
     });
   } catch (err) {
-    console.error("[admin/billing] kpis failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:kpis", req);
   }
 });
 
@@ -635,7 +632,7 @@ billingRouter.get("/kpis", requireAdminAuth, requireRole("admin"), async (req, r
    7) سجل أحداث الـwebhook — الرؤية وإعادة التشغيل
    ============================================================ */
 
-billingRouter.get("/webhook-events", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/webhook-events", requireAdminAuth, requirePermission("webhooks:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
     const status = String(req.query.status || "all");
@@ -671,20 +668,18 @@ billingRouter.get("/webhook-events", requireAdminAuth, requireRole("admin"), asy
       summary: Object.fromEntries(summary.map((r) => [r.status, r.n])),
     });
   } catch (err) {
-    console.error("[admin/billing] webhook events failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:webhook-events", req);
   }
 });
 
 /** الحمولة الكاملة لحدث واحد — للتشخيص. السر منزوع منها عند التخزين. */
-billingRouter.get("/webhook-events/:id", requireAdminAuth, requireRole("owner"), async (req, res) => {
+billingRouter.get("/webhook-events/:id", requireAdminAuth, requirePermission("webhooks:view_payload"), requireUuidParam("id"), async (req, res) => {
   try {
     const { rows } = await query(`SELECT * FROM webhook_events WHERE id = $1`, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: "not_found" });
     res.json({ event: rows[0] });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing", req);
   }
 });
 
@@ -701,7 +696,8 @@ billingRouter.get("/webhook-events/:id", requireAdminAuth, requireRole("owner"),
 billingRouter.post(
   "/webhook-events/:id/replay",
   requireAdminAuth,
-  requireRole("owner"),
+  requirePermission("webhooks:replay"),
+  requireUuidParam("id"),
   // حدث webhook لا يخص مستخدماً بعينه بالضرورة — لا هدف.
   requireReasonAndLog("webhook_replay", { resolveTargetUserId: () => null }),
   async (req, res) => {
@@ -768,7 +764,8 @@ billingRouter.post(
 billingRouter.post(
   "/payments/:id/reconcile",
   requireAdminAuth,
-  requireRole("admin"),
+  requirePermission("payments:reconcile"),
+  requireUuidParam("id"),
   requireReasonAndLog("payment_reconcile", { resolveTargetUserId: paymentOwner }),
   async (req, res) => {
     try {
@@ -820,7 +817,7 @@ billingRouter.post(
    وجودها، وما قد يتسرّب من مسار لم يخطر على البال.
    ============================================================ */
 
-billingRouter.get("/integrity", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/integrity", requireAdminAuth, requirePermission("reports:view_integrity"), async (req, res) => {
   try {
     const [
       { rows: subsNoPayment },
@@ -922,8 +919,7 @@ billingRouter.get("/integrity", requireAdminAuth, requireRole("admin"), async (r
     const totalIssues = checks.reduce((sum, c) => sum + c.count, 0);
     res.json({ ok: totalIssues === 0, totalIssues, checkedAt: new Date().toISOString(), checks });
   } catch (err) {
-    console.error("[admin/billing] integrity failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:integrity", req);
   }
 });
 
@@ -931,14 +927,13 @@ billingRouter.get("/integrity", requireAdminAuth, requireRole("admin"), async (r
    9) الإعداد المالي المركزي
    ============================================================ */
 
-billingRouter.get("/settings", requireAdminAuth, requireRole("admin"), async (req, res) => {
+billingRouter.get("/settings", requireAdminAuth, requirePermission("billing_settings:view"), async (req, res) => {
   try {
     const settings = await getBillingSettings();
     const { rows } = await query(`SELECT updated_at, updated_by FROM billing_settings LIMIT 1`);
     res.json({ settings: { ...settings, updatedAt: rows[0]?.updated_at || null } });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing", req);
   }
 });
 
@@ -952,7 +947,7 @@ billingRouter.get("/settings", requireAdminAuth, requireRole("admin"), async (re
 billingRouter.put(
   "/settings",
   requireAdminAuth,
-  requireRole("owner"),
+  requirePermission("billing_settings:edit"),
   // إعداد عام للنظام كله — لا مستخدم هدفاً له.
   requireReasonAndLog("update_billing_settings", { resolveTargetUserId: () => null }),
   async (req, res) => {
@@ -1017,8 +1012,7 @@ billingRouter.put(
 
       res.json({ settings: rows[0] });
     } catch (err) {
-      console.error("[admin/billing] settings update failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return fail(res, err, "admin/billing:settings-update", req);
     }
   }
 );
@@ -1027,7 +1021,7 @@ billingRouter.put(
    10) User 360 — كل ما يخص مستخدماً واحداً مالياً في نداء واحد
    ============================================================ */
 
-billingRouter.get("/users/:id/billing", requireAdminAuth, requireRole("support"), async (req, res) => {
+billingRouter.get("/users/:id/billing", requireAdminAuth, requirePermission("billing:view_user"), requireUuidParam("id"), async (req, res) => {
   try {
     const userId = req.params.id;
     const settings = await getBillingSettings();
@@ -1098,7 +1092,6 @@ billingRouter.get("/users/:id/billing", requireAdminAuth, requireRole("support")
       },
     });
   } catch (err) {
-    console.error("[admin/billing] user 360 failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return fail(res, err, "admin/billing:user-360", req);
   }
 });
