@@ -114,6 +114,11 @@ export const PERMISSION_CATALOG = {
   "subscriptions:cancel":     "إلغاء اشتراك يدوياً",
   "payments:view":            "قائمة المدفوعات",
   "payments:refund":          "تنفيذ استرداد — نقل مال حقيقي",
+  /* المطابقة تسأل المزوّد عن حالة الدفعة الحقيقية وتطبّقها. صلاحية
+     مستقلة لا مندمجة في payments:refund: هي ليست استرداداً، وقد
+     تُفعّل اشتراكاً لم يُفعَّل. ولا مندمجة في webhooks:replay: تلك
+     تعيد تشغيل حدث عندنا، وهذه تسأل خارجاً وتصدّق ما يقوله. */
+  "payments:reconcile":       "مطابقة دفعة مع المزوّد وتطبيق حالته",
   "invoices:view":            "الفواتير الضريبية وملفاتها",
   "invoices:regenerate":      "إعادة إصدار وثيقة فاتورة مدفوعة بلا رقم ضريبي",
   "credit_notes:view":        "الإشعارات الدائنة وملفاتها",
@@ -252,7 +257,7 @@ const MATRIX = {
     "plans:view", "plans:edit",
     "tax_settings:view", "billing_settings:view", "app_settings:view",
     "subscriptions:view", "subscriptions:cancel",
-    "payments:view", "payments:refund", "billing:view_user",
+    "payments:view", "payments:refund", "payments:reconcile", "billing:view_user",
     "invoices:view", "invoices:regenerate",
     "credit_notes:view", "refunds:view",
     "webhooks:view", "webhooks:replay",
