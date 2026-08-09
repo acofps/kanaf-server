@@ -20,6 +20,12 @@ import { contentRouter } from "./content/routes.js";
 import { userDataRouter, pushPublicKeyRouter } from "./userdata/routes.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
+/* ---------------------------------------------------------
+   المرحلة 5 — الأدوار والصلاحيات والتقارير والإعدادات.
+--------------------------------------------------------- */
+import { adminAccountsRouter } from "./admin/accounts.js";
+import { adminExportsRouter } from "./admin/exports.js";
+import { adminSettingsRouter, getAppSettings } from "./admin/settings.js";
 import { sweepMiddleware } from "./notifications/scheduler.js";
 import { requireUserAuth } from "./auth/middleware.js";
 import path from "path";
@@ -48,11 +54,28 @@ app.use(cookieParser());
    ALLOWED_ORIGINS must be a real, explicit list before you deploy.
 --------------------------------------------------------- */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+/* ---------------------------------------------------------
+   ⚠️ الإقلاع يُرفض في الإنتاج حين تكون القائمة فارغة.
+
+   كان تحذيراً في السجل فقط، والسلوك عندها: يعكس **أي** أصل مع
+   credentials: true — أي أن أي موقع في العالم يقدر ينادي واجهة
+   الإدارة بكوكي المسؤول من متصفّحه.
+
+   وتحذير في سجل نشر يمرّ فيه مئة سطر ليس حماية. الخادم يرفض
+   الإقلاع بدلها، كما يفعل تماماً حين يتساوى سرّا JWT أو يقصران —
+   وهو نمط مستقر في هذا المشروع: الخطأ الذي يفتح باباً يُوقف
+   النشر، لا يُكتب في سطر.
+--------------------------------------------------------- */
 if (allowedOrigins.length === 0) {
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      "FATAL: ALLOWED_ORIGINS فارغة في الإنتاج — CORS كان سيعكس أي أصل مع كوكي الإدارة. " +
+      "اضبطها على النطاقات الحقيقية قبل النشر."
+    );
+    process.exit(1);
+  }
   console.warn(
-    "WARNING: ALLOWED_ORIGINS is empty — CORS will reflect any origin. " +
-    "This is fine for local development only. Set real domain(s) before deploying, " +
-    "especially since the admin panel now relies on credentialed (cookie) requests."
+    "WARNING: ALLOWED_ORIGINS فارغة — CORS يعكس أي أصل. مقبول للتطوير المحلي وحده."
   );
 }
 app.use(
@@ -164,6 +187,85 @@ app.use(
    Background Job. التفاصيل والحد الصادق لهذه الآلية موثّقان في
    notifications/scheduler.js وفي 04_NOTIFICATION_FLOW.md.
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   رؤوس الأمان — البند 9
+
+   لم يكن في المشروع أي رأس أمان. واللوحة تُخدَم من **نفس أصل**
+   الواجهة البرمجية عمداً (كوكي SameSite=Strict لا يُرسل عبر
+   المواقع)، فأي تنفيذ نص في صفحة اللوحة يقدر ينادي كل مسار إداري
+   بكوكي المسؤول تلقائياً — httpOnly يمنع **قراءة** الرمز ولا يمنع
+   **استعماله** من نفس الصفحة.
+
+   لذلك سياسة المحتوى هنا ليست تشديداً نظرياً: هي الطبقة التي تمنع
+   تحميل نص من مصدر خارجي أصلاً.
+
+   بلا helmet: القاعدة ألا تُضاف طبقة إلا لحاجة لا تُنفَّذ بالبنية
+   الحالية، وهذه ستة رؤوس ثابتة.
+
+   ملاحظتان على القيم:
+     • style-src يسمح بـ'unsafe-inline' اضطراراً — اللوحة مبنية
+       بـReact وتستعمل style={{...}} في كل مكون، وهي سمات نمط
+       يحجبها CSP بدونها. النص (script) لا يُسمح له بذلك، وهو
+       المهم: XSS يحتاج تنفيذ نص لا لون خلفية.
+     • frame-ancestors 'none' يمنع وضع اللوحة داخل إطار — أي
+       clickjacking على أزرار مثل «استرداد» أو «تعليق حساب».
+--------------------------------------------------------- */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP);
+  // يمنع المتصفّح من تخمين نوع المحتوى — رفع ملف نصّي يُقرأ HTML
+  // هو أحد أقدم طرق XSS.
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  // لا يُسرَّب مسار كامل فيه معرّفات إلى موقع خارجي عند الخروج منه.
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  if (req.path.startsWith("/admin")) res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  next();
+});
+
+/* ---------------------------------------------------------
+   حدّ الطلبات على المسارات الإدارية.
+
+   كان /admin/* بلا حدّ إطلاقاً عدا مسار الدخول. والمسارات الإدارية
+   ليست خفيفة: تقرير التكامل والمؤشرات المالية والتصدير كلها
+   استعلامات تجميع على جداول كاملة، وطلبها في حلقة — بخطأ في
+   الواجهة أو بقصد — يخنق قاعدة بيانات تخدم مستخدمين حقيقيين.
+
+   الحد واسع عمداً (300 كل ربع ساعة): اللوحة تنادي عدة مسارات في
+   كل شاشة، والغرض منع الحلقة لا إزعاج المسؤول. ومفتاحه بصمة كوكي
+   الجلسة حين توجد، فمسؤولان خلف نفس العنوان لا يخنق أحدهما الآخر.
+--------------------------------------------------------- */
+app.use(
+  "/admin",
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      const c = req.cookies?.kanaf_admin_access;
+      // بصمة قصيرة لا الرمز نفسه — لا يُخزَّن سرّ في ذاكرة المحدِّد.
+      return c ? `a:${c.slice(-24)}` : req.ip;
+    },
+    // مسار الدخول له محدِّده الأضيق في admin/routes.js، ومسارا قبول
+    // الدعوة لهما محدِّدهما في admin/accounts.js.
+    skip: (req) => req.path.startsWith("/auth/login") || req.path.startsWith("/setup/"),
+  })
+);
+
 app.use(sweepMiddleware);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -405,6 +507,36 @@ app.use("/api/content", contentRouter);
 app.use("/api", pushPublicKeyRouter);
 app.use("/api/me", userDataRouter);
 
+/* ---------------------------------------------------------
+   GET /api/support-info — بيانات الدعم المعروضة للمستخدم.
+
+   يقرأ من app_settings (الترحيل 008) فيصير للقيمة مصدر حقيقة واحد
+   يعدّله المالك من اللوحة، بدل نص مكتوب في التطبيق يحتاج بناءً
+   ورفعاً يدوياً لتغيير بريد.
+
+   ⚠️ وأقولها كما هي: **تطبيق المستخدم لا يستهلكه بعد** — تحديث
+   التطبيق ليس ضمن المرحلة 5. فحالة هذه الإعدادات اليوم «جاهزة في
+   الخادم، غير معروضة في الواجهة»، وهي معلَنة كذلك في سجلّ
+   admin/settings.js وفي 05_SETTINGS_AUDIT.md. لم تُعرض في اللوحة
+   كأنها تعمل.
+
+   بلا مصادقة: بيانات معلنة أصلاً، ولا شيء فيها يخصّ مستخدماً.
+--------------------------------------------------------- */
+app.get("/api/support-info", async (req, res) => {
+  try {
+    const s = await getAppSettings(["support_email", "support_hours", "app_public_name"]);
+    res.json({
+      supportEmail: s.support_email ?? null,
+      supportHours: s.support_hours ?? null,
+      appName: s.app_public_name ?? "كنف",
+    });
+  } catch (err) {
+    // لا يُفشل التطبيق على بيانات عرض: قيم افتراضية آمنة وسطر في السجل.
+    console.error("[support-info] تعذّرت القراءة:", err.message);
+    res.json({ supportEmail: null, supportHours: null, appName: "كنف" });
+  }
+});
+
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 /* ---------------------------------------------------------
@@ -455,6 +587,15 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
    تحجب النسخة العاملة. طبقة دفاع ثانية ضد انحراف النسخة المنشورة
    عن المستودع، وهو انحراف حصل فعلاً في هذا المشروع.
 --------------------------------------------------------- */
+/* موجّهات المرحلة 5 تُركَّب قبل adminRouter.
+
+   وترتيب adminAccountsRouter أولاً ليس تفصيلاً: مسارا /admin/setup/*
+   فيه **بلا مصادقة** بالضرورة (المدعوّ لا حساب له بعد، ومن نسي
+   كلمة مروره لا يقدر يثبت هويته إلا بالرمز)، فلا يجوز أن يسبقهما
+   موجّه يفرض كوكي إدارة. */
+app.use("/admin", adminAccountsRouter);
+app.use("/admin", adminExportsRouter);
+app.use("/admin", adminSettingsRouter);
 app.use("/admin", adminContentRouter);
 app.use("/admin", adminNotificationsRouter);
 app.use("/admin", adminRouter);
