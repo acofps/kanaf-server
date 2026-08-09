@@ -6,6 +6,10 @@ import {
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
 import { effectiveStatusSql, entitledSql } from "../billing/subscription.js";
+import {
+  UUID_RE, likeTerm, readPaging,
+  buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter,
+} from "./filters.js";
 import { executeRefund, issueCreditNoteDocument } from "../payments/refund.js";
 import { processWebhookEvent, issueInvoiceDocument } from "../payments/webhook.js";
 import { fetchPayment } from "../payments/moyasar.js";
@@ -35,20 +39,6 @@ async function paymentOwner(req) {
   return rows[0]?.user_id || null;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** ترقيم موحّد: حد أقصى صارم حتى لا يستنزف طلبٌ واحد الذاكرة. */
-function readPaging(req, { defaultSize = 25, maxSize = 100 } = {}) {
-  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const pageSize = Math.min(maxSize, Math.max(1, parseInt(req.query.pageSize, 10) || defaultSize));
-  return { page, pageSize, offset: (page - 1) * pageSize };
-}
-
-/** تهريب محارف ILIKE الخاصة — بدونه يصير `%` بحثاً عن كل شيء. */
-function likeTerm(search) {
-  return `%${search.replace(/[%_\\]/g, "\\$&")}%`;
-}
-
 /**
  * حدود نطاق التاريخ بالمنطقة الزمنية المحاسبية لا بمنطقة الخادم.
  *
@@ -76,59 +66,14 @@ function defaultRange(req) {
    1) الاشتراكات
    ============================================================ */
 
-const SUBSCRIPTION_SORT = {
-  created_at: "s.created_at",
-  period_end: "s.current_period_end",
-  started_at: "s.started_at",
-  price: "ss.plan_price_sar",
-  user: "u.name",
-};
-
 // GET /admin/billing/subscriptions
 billingRouter.get("/subscriptions", requireAdminAuth, requirePermission("subscriptions:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const search = String(req.query.search || "").trim();
-    const status = String(req.query.status || "all");
-    const planId = String(req.query.plan || "all");
-    const cycle = String(req.query.cycle || "all");
-    const provider = String(req.query.provider || "all");
-    const from = String(req.query.from || "").trim();
-    const to = String(req.query.to || "").trim();
-
-    const sortCol = SUBSCRIPTION_SORT[String(req.query.sort || "created_at")] || "s.created_at";
-    const dir = String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-
-    const where = [];
-    const params = [];
-    const p = (v) => `$${params.push(v)}`;
-
-    if (search) {
-      if (UUID_RE.test(search)) {
-        where.push(`(s.id = ${p(search)} OR s.user_id = ${p(search)})`);
-      } else {
-        const t = likeTerm(search);
-        where.push(`(u.name ILIKE ${p(t)} OR u.email ILIKE ${p(t)})`);
-      }
-    }
-    if (planId !== "all") where.push(`s.plan_id = ${p(planId)}`);
-    if (cycle !== "all") where.push(`ss.billing_cycle = ${p(cycle)}`);
-    if (provider !== "all") where.push(`s.payment_provider = ${p(provider)}`);
-    if (from) where.push(`s.created_at >= ${p(from)}`);
-    if (to) where.push(`s.created_at < (${p(to)}::date + interval '1 day')`);
-
-    // الفلترة على الحالة تجري على **الحالة الفعلية** لا المخزّنة —
-    // وإلا لأعاد فلتر «فعّال» اشتراكات منتهية، وهو بالضبط ما كانت
-    // تفعله بطاقة المؤشرات في الصفحة الرئيسية.
-    const statusExpr = effectiveStatusSql("s", "ss");
-    if (status !== "all") where.push(`(${statusExpr}) = ${p(status)}`);
-
-    const fromAndJoins = `
-      FROM subscriptions s
-      JOIN users u ON u.id = s.user_id
-      LEFT JOIN subscription_state ss ON ss.subscription_id = s.id
-      LEFT JOIN subscription_plans sp ON sp.plan_key = s.plan_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    // الشرط والترتيب من البنّاء المشترك — نفسه الذي يستعمله التصدير،
+    // فلا يمكن لملف CSV أن يصف مجموعة غير التي على الشاشة.
+    const { fromAndJoins, params, next: p, statusExpr, orderBy, filters } = buildSubscriptionFilter(req.query);
+    const sortCol = orderBy.col, dir = orderBy.dir;
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS total ${fromAndJoins}`, params);
     const total = countRows[0].total;
@@ -160,7 +105,7 @@ billingRouter.get("/subscriptions", requireAdminAuth, requirePermission("subscri
     res.json({
       subscriptions: rows, page, pageSize, total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
-      filters: { search, status, plan: planId, cycle, provider, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
+      filters: { ...filters, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
     return fail(res, err, "admin/billing:subscriptions", req);
@@ -171,52 +116,12 @@ billingRouter.get("/subscriptions", requireAdminAuth, requirePermission("subscri
    2) المدفوعات
    ============================================================ */
 
-const PAYMENT_SORT = {
-  created_at: "p.created_at",
-  captured_at: "p.captured_at",
-  amount: "p.amount",
-  user: "u.name",
-};
-
 // GET /admin/billing/payments
 billingRouter.get("/payments", requireAdminAuth, requirePermission("payments:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const search = String(req.query.search || "").trim();
-    const status = String(req.query.status || "all");
-    const method = String(req.query.method || "all");
-    const provider = String(req.query.provider || "all");
-    const from = String(req.query.from || "").trim();
-    const to = String(req.query.to || "").trim();
-
-    const sortCol = PAYMENT_SORT[String(req.query.sort || "created_at")] || "p.created_at";
-    const dir = String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-
-    const where = [];
-    const params = [];
-    const pp = (v) => `$${params.push(v)}`;
-
-    if (search) {
-      if (UUID_RE.test(search)) {
-        where.push(`(p.id = ${pp(search)} OR p.user_id = ${pp(search)} OR p.invoice_id = ${pp(search)})`);
-      } else {
-        const t = likeTerm(search);
-        // رقم المعاملة يُبحث عنه كنص كامل أيضاً — وهو أول ما يُلصق
-        // في مربع البحث عند مطابقة كشف حساب المزوّد.
-        where.push(`(u.name ILIKE ${pp(t)} OR u.email ILIKE ${pp(t)} OR p.provider_payment_id ILIKE ${pp(t)})`);
-      }
-    }
-    if (status !== "all") where.push(`p.status = ${pp(status)}`);
-    if (method !== "all") where.push(`p.method = ${pp(method)}`);
-    if (provider !== "all") where.push(`p.provider = ${pp(provider)}`);
-    if (from) where.push(`p.created_at >= ${pp(from)}`);
-    if (to) where.push(`p.created_at < (${pp(to)}::date + interval '1 day')`);
-
-    const fromAndJoins = `
-      FROM payments p
-      JOIN users u ON u.id = p.user_id
-      LEFT JOIN invoices i ON i.id = p.invoice_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    const { fromAndJoins, params, next: pp, orderBy, filters } = buildPaymentFilter(req.query);
+    const sortCol = orderBy.col, dir = orderBy.dir;
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS total ${fromAndJoins}`, params);
     const total = countRows[0].total;
@@ -251,7 +156,7 @@ billingRouter.get("/payments", requireAdminAuth, requirePermission("payments:vie
         refunded: Number(sumRows[0].refunded),
         net: Number((Number(sumRows[0].gross) - Number(sumRows[0].refunded)).toFixed(2)),
       },
-      filters: { search, status, method, provider, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
+      filters: { ...filters, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
     return fail(res, err, "admin/billing:payments", req);
@@ -262,48 +167,11 @@ billingRouter.get("/payments", requireAdminAuth, requirePermission("payments:vie
    3) الفواتير — كل الحالات، لا المدفوعة فقط
    ============================================================ */
 
-const INVOICE_SORT = {
-  created_at: "i.created_at",
-  issued_at: "i.zatca_issued_at",
-  amount: "i.amount_sar",
-  user: "u.name",
-};
-
 billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const search = String(req.query.search || "").trim();
-    const status = String(req.query.status || "all");
-    const planId = String(req.query.plan || "all");
-    const from = String(req.query.from || "").trim();
-    const to = String(req.query.to || "").trim();
-
-    const sortCol = INVOICE_SORT[String(req.query.sort || "created_at")] || "i.created_at";
-    const dir = String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-
-    const where = [];
-    const params = [];
-    const pp = (v) => `$${params.push(v)}`;
-
-    if (search) {
-      if (UUID_RE.test(search)) {
-        where.push(`(i.id = ${pp(search)} OR i.user_id = ${pp(search)})`);
-      } else {
-        const t = likeTerm(search);
-        where.push(`(u.name ILIKE ${pp(t)} OR u.email ILIKE ${pp(t)} OR i.zatca_invoice_number ILIKE ${pp(t)})`);
-      }
-    }
-    if (status !== "all") where.push(`i.status = ${pp(status)}`);
-    if (planId !== "all") where.push(`i.plan_id = ${pp(planId)}`);
-    if (from) where.push(`i.created_at >= ${pp(from)}`);
-    if (to) where.push(`i.created_at < (${pp(to)}::date + interval '1 day')`);
-
-    const fromAndJoins = `
-      FROM invoices i
-      JOIN users u ON u.id = i.user_id
-      LEFT JOIN invoice_state st ON st.invoice_id = i.id
-      LEFT JOIN subscription_plans sp ON sp.plan_key = i.plan_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    const { fromAndJoins, params, next: pp, hasWhere, orderBy, filters } = buildInvoiceFilter(req.query);
+    const sortCol = orderBy.col, dir = orderBy.dir;
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS total ${fromAndJoins}`, params);
     const total = countRows[0].total;
@@ -312,7 +180,7 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
     // كان محسوباً على الصفحة، فيقول صفراً بينما الصفحة الثالثة فيها
     // خمس فواتير مدفوعة بلا رقم ضريبي.
     const { rows: attentionRows } = await query(
-      `SELECT count(*)::int AS n ${fromAndJoins} ${where.length ? "AND" : "WHERE"} i.status = 'paid' AND i.zatca_invoice_number IS NULL`,
+      `SELECT count(*)::int AS n ${fromAndJoins} ${hasWhere ? "AND" : "WHERE"} i.status = 'paid' AND i.zatca_invoice_number IS NULL`,
       params
     );
 
@@ -341,7 +209,7 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
       invoices: rows, page, pageSize, total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
       needsAttention: attentionRows[0].n,
-      filters: { search, status, plan: planId, from, to, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
+      filters: { ...filters, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
     return fail(res, err, "admin/billing:invoices", req);
