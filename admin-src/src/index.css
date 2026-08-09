@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+body {
+  margin: 0;
+  background: #0B1418;
+  color: #E8F1F2;
+  font-family: "IBM Plex Sans Arabic", "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+}
+/* الأرقام لاتينية في كل مكان — قرار موثّق في تفضيلات المشروع. */
+* { font-variant-numeric: lining-nums tabular-nums; }
+input, textarea, select, button { font-family: inherit; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #26383F; border-radius: 8px; }
