@@ -589,9 +589,26 @@ adminRouter.get("/users/:id/actions", requireAdminAuth, requireRole("admin"), as
 });
 
 // GET /admin/users/:id/sensitive?reason=...
-// Returns daily logs, screening results, and free-text content —
-// gated behind requireReasonAndLog, which writes the immutable audit
-// entry BEFORE this handler runs.
+// Returns daily-log SCORES and screening band results — gated behind
+// requireReasonAndLog, which writes the immutable audit entry BEFORE
+// this handler runs.
+//
+// `daily_logs.note` was selected here until it was caught in review.
+// It is the user's free-text account of their own mental state — the
+// single most private field in this database, classified D in
+// 04_PRIVACY_CLASSIFICATION.md ("never exposed"), while that same
+// document claimed no admin query selects it. The document was right
+// about the policy and wrong about the code.
+//
+// The panel never rendered it, which is exactly why it survived: a
+// field that no screen displays still crosses the network, sits in
+// the browser's memory, and lands in any HAR file or proxy log along
+// the way. Hiding it in the UI is not withholding it.
+//
+// `tags` goes with it. The classification allows scores because
+// "does this person still use the app?" is answerable from numbers;
+// tags are user-authored words, and they leak the same thing the
+// note does, only shorter.
 adminRouter.get(
   "/users/:id/sensitive",
   requireAdminAuth,
@@ -601,7 +618,7 @@ adminRouter.get(
     try {
       const userId = req.params.id;
       const [{ rows: logs }, { rows: screenings }] = await Promise.all([
-        query(`SELECT mood, sleep, energy, note, tags, logged_on FROM daily_logs WHERE user_id = $1 ORDER BY logged_on DESC LIMIT 30`, [userId]),
+        query(`SELECT mood, sleep, energy, logged_on FROM daily_logs WHERE user_id = $1 ORDER BY logged_on DESC LIMIT 30`, [userId]),
         query(`SELECT kind, total, band_label, created_at FROM screenings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`, [userId]),
         // Note: screenings.answers (item-level) deliberately NOT selected
         // here — aggregate score + band is enough for support purposes.
