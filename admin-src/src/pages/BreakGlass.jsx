@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { ShieldAlert, KeyRound, Check } from "lucide-react";
 import { api } from "../api.js";
-import { C, atLeast, fmtDateTime } from "../theme.js";
+import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Spinner, Empty,
   ErrorBar, Table, Td, useAsync,
@@ -18,8 +18,8 @@ import {
    صلاحية دائمة بعد أسبوع.
    ============================================================ */
 
-export default function BreakGlass({ role, toast }) {
-  const isOwner = atLeast(role, "owner");
+export default function BreakGlass({ me, toast }) {
+  const isOwner = can(me, "break_glass:approve");
   const pending = useAsync(() => api.listPendingBreakGlass(), []);
 
   const [targetUserId, setTargetUserId] = useState("");

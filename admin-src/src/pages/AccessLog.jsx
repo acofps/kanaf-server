@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { api } from "../api.js";
 import { C, fmtDateTime } from "../theme.js";
 import {
-  Card, PageTitle, Button, Badge, SearchBox, Spinner, Empty, ErrorBar, Table, Td, useAsync,
+  Card, PageTitle, Button, Badge, SearchBox, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -15,6 +15,12 @@ import {
 
 const ACTION_LABEL = {
   view_sensitive_data: "عرض بيانات متابعة",
+  update_tax_settings: "تعديل البيانات الضريبية",
+  update_billing_settings: "تعديل الإعداد المالي",
+  update_app_setting: "تعديل إعداد تشغيل",
+  payment_refund: "استرداد دفعة",
+  payment_reconcile: "مطابقة دفعة",
+  webhook_replay: "إعادة تشغيل حدث دفع",
   break_glass_request: "طلب وصول طارئ",
   break_glass_approve: "اعتماد وصول طارئ",
   manual_subscription_cancel: "إلغاء اشتراك يدوي",
@@ -28,14 +34,16 @@ const SENSITIVE = new Set(["view_sensitive_data", "break_glass_request", "break_
 export default function AccessLog() {
   const [targetUserId, setTargetUserId] = useState("");
   const [applied, setApplied] = useState("");
-  const state = useAsync(() => api.listAccessLog(applied || undefined), [applied]);
-  const rows = state.data?.entries || [];
+  const [page, setPage] = useState(1);
+  const state = useAsync(() => api.listAccessLog(applied || undefined, page), [applied, page]);
+  const d = state.data;
+  const rows = d?.entries || [];
 
   return (
     <div>
       <PageTitle
         title="سجل الوصول"
-        subtitle="يُكتب قبل تنفيذ القراءة، ولا يُعدَّل بعدها. أحدث 200 سجل."
+        subtitle="يُكتب قبل تنفيذ القراءة، ولا يُعدَّل بعدها."
       />
 
       <Card>
@@ -43,8 +51,8 @@ export default function AccessLog() {
           <div className="flex-1 min-w-[220px]">
             <SearchBox value={targetUserId} onChange={setTargetUserId} placeholder="تصفية بمعرّف المستخدم (UUID)…" />
           </div>
-          <Button size="sm" onClick={() => setApplied(targetUserId.trim())}>تصفية</Button>
-          {applied && <Button size="sm" variant="ghost" onClick={() => { setTargetUserId(""); setApplied(""); }}>إلغاء التصفية</Button>}
+          <Button size="sm" onClick={() => { setApplied(targetUserId.trim()); setPage(1); }}>تصفية</Button>
+          {applied && <Button size="sm" variant="ghost" onClick={() => { setTargetUserId(""); setApplied(""); setPage(1); }}>إلغاء التصفية</Button>}
         </div>
 
         <ErrorBar error={state.error} />
@@ -73,7 +81,7 @@ export default function AccessLog() {
             ))}
           </Table>
         )}
-        <p className="text-[11px] mt-3" style={{ color: C.textFaint }}>{rows.length} سجل</p>
+        {d && <Pager page={d.page} totalPages={d.totalPages} total={d.total} onPage={setPage} />}
       </Card>
     </div>
   );

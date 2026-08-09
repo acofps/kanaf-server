@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Check, X, Power, CalendarClock, Pencil, History, Rocket } from "lucide-react";
 import { api } from "../api.js";
-import { C, CONTENT_TYPE_LABEL, REVIEW_LABEL, atLeast, fmtDateTime, toIsoWithOffset, toLocalInput } from "../theme.js";
+import { C, CONTENT_TYPE_LABEL, REVIEW_LABEL, can, fmtDateTime, toIsoWithOffset, toLocalInput } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox, Spinner, Empty,
   ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync,
@@ -25,7 +25,7 @@ import {
 const TYPES = ["", "journey", "overlay", "notebook", "cbt_tool", "library_article"];
 const STATUSES = ["", "review_required", "approved", "rejected", "retired"];
 
-export default function Content({ role, toast }) {
+export default function Content({ me, toast }) {
   const [type, setType] = useState("");
   const [status, setStatus] = useState("");
   const [published, setPublished] = useState("");
@@ -40,8 +40,9 @@ export default function Content({ role, toast }) {
   const [bulk, setBulk] = useState(false);
   const [err, setErr] = useState("");
 
-  const canReview = atLeast(role, "admin");
-  const canBulk = atLeast(role, "owner");
+  const canReview = can(me, "content:review");
+  const canBulk = can(me, "content:bulk_publish");
+  const canSchedule = can(me, "content:schedule");
 
   const list = useAsync(
     () => api.listContent({
@@ -165,7 +166,7 @@ export default function Content({ role, toast }) {
                           </Button>
                         )}
                         <Button size="sm" variant="ghost" onClick={() => setEditing(it)}><Pencil size={12} /></Button>
-                        {canReview && <Button size="sm" variant="ghost" onClick={() => setScheduling(it)}><CalendarClock size={12} /></Button>}
+                        {canSchedule && <Button size="sm" variant="ghost" onClick={() => setScheduling(it)}><CalendarClock size={12} /></Button>}
                         <Button size="sm" variant="ghost" onClick={() => setHistory(it)}><History size={12} /></Button>
                       </div>
                     </Td>
@@ -186,7 +187,7 @@ export default function Content({ role, toast }) {
         onClose={() => setReason(null)}
       />
 
-      {editing && <EditPresentation item={editing} role={role} onClose={() => setEditing(null)}
+      {editing && <EditPresentation item={editing} me={me} onClose={() => setEditing(null)}
         onDone={() => { setEditing(null); list.reload(); toast("حُدّث العرض."); }} />}
 
       {scheduling && <ScheduleContent item={scheduling} onClose={() => setScheduling(null)}
@@ -207,7 +208,7 @@ export default function Content({ role, toast }) {
    مجانية يلغي سبب اشتراك. الحقل يُعطَّل بصرياً لمن دونها بدل أن
    يرسل ويُرفض.
    ------------------------------------------------------------ */
-function EditPresentation({ item, role, onClose, onDone }) {
+function EditPresentation({ item, me, onClose, onDone }) {
   const [title, setTitle] = useState(item.title || "");
   const [category, setCategory] = useState(item.category || "");
   const [order, setOrder] = useState(item.display_order ?? 0);
@@ -215,7 +216,7 @@ function EditPresentation({ item, role, onClose, onDone }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const canTier = atLeast(role, "admin");
+  const canTier = can(me, "content:change_tier");
 
   const save = async () => {
     setBusy(true); setErr("");

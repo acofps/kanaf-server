@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Plus, Pencil, Power } from "lucide-react";
 import { api } from "../api.js";
-import { C, atLeast, fmtDateTime } from "../theme.js";
+import { C, can } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Spinner, Empty,
   ErrorBar, Modal, Table, Td, useAsync,
@@ -16,8 +16,8 @@ import {
    ضريبية تشير إلى شيء غير موجود.
    ============================================================ */
 
-export default function Plans({ role, toast }) {
-  const canEdit = atLeast(role, "admin");
+export default function Plans({ me, toast }) {
+  const canEdit = can(me, "plans:edit");
   const state = useAsync(() => api.listPlans(), []);
   const [editing, setEditing] = useState(null);
   const [busyId, setBusyId] = useState(null);
@@ -76,7 +76,6 @@ export default function Plans({ role, toast }) {
         )}
       </Card>
 
-      <TaxSettings role={role} toast={toast} />
 
       {editing && (
         <PlanEditor plan={editing} onClose={() => setEditing(null)}
@@ -153,54 +152,15 @@ function PlanEditor({ plan, onClose, onSaved }) {
    الرقم الضريبي 15 رقماً — والخادم يرفض غير ذلك. لو خُزّن رقم
    خاطئ فكل فاتورة صادرة بعده تحمله، ولا تُصحَّح فاتورة صادرة.
    ------------------------------------------------------------ */
-function TaxSettings({ role, toast }) {
-  const canEdit = atLeast(role, "owner");
-  const state = useAsync(() => api.getTaxSettings(), []);
-  const [legalName, setLegalName] = useState("");
-  const [vatNumber, setVatNumber] = useState("");
-  const [address, setAddress] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
 
-  useEffect(() => {
-    const s = state.data?.settings;
-    if (s) { setLegalName(s.legal_name || ""); setVatNumber(s.vat_number || ""); setAddress(s.address || ""); }
-  }, [state.data]);
+/* ------------------------------------------------------------
+   ⚠️ انتقلت البيانات الضريبية من هذه الصفحة إلى «الإعدادات».
 
-  const save = async () => {
-    setBusy(true); setErr("");
-    try {
-      await api.saveTaxSettings({ legalName: legalName.trim(), vatNumber: vatNumber.trim(), address });
-      toast("حُفظت البيانات الضريبية."); state.reload();
-    } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
-    finally { setBusy(false); }
-  };
+   كانت بطاقة داخل «الباقات»، وهو موضع غريب أصلاً — البيانات
+   الضريبية ليست باقة. والأهم أنها كانت تُرسَم لكل من يفتح الصفحة،
+   فيرى موظف الدعم بطاقة تفشل بـ403 في وجهه بلا سبب مفهوم.
 
-  return (
-    <Card>
-      <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>البيانات الضريبية</h3>
-      <p className="text-[11px] mb-4 leading-6" style={{ color: C.textFaint }}>
-        تظهر على كل فاتورة تُصدَر بعد الحفظ. الفواتير الصادرة سابقاً تحتفظ ببياناتها وقت الإصدار.
-        {state.data?.settings?.updated_at && ` · آخر تحديث: ${fmtDateTime(state.data.settings.updated_at)}`}
-      </p>
-      <ErrorBar error={state.error || err} />
-      <div className="grid gap-3">
-        <Field label="الاسم النظامي">
-          <Input value={legalName} disabled={!canEdit} onChange={(e) => setLegalName(e.target.value)} />
-        </Field>
-        <Field label="الرقم الضريبي" hint="15 رقماً بالضبط.">
-          <Input value={vatNumber} disabled={!canEdit} inputMode="numeric"
-            onChange={(e) => setVatNumber(e.target.value.replace(/\D/g, "").slice(0, 15))} />
-        </Field>
-        <Field label="العنوان">
-          <Textarea rows={2} value={address} disabled={!canEdit} onChange={(e) => setAddress(e.target.value)} />
-        </Field>
-        {canEdit ? (
-          <div><Button onClick={save} busy={busy}>حفظ</Button></div>
-        ) : (
-          <p className="text-[11px]" style={{ color: C.textFaint }}>التعديل لصلاحية المالك فقط.</p>
-        )}
-      </div>
-    </Card>
-  );
-}
+   ومع وجود صفحة إعدادات موحّدة، بقاؤها هنا كان سيعني شاشتين
+   تعدّلان نفس الصف — وهو نمط «مسارين لنفس العنوان» الذي كلّف هذا
+   المشروع مرتين.
+   ------------------------------------------------------------ */

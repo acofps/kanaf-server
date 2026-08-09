@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard } from "lucide-react";
+import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download} from "lucide-react";
 import { api } from "../api.js";
-import { C, atLeast, fmtDate, fmtDateTime } from "../theme.js";
+import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, SearchBox, Spinner, Empty,
   ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync,
@@ -26,7 +26,7 @@ const ACCOUNT_STATUS = {
   deleted: { label: "محذوف", color: "textFaint" },
 };
 
-export default function Users({ role, toast }) {
+export default function Users({ me, toast }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [subscription, setSubscription] = useState("all");
@@ -45,7 +45,16 @@ export default function Users({ role, toast }) {
 
   return (
     <div>
-      <PageTitle title="المستخدمون" subtitle="البحث يقبل الاسم أو البريد أو معرّف المستخدم كاملاً." />
+      <PageTitle title="المستخدمون" subtitle="البحث يقبل الاسم أو البريد أو معرّف المستخدم كاملاً.">
+        {/* الرابط يحمل **نفس** معاملات الشاشة، فالملف يطابق ما تراه
+            بالضبط. تحميل مباشر من المتصفّح لا نداء fetch: الملف قد
+            يكون كبيراً ولا داعي لتحميله في ذاكرة الصفحة. */}
+        {can(me, "exports:users") && (
+          <a href={api.exportUrl("users", { search, status, subscription })}>
+            <Button size="sm" variant="ghost"><Download size={13} /> تصدير المعروض</Button>
+          </a>
+        )}
+      </PageTitle>
 
       <Card>
         <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
@@ -110,7 +119,7 @@ export default function Users({ role, toast }) {
 
       {open && (
         <UserDetail
-          id={open} role={role} toast={toast}
+          id={open} me={me} toast={toast}
           onClose={() => setOpen(null)}
           onChanged={() => state.reload()}
         />
@@ -130,13 +139,19 @@ function Row({ label, children }) {
   );
 }
 
-function UserDetail({ id, role, toast, onClose, onChanged }) {
+function UserDetail({ id, me, toast, onClose, onChanged }) {
   const state = useAsync(() => api.getUser(id), [id]);
   const [reason, setReason] = useState(null);
   const [tab, setTab] = useState("profile");   // profile | sensitive | actions | billing
 
   const u = state.data;
-  const isAdmin = atLeast(role, "admin");
+  /* ثلاث صلاحيات مستقلة لا شرط واحد: كان `isAdmin` يحكم الثلاثة
+     معاً، والمحاسب يحتاج المالي ولا يجوز أن يرى المتابعة اليومية.
+     الخادم يفصلها أصلاً، والشاشة تتبعه. */
+  const canBilling = can(me, "billing:view_user");
+  const canSensitive = can(me, "users:view_sensitive");
+  const canActions = can(me, "users:view_actions");
+  const canSuspend = can(me, "users:suspend");
 
   const act = (kind) => {
     if (kind === "suspend") {
@@ -163,9 +178,9 @@ function UserDetail({ id, role, toast, onClose, onChanged }) {
           <div className="flex gap-1.5 mb-4 flex-wrap">
             {[
               ["profile", "الملف", true],
-              ["billing", "الاشتراك", isAdmin],
-              ["sensitive", "المتابعة اليومية", isAdmin],
-              ["actions", "سجل الإجراءات", isAdmin],
+              ["billing", "الاشتراك", canBilling],
+              ["sensitive", "المتابعة اليومية", canSensitive],
+              ["actions", "سجل الإجراءات", canActions],
             ].filter(([, , show]) => show).map(([k, label]) => (
               <button key={k} onClick={() => setTab(k)}
                 className="px-3 py-1.5 rounded-xl text-xs font-bold"
@@ -196,7 +211,7 @@ function UserDetail({ id, role, toast, onClose, onChanged }) {
               {u.locked_until && <Row label="مقفل حتى">{fmtDateTime(u.locked_until)}</Row>}
               {u.suspended_at && <Row label="سبب الإيقاف">{u.suspended_reason || "—"}</Row>}
 
-              {isAdmin && u.account_status !== "deleted" && (
+              {canSuspend && u.account_status !== "deleted" && (
                 <div className="flex gap-2 mt-4">
                   {u.account_status === "suspended" ? (
                     <Button variant="good" onClick={() => act("restore")}><RotateCcw size={13} /> إعادة تفعيل</Button>

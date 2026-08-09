@@ -1,7 +1,7 @@
 import React from "react";
 import { Users, CreditCard, Mail, LifeBuoy } from "lucide-react";
 import { api } from "../api.js";
-import { C } from "../theme.js";
+import { C, can } from "../theme.js";
 import { Card, PageTitle, Spinner, ErrorBar, Empty, useAsync } from "../ui.jsx";
 
 /* ============================================================
@@ -40,14 +40,21 @@ function Stat({ icon: Icon, label, value, hint, color = "teal" }) {
 
 const sar = (n) => `${Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ر.س`;
 
-export default function Overview() {
+export default function Overview({ me }) {
   const state = useAsync(() => api.overview(), []);
   const d = state.data;
 
   if (state.loading) return <div className="py-16 flex justify-center"><Spinner /></div>;
   if (state.error) return <ErrorBar error={state.error} />;
 
-  const rev = d?.last30Days || {};
+  /* ⚠️ الكتلة المالية قد لا تصل أصلاً.
+
+     الخادم **لا يشغّل استعلامها** لمن لا يملك overview:view_revenue —
+     لا يخفيها في الواجهة. فغيابها هنا ليس نقصاً في الرد بل هو
+     الرد الصحيح، والشاشة تتعامل معه كذلك بدل أن ترسم أصفاراً
+     تُقرأ «لا إيراد» بدل «لا صلاحية». */
+  const rev = d?.last30Days;
+  const showRevenue = !!rev && can(me, "overview:view_revenue");
   const crisis = d?.crisisEventsLast30Days || [];
   const crisisTotal = crisis.reduce((s, r) => s + Number(r.n || 0), 0);
 
@@ -66,21 +73,26 @@ export default function Overview() {
       </div>
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))" }}>
-        <Card>
-          <h3 className="text-sm font-bold mb-3" style={{ color: C.text }}>الإيراد — آخر 30 يوماً</h3>
-          {[
-            ["الإجمالي", sar(rev.grossRevenue), C.text],
-            ["المستردّ", `− ${sar(rev.refunds)}`, C.amber],
-            ["الصافي", sar(rev.netRevenue), C.green],
-            ["مدفوعات فاشلة", rev.failedPayments ?? 0, (rev.failedPayments ?? 0) > 0 ? C.crisis : C.textFaint],
-          ].map(([k, v, col]) => (
-            <div key={k} className="flex items-center justify-between py-2 text-xs"
-              style={{ borderTop: `1px solid ${C.line}` }}>
-              <span style={{ color: C.textMuted }}>{k}</span>
-              <span className="font-bold" style={{ color: col }}>{v}</span>
-            </div>
-          ))}
-        </Card>
+        {showRevenue && (
+          <Card>
+            <h3 className="text-sm font-bold" style={{ color: C.text }}>الإيراد — آخر 30 يوماً</h3>
+            <p className="text-[11px] mb-3" style={{ color: C.textFaint }}>
+              بتوقيت {d?.range?.timezone || "Asia/Riyadh"} — لا بتوقيت الخادم.
+            </p>
+            {[
+              ["الإجمالي", sar(rev.grossRevenue), C.text],
+              ["المستردّ", `− ${sar(rev.refunds)}`, C.amber],
+              ["الصافي", sar(rev.netRevenue), C.green],
+              ["مدفوعات فاشلة", rev.failedPayments ?? 0, (rev.failedPayments ?? 0) > 0 ? C.crisis : C.textFaint],
+            ].map(([k, v, col]) => (
+              <div key={k} className="flex items-center justify-between py-2 text-xs"
+                style={{ borderTop: `1px solid ${C.line}` }}>
+                <span style={{ color: C.textMuted }}>{k}</span>
+                <span className="font-bold" style={{ color: col }}>{v}</span>
+              </div>
+            ))}
+          </Card>
+        )}
 
         <Card>
           <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>إشارات الأزمة حسب المصدر</h3>

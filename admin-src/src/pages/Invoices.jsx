@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { FileText, RefreshCw, AlertTriangle, Download } from "lucide-react";
 import { api } from "../api.js";
-import { C, fmtDate, fmtDateTime } from "../theme.js";
+import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync,
 } from "../ui.jsx";
@@ -16,11 +16,18 @@ import {
    لها رقم أصلاً (فشل التوليد وقت الدفع)، لا لتغيير رقم قائم.
    ============================================================ */
 
-export default function Invoices({ toast }) {
+export default function Invoices({ me, toast }) {
   const [tab, setTab] = useState("invoices");
   return (
     <div>
-      <PageTitle title="الفواتير" subtitle="وثائق ضريبية — للقراءة فقط. التصحيح يكون بإشعار دائن لا بتعديل." />
+      <PageTitle title="الفواتير" subtitle="وثائق ضريبية — للقراءة فقط. التصحيح يكون بإشعار دائن لا بتعديل.">
+        {can(me, "exports:billing") && (
+          <div className="flex gap-2">
+            <a href={api.exportUrl("invoices")}><Button size="sm" variant="ghost"><Download size={13} /> الفواتير CSV</Button></a>
+            <a href={api.exportUrl("payments")}><Button size="sm" variant="ghost"><Download size={13} /> المدفوعات CSV</Button></a>
+          </div>
+        )}
+      </PageTitle>
       <div className="flex gap-1.5 mb-4">
         {[["invoices", "الفواتير"], ["credit", "الإشعارات الدائنة"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className="px-3 py-1.5 rounded-xl text-xs font-bold"
