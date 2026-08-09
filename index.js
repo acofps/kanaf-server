@@ -78,13 +78,39 @@ if (allowedOrigins.length === 0) {
     "WARNING: ALLOWED_ORIGINS فارغة — CORS يعكس أي أصل. مقبول للتطوير المحلي وحده."
   );
 }
+/* ---------------------------------------------------------
+   ⚠️ الطلب من أصل الخادم نفسه مسموح دائماً — وهذا إصلاح لعطب
+   حقيقي كُشف بمتصفّح آلي قبل النشر لا بعده.
+
+   Vite يضيف `crossorigin` على وسمي الحزمة في index.html:
+
+     <script type="module" crossorigin src="/assets/index-....js">
+     <link rel="stylesheet" crossorigin href="/assets/index-....css">
+
+   والوسم يجعل المتصفّح يرسل ترويسة Origin **حتى لطلب من نفس
+   الأصل**. والشرط السابق كان يقارنها بـALLOWED_ORIGINS وحدها، فأصل
+   الخادم نفسه — إن لم يكن مكتوباً في القائمة — يُرفض، فيسقط ملفا
+   اللوحة بـ500 وتظهر **شاشة بيضاء** بلا رسالة مفهومة.
+
+   الإنتاج ينجو اليوم بالمصادفة وحدها: kanaf-server.onrender.com
+   مكتوب في القائمة. حذفه، أو تغيير اسم الخدمة على Render، أو نقل
+   اللوحة إلى نطاق آخر — كل واحد منها كان سيقتل اللوحة بالكامل
+   بعطب يستحيل تشخيصه من الأعراض.
+
+   وتغيير ثانٍ: الأصل غير المسموح يُردّ الآن بحجب CORS نظيف (بلا
+   ترويسات) بدل رمي استثناء يتحول إلى 500 internal_error. الرفض
+   يجب أن يبدو رفضاً لا عطباً في الخادم.
+--------------------------------------------------------- */
 app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
-      cb(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
+  cors((req, cb) => {
+    const origin = req.headers.origin;
+    const selfOrigin = `${req.protocol}://${req.get("host")}`;
+    const ok =
+      !origin ||
+      origin === selfOrigin ||
+      allowedOrigins.length === 0 ||
+      allowedOrigins.includes(origin);
+    cb(null, { origin: ok, credentials: true });
   })
 );
 
