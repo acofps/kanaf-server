@@ -536,6 +536,47 @@ let scheduledId = null;
 }
 
 /* ------------------------------------------------------------
+   28-ب) نص اليومية ووسومها لا يظهران في المسار الإداري الحساس
+
+   الاختبار 28 كان يغطّي نص الدفتر وحده، فصار مصدر ثقة زائدة:
+   وثيقة التصنيف كتبت أن `daily_logs.note` «لا يختاره أي استعلام
+   إداري»، بينما كان `/admin/users/:id/sensitive` يختاره فعلاً
+   ويرسله. اللوحة لم تعرضه — ولهذا بقي سنة بلا انتباه.
+
+   حقل لا تعرضه أي شاشة يظل يعبر الشبكة ويستقر في ذاكرة المتصفح
+   وفي أي تسجيل وسيط بينهما. الإخفاء في الواجهة ليس منعاً.
+
+   هذا الاختبار يقفل الباب: يكتب نصاً فريداً ووسماً فريداً في
+   اليومية، ثم يبحث عنهما في كامل رد المسار الإداري.
+   ------------------------------------------------------------ */
+{
+  CURRENT_USER_TOKEN = userToken(alice.id);
+  const noteSecret = `يومية-خاصة-${TAG}`;
+  const tagSecret = `وسم-خاص-${TAG}`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const written = await post("/api/me/logs", {
+    mood: 3, sleep: 4, energy: 3, note: noteSecret, tags: [tagSecret], loggedOn: today,
+  });
+
+  const mineLogs = await get("/api/me/logs");
+  const ownerSees = JSON.stringify(mineLogs.body).includes(noteSecret);
+
+  CURRENT_ADMIN = adminUser;
+  const view = await get(`/admin/users/${alice.id}/sensitive?reason=اختبار تسريب نص اليومية`);
+  const body = JSON.stringify(view.body);
+  const leaksNote = body.includes(noteSecret);
+  const leaksTag = body.includes(tagSecret);
+  // الدرجات يجب أن تبقى — المطلوب حذف النص لا تعطيل المسار.
+  const keepsScores = Array.isArray(view.body?.logs)
+    && view.body.logs.some((l) => l.mood === 3 && l.sleep === 4 && l.energy === 3);
+
+  log("28-ب. نص اليومية ووسومها لا يصلان إلى المسار الإداري، والدرجات تبقى",
+    written.status === 201 && ownerSees && !leaksNote && !leaksTag && keepsScores,
+    `owner=${ownerSees} note=${leaksNote} tag=${leaksTag} scores=${keepsScores}`);
+}
+
+/* ------------------------------------------------------------
    29) الوصول للبيانات الحساسة يشترط سبباً ويُسجَّل
    ------------------------------------------------------------ */
 {
