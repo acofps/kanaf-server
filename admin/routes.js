@@ -56,6 +56,28 @@ adminRouter.use("/billing", billingRouter);
    ------------------------------------------------------------ */
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 
+/* ------------------------------------------------------------
+   ⚠️ محدِّد منفصل للتجديد — إصلاح لعطب كشفه اختبار متصفّح آلي.
+
+   كان /auth/refresh يشارك loginLimiter نفسه (10 كل ربع ساعة لكل
+   عنوان). والتجديد ليس فعلاً يقوم به المسؤول: تناديه اللوحة
+   تلقائياً عند كل 401 — أي عند كل إقلاع بلا جلسة، وعند كل انتهاء
+   لرمز عمره خمس عشرة دقيقة.
+
+   فالحصيلة أن الاستعمال العادي يستهلك ميزانية **الدخول**: خمسة
+   حسابات تفتح اللوحة تستنفد الحد، فيُردّ السادس بـ429 عند تسجيل
+   دخول شرعي. ومكتب فيه ثلاثة مسؤولين خلف عنوان واحد كان سيقفل
+   بعضه بعضاً كل ربع ساعة بلا سبب ظاهر.
+
+   ظهر حرفياً في الاختبار: خمسة أدوار تسجّل دخولها بالتتابع،
+   فالخامس يصل إلى شاشة بيضاء بلا أقسام.
+
+   التجديد يبقى محدوداً — لكن بحدّ يناسب ما هو: عملية خلفية متكررة
+   لا محاولة تخمين. والرمز نفسه موقَّع ومحدود المدة، فالإغراق به لا
+   يعطي شيئاً.
+   ------------------------------------------------------------ */
+const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
+
 /** الشكل الذي تراه اللوحة عن نفسها — الدور وصلاحياته معاً.
     اللوحة لا تحمل مصفوفة صلاحيات خاصة بها؛ ترسم مما يصلها هنا. */
 function selfPayload(admin) {
@@ -102,7 +124,7 @@ adminRouter.post("/auth/login", loginLimiter, async (req, res) => {
 // POST /admin/auth/refresh — يقرأ رمز التجديد من كوكيه الخاص، لا من
 // جسم الطلب: جسم JSON تقرأه أي JS في الصفحة، وهو بالضبط ما تتجنبه
 // كوكي httpOnly.
-adminRouter.post("/auth/refresh", loginLimiter, async (req, res) => {
+adminRouter.post("/auth/refresh", refreshLimiter, async (req, res) => {
   try {
     const refreshToken = req.cookies?.kanaf_admin_refresh;
     if (!refreshToken) return res.status(401).json({ error: "no_refresh_cookie" });
