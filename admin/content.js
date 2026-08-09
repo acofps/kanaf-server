@@ -1,24 +1,14 @@
 import express from "express";
 import { query, withTransaction } from "../db/pool.js";
-import { requireAdminAuth, requireRole, logAdminAction } from "./middleware.js";
+import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction } from "./middleware.js";
 import { getAdminCatalog, recordContentChange } from "../content/catalog.js";
 
 export const adminContentRouter = express.Router();
 
-/* ------------------------------------------------------------
-   حارس معرّف UUID.
-
-   بدونه يذهب `/admin/content/not-a-uuid/review` إلى Postgres
-   فيرد 22P02، فيُترجَم إلى 500 internal_error — خطأ خادم يُبلَّغ
-   عن خطأ عميل، ويلوّث السجل. 404 هو الصواب.
-   ------------------------------------------------------------ */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function requireUuidParam(name) {
-  return (req, res, next) => {
-    if (!UUID_RE.test(String(req.params[name] || ""))) return res.status(404).json({ error: "not_found" });
-    next();
-  };
-}
+/* حارس معرّف UUID يأتي من admin/middleware.js — كان معرَّفاً هنا
+   وفي admin/notifications.js بنسختين متطابقتين، ومغيَّباً عن
+   admin/routes.js و admin/billing.js حيث معظم المسارات ذات
+   المعرّفات. نسخة واحدة الآن. */
 
 /* ============================================================
    إدارة المحتوى — الحلقة المغلقة، مفتوحة.
@@ -54,7 +44,7 @@ function requireUuidParam(name) {
    GET /admin/content
    بحث وفلترة وترقيم من طرف الخادم (البند 10).
    ------------------------------------------------------------ */
-adminContentRouter.get("/content", requireAdminAuth, requireRole("content_manager"), async (req, res) => {
+adminContentRouter.get("/content", requireAdminAuth, requirePermission("content:view"), async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
@@ -89,7 +79,7 @@ adminContentRouter.get("/content", requireAdminAuth, requireRole("content_manage
 /* ------------------------------------------------------------
    GET /admin/content/:type/:key — عنصر واحد بتاريخه الكامل.
    ------------------------------------------------------------ */
-adminContentRouter.get("/content/:type/:key", requireAdminAuth, requireRole("content_manager"), async (req, res) => {
+adminContentRouter.get("/content/:type/:key", requireAdminAuth, requirePermission("content:view"), async (req, res) => {
   try {
     const { items } = await getAdminCatalog({ type: req.params.type, limit: 200 });
     const item = items.find((i) => i.content_key === req.params.key);
@@ -118,7 +108,7 @@ adminContentRouter.get("/content/:type/:key", requireAdminAuth, requireRole("con
    المراجعة السريرية. رفض المحتوى يُنزل مفتاح الإطلاق معه — وإلا
    بقي محتوى مرفوض معروضاً لأن أحداً نسي خطوة ثانية.
    ------------------------------------------------------------ */
-adminContentRouter.post("/content/:id/review", requireAdminAuth, requireRole("admin"), requireUuidParam("id"), async (req, res) => {
+adminContentRouter.post("/content/:id/review", requireAdminAuth, requirePermission("content:review"), requireUuidParam("id"), async (req, res) => {
   const { status, notes } = req.body || {};
   if (!["approved", "rejected", "retired"].includes(status)) {
     return res.status(400).json({ error: "invalid_status" });
@@ -186,7 +176,7 @@ adminContentRouter.post("/content/:id/review", requireAdminAuth, requireRole("ad
    لا يقبل التفعيل لغير المعتمد: نشر محتوى لم يُراجَع سريرياً على
    مستخدم في ضائقة هو أخطر ما يمكن أن تفعله هذه اللوحة.
    ------------------------------------------------------------ */
-adminContentRouter.post("/content/:id/toggle-launch", requireAdminAuth, requireRole("admin"), requireUuidParam("id"), async (req, res) => {
+adminContentRouter.post("/content/:id/toggle-launch", requireAdminAuth, requirePermission("content:toggle_launch"), requireUuidParam("id"), async (req, res) => {
   const enabled = !!req.body?.enabled;
   const reason = String(req.body?.reason || "").trim();
   try {
@@ -251,7 +241,7 @@ adminContentRouter.post("/content/:id/toggle-launch", requireAdminAuth, requireR
 adminContentRouter.patch(
   "/content/:type/:key/presentation",
   requireAdminAuth,
-  requireRole("content_manager"),
+  requirePermission("content:edit_presentation"),
   async (req, res) => {
     const { title, category, displayOrder, subscriptionTier } = req.body || {};
     const reason = String(req.body?.reason || "").trim();
@@ -269,9 +259,15 @@ adminContentRouter.patch(
       if (!["free", "plus"].includes(subscriptionTier)) {
         return res.status(400).json({ error: "invalid_subscription_tier" });
       }
-      const rank = { support: 1, content_manager: 2, admin: 3, owner: 4 }[req.admin.role] || 0;
-      if (rank < 3) {
-        return res.status(403).json({ error: "tier_change_requires_admin", message: "تغيير الطبقة قرار مالي — يحتاج صلاحية admin." });
+      /* الصلاحية تعتمد على الحقل المرسل لا على المسار، فالفحص
+         هنا لا في وسيطة. وكان يقارن رتبة رقمية (rank < 3) — أي
+         النموذج الخطّي نفسه الذي منح مدير المحتوى وصولاً للمحاسبة.
+         صار سؤالاً بالاسم. */
+      if (!req.admin.can("content:change_tier")) {
+        return res.status(403).json({
+          error: "tier_change_requires_admin",
+          message: "تغيير الطبقة قرار مالي — يحتاج صلاحية مدير.",
+        });
       }
     }
 
@@ -348,7 +344,7 @@ adminContentRouter.patch(
    ISO 8601 بإزاحة صريحة إلزامي. "2026-09-01T09:00:00+03:00" تعني
    التاسعة صباحاً بالرياض بالضبط، وتُخزَّن لحظة مطلقة.
    ------------------------------------------------------------ */
-adminContentRouter.post("/content/:type/:key/schedule", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminContentRouter.post("/content/:type/:key/schedule", requireAdminAuth, requirePermission("content:schedule"), async (req, res) => {
   const { publishAt, unpublishAt } = req.body || {};
   const reason = String(req.body?.reason || "").trim();
 
@@ -427,7 +423,7 @@ adminContentRouter.post("/content/:type/:key/schedule", requireAdminAuth, requir
    content_versions لكل عنصر، فالنشر الجماعي ليس استثناءً من
    التدقيق.
    ------------------------------------------------------------ */
-adminContentRouter.post("/content/bulk-publish", requireAdminAuth, requireRole("owner"), async (req, res) => {
+adminContentRouter.post("/content/bulk-publish", requireAdminAuth, requirePermission("content:bulk_publish"), async (req, res) => {
   const { type, keys } = req.body || {};
   const all = req.body?.all === true;
   const reason = String(req.body?.reason || "").trim();
