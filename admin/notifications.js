@@ -1,6 +1,6 @@
 import express from "express";
 import { query } from "../db/pool.js";
-import { requireAdminAuth, requireRole, logAdminAction } from "./middleware.js";
+import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction } from "./middleware.js";
 import {
   countAudience, dispatchCampaign, VALID_CHANNELS, isPushConfigured,
 } from "../notifications/service.js";
@@ -8,13 +8,8 @@ import { sweepDueCampaigns, schedulerStatus } from "../notifications/scheduler.j
 
 export const adminNotificationsRouter = express.Router();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function requireUuidParam(name) {
-  return (req, res, next) => {
-    if (!UUID_RE.test(String(req.params[name] || ""))) return res.status(404).json({ error: "not_found" });
-    next();
-  };
-}
+/* حارس معرّف UUID من admin/middleware.js — كان معرَّفاً هنا وفي
+   admin/content.js بنسختين متطابقتين. نسخة واحدة الآن. */
 
 /* ============================================================
    إدارة الإشعارات.
@@ -44,7 +39,7 @@ function requireUuidParam(name) {
    ------------------------------------------------------------ */
 adminNotificationsRouter.get(
   "/notifications/audience-count",
-  requireAdminAuth, requireRole("admin"),
+  requireAdminAuth, requirePermission("notifications:view"),
   async (req, res) => {
     try {
       const filter = {};
@@ -63,7 +58,7 @@ adminNotificationsRouter.get(
 /* ------------------------------------------------------------
    GET /admin/notifications — قائمة الحملات مع بحث وفلترة وترقيم.
    ------------------------------------------------------------ */
-adminNotificationsRouter.get("/notifications", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.get("/notifications", requireAdminAuth, requirePermission("notifications:view"), async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
@@ -112,7 +107,7 @@ adminNotificationsRouter.get("/notifications", requireAdminAuth, requireRole("ad
    ------------------------------------------------------------ */
 adminNotificationsRouter.get(
   "/notifications/:id/deliveries",
-  requireAdminAuth, requireRole("admin"), requireUuidParam("id"),
+  requireAdminAuth, requirePermission("notifications:view"), requireUuidParam("id"),
   async (req, res) => {
     try {
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
@@ -161,7 +156,7 @@ adminNotificationsRouter.get(
    فشلها لاحقاً بصمت. هذا هو الدرس المستخلص من عطب البث القديم
    مطبَّقاً في أبكر نقطة ممكنة.
    ------------------------------------------------------------ */
-adminNotificationsRouter.post("/notifications", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermission("notifications:create"), async (req, res) => {
   const { title, body, audience, audienceFilter, channels, scheduledAt, sendNow } = req.body || {};
 
   if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: "title_and_body_required" });
@@ -241,7 +236,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requireRole("a
    إعادة الاستدعاء آمنة: صفوف التسليم الناجحة محمية بالقيد الفريد
    فلا تتكرر، والفاشلة وحدها يُعاد محاولتها.
    ------------------------------------------------------------ */
-adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requireRole("admin"), requireUuidParam("id"), async (req, res) => {
+adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requirePermission("notifications:send"), requireUuidParam("id"), async (req, res) => {
   try {
     const result = await dispatchCampaign(req.params.id, { trigger: "manual" });
     await logAdminAction({
@@ -263,7 +258,7 @@ adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requi
 /* ------------------------------------------------------------
    POST /admin/notifications/:id/cancel — قبل التنفيذ فقط.
    ------------------------------------------------------------ */
-adminNotificationsRouter.post("/notifications/:id/cancel", requireAdminAuth, requireRole("admin"), requireUuidParam("id"), async (req, res) => {
+adminNotificationsRouter.post("/notifications/:id/cancel", requireAdminAuth, requirePermission("notifications:cancel"), requireUuidParam("id"), async (req, res) => {
   try {
     const { rows } = await query(
       `UPDATE notification_campaigns SET status = 'canceled', updated_at = now()
@@ -294,7 +289,7 @@ adminNotificationsRouter.post("/notifications/:id/cancel", requireAdminAuth, req
    المسح يعمل تلقائياً على هامش حركة الخادم (scheduler.js)؛ هذان
    المساران للتشخيص ولإجبار التنفيذ عند الحاجة.
    ------------------------------------------------------------ */
-adminNotificationsRouter.get("/notifications-scheduler/status", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.get("/notifications-scheduler/status", requireAdminAuth, requirePermission("notifications:view"), async (req, res) => {
   try {
     res.json(await schedulerStatus());
   } catch (err) {
@@ -303,7 +298,7 @@ adminNotificationsRouter.get("/notifications-scheduler/status", requireAdminAuth
   }
 });
 
-adminNotificationsRouter.post("/notifications-scheduler/sweep", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.post("/notifications-scheduler/sweep", requireAdminAuth, requirePermission("notifications:sweep"), async (req, res) => {
   try {
     res.json(await sweepDueCampaigns({ log: console.log }));
   } catch (err) {
@@ -348,7 +343,7 @@ adminNotificationsRouter.post("/notifications-scheduler/sweep", requireAdminAuth
    تُحذف هذه الكتلة كاملةً يوم تُبنى اللوحة على /admin/notifications.
    ============================================================ */
 
-adminNotificationsRouter.get("/broadcasts/audience-count", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.get("/broadcasts/audience-count", requireAdminAuth, requirePermission("notifications:view"), async (req, res) => {
   try {
     const count = await countAudience(req.query.audience, {});
     res.json({ count });
@@ -359,7 +354,7 @@ adminNotificationsRouter.get("/broadcasts/audience-count", requireAdminAuth, req
   }
 });
 
-adminNotificationsRouter.get("/broadcasts", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.get("/broadcasts", requireAdminAuth, requirePermission("notifications:view"), async (req, res) => {
   try {
     /* التاريخ يُقرأ من الحملات لا من broadcast_notifications.
 
@@ -384,7 +379,7 @@ adminNotificationsRouter.get("/broadcasts", requireAdminAuth, requireRole("admin
   }
 });
 
-adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requireRole("admin"), async (req, res) => {
+adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requirePermission("notifications:create"), async (req, res) => {
   const { subject, message, audience } = req.body || {};
   if (!subject?.trim() || !message?.trim()) {
     return res.status(400).json({ error: "subject_message_and_valid_audience_required" });
