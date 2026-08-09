@@ -2,9 +2,10 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
+  SlidersHorizontal, History,
 } from "lucide-react";
 import { api } from "./api.js";
-import { C, ROLE_LABEL, atLeast } from "./theme.js";
+import { C, ROLE_LABEL, canAny } from "./theme.js";
 import { Spinner } from "./ui.jsx";
 
 import Login from "./pages/Login.jsx";
@@ -18,29 +19,49 @@ import Invoices from "./pages/Invoices.jsx";
 import BreakGlass from "./pages/BreakGlass.jsx";
 import AdminUsers from "./pages/AdminUsers.jsx";
 import AccessLog from "./pages/AccessLog.jsx";
+import AuditLog from "./pages/AuditLog.jsx";
+import SettingsPage from "./pages/Settings.jsx";
+import Setup from "./pages/Setup.jsx";
 
 /* ============================================================
    هيكل اللوحة.
 
-   القائمة تُخفي ما لا تصله صلاحيتك — لكن الإخفاء راحة عين لا
-   حماية. الحماية في الخادم: كل مسار يفحص الدور بنفسه، ومن يكتب
-   العنوان يدوياً يقابله 403 لا صفحة.
+   ------------------------------------------------------------
+   القائمة تُبنى من الصلاحيات لا من الرتبة
+   ------------------------------------------------------------
+   كان لكل قسم `min: "support"` وتُقارَن برتبة رقمية. وهو نموذج
+   انكسر عملياً: مدير المحتوى رتبته أعلى من «دعم»، فكان يرى صفحة
+   الباقات والمستخدمين والرسائل — ويصلها في الخادم أيضاً.
+
+   الآن كل قسم يعلن الصلاحيات التي تفتحه، والقائمة تُرشَّح بما وصل
+   من GET /admin/auth/me. اللوحة لا تعرف الأدوار إطلاقاً.
+
+   ويبقى الأصل: الإخفاء راحة عين لا حماية. كل مسار في الخادم يفحص
+   بنفسه ويردّ 403 لمن كتب العنوان يدوياً.
    ============================================================ */
 
 const SECTIONS = [
-  { key: "overview",     label: "نظرة عامة",      icon: LayoutDashboard, min: "support" },
-  { key: "users",        label: "المستخدمون",      icon: UsersIcon,       min: "support" },
-  { key: "messages",     label: "الرسائل",         icon: Mail,            min: "support" },
-  { key: "content",      label: "المحتوى",         icon: BookOpen,        min: "content_manager" },
-  { key: "notifications",label: "الإشعارات",       icon: Bell,            min: "admin" },
-  { key: "plans",        label: "الباقات",         icon: CreditCard,      min: "support" },
-  { key: "invoices",     label: "الفواتير",        icon: FileText,        min: "admin" },
-  { key: "break-glass",  label: "الوصول الطارئ",   icon: ShieldAlert,     min: "admin" },
-  { key: "admin-users",  label: "حسابات الإدارة",  icon: UserCog,         min: "owner" },
-  { key: "access-log",   label: "سجل الوصول",      icon: ScrollText,      min: "owner" },
+  { key: "overview",     label: "نظرة عامة",     icon: LayoutDashboard,   perms: ["overview:view"] },
+  { key: "users",        label: "المستخدمون",     icon: UsersIcon,         perms: ["users:view"] },
+  { key: "messages",     label: "الرسائل",        icon: Mail,              perms: ["messages:view"] },
+  { key: "content",      label: "المحتوى",        icon: BookOpen,          perms: ["content:view"] },
+  { key: "notifications",label: "الإشعارات",      icon: Bell,              perms: ["notifications:view"] },
+  { key: "plans",        label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
+  { key: "invoices",     label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
+  { key: "break-glass",  label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
+  { key: "settings",     label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
+  { key: "admin-users",  label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
+  { key: "audit-log",    label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
+  { key: "access-log",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
 ];
 
 export default function App() {
+  /* رابط الدعوة يصل بالشكل /?setup=TOKEN، ويصل صاحبه **قبل** أن
+     يكون له حساب — فالشاشة تُقرأ من العنوان قبل أي محاولة استعادة
+     جلسة. تُقرأ مرة واحدة عند الإقلاع فلا تختفي مع أول إعادة رسم. */
+  const [setupToken, setSetupToken] = useState(
+    () => new URLSearchParams(window.location.search).get("setup") || ""
+  );
   const [me, setMe] = useState(null);
   const [booting, setBooting] = useState(true);
   const [section, setSection] = useState("overview");
@@ -70,7 +91,7 @@ export default function App() {
     return () => window.removeEventListener("kanaf-admin-session-expired", h);
   }, [me, toast]);
 
-  const allowed = SECTIONS.filter((s) => atLeast(me?.role, s.min));
+  const allowed = SECTIONS.filter((s) => canAny(me, s.perms));
 
   /* لو تغيّرت الصلاحية وصار القسم المفتوح خارجها، نعود لأول مسموح. */
   useEffect(() => {
@@ -82,6 +103,22 @@ export default function App() {
     try { await api.logout(); } catch { /* الخروج محلي على أي حال */ }
     setMe(null);
   };
+
+  /* تُعرض قبل شاشة الدخول وقبل انتظار /auth/me: المدعوّ لا جلسة له
+     أصلاً، وإظهار «سجّل الدخول» له طريق مسدود. */
+  if (setupToken) {
+    return (
+      <Setup
+        token={setupToken}
+        onDone={() => {
+          // ينظَّف العنوان حتى لا يبقى الرمز في شريط المتصفّح ولا في
+          // سجل التصفّح بعد استعماله.
+          window.history.replaceState({}, "", window.location.pathname);
+          setSetupToken("");
+        }}
+      />
+    );
+  }
 
   if (booting) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: C.bg }}><Spinner /></div>;
@@ -97,7 +134,9 @@ export default function App() {
     plans: Plans,
     invoices: Invoices,
     "break-glass": BreakGlass,
+    settings: SettingsPage,
     "admin-users": AdminUsers,
+    "audit-log": AuditLog,
     "access-log": AccessLog,
   }[section] || Overview;
 
@@ -148,7 +187,7 @@ export default function App() {
         </aside>
 
         <main className="flex-1 min-w-0 p-4 lg:p-6">
-          <Page role={me.role} me={me} toast={toast} />
+          <Page me={me} toast={toast} />
         </main>
       </div>
 

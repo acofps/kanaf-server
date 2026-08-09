@@ -150,10 +150,42 @@ export const api = {
   listPendingBreakGlass: () => req("/break-glass/pending"),
   approveBreakGlass: (id, hoursValid) =>
     req(`/break-glass/${id}/approve`, { method: "POST", body: { hoursValid } }),
-  listAccessLog: (targetUserId) => req("/access-log", { params: { targetUserId } }),
+  listAccessLog: (targetUserId, page) => req("/access-log", { params: { targetUserId, page } }),
 
   /* ---------- حسابات الإدارة ---------- */
   listAdminUsers: () => req("/admin-users"),
-  createAdminUser: (body) => req("/admin-users", { method: "POST", body }),
+  /* دعوة لا إنشاء بكلمة مرور: الرد يحمل رابطاً لمرة واحدة، لا سرّاً
+     دائماً يُسلَّم بقناة خارج النظام. */
+  inviteAdminUser: (body) => req("/admin-users", { method: "POST", body }),
   updateAdminUser: (id, body) => req(`/admin-users/${id}`, { method: "PATCH", body }),
+  resendInvite: (id, reason) => req(`/admin-users/${id}/resend-invite`, { method: "POST", body: { reason } }),
+  resetAdminPassword: (id, reason) => req(`/admin-users/${id}/reset-password`, { method: "POST", body: { reason } }),
+
+  /* ---------- قبول الدعوة وضبط كلمة المرور — بلا مصادقة ---------- */
+  validateSetupToken: (token) => req("/setup/validate", { params: { token } }),
+  acceptSetup: (token, password) => req("/setup/accept", { method: "POST", body: { token, password } }),
+
+  /* ---------- الإعدادات ---------- */
+  settingsOverview: () => req("/settings/overview"),
+  listAppSettings: () => req("/app-settings"),
+  updateAppSetting: (key, value, reason) =>
+    req(`/app-settings/${encodeURIComponent(key)}`, { method: "PUT", body: { value, reason } }),
+  getBillingSettings: () => req("/billing/settings"),
+  saveBillingSettings: (body) => req("/billing/settings", { method: "PUT", body }),
+
+  /* ---------- سجل الإجراءات ---------- */
+  listAuditLog: (params) => req("/audit-log", { params }),
+
+  /* ---------- التصدير ----------
+     رابط لا نداء fetch: الملف يُنزَّل من المتصفّح مباشرة فلا
+     يُحمَّل في ذاكرة الصفحة، والكوكي يُرسَل تلقائياً لأنه نفس
+     الأصل. ونفس معاملات الشاشة تُمرَّر حرفياً، فيطابق الملف ما
+     تراه بالضبط. */
+  exportUrl: (kind, params = {}) => {
+    const u = new URL(`${BASE}/exports/${kind}.csv`, window.location.origin);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "" && v !== "all") u.searchParams.set(k, v);
+    });
+    return u.toString();
+  },
 };

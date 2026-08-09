@@ -25,15 +25,45 @@ export const C = {
 export const ROLE_LABEL = {
   support: "دعم فني",
   content_manager: "مدير محتوى",
+  accountant: "محاسب",
   admin: "مدير",
   owner: "مالك",
 };
 
-const RANK = { support: 1, content_manager: 2, admin: 3, owner: 4 };
+export const ROLE_HINT = {
+  support: "يرى الحسابات والرسائل وحالة الاشتراك، ولا يغيّر شيئاً مالياً ولا يرى بيانات نفسية.",
+  content_manager: "المحتوى وعرضه فقط.",
+  accountant: "يقرأ الدفاتر كاملة، ولا يرى بيانات نفسية ولا يحرّك مالاً.",
+  admin: "التشغيل اليومي عدا ما يخصّ المالك.",
+  owner: "كل شيء.",
+};
 
-/** هل صلاحية الحساب تساوي المطلوبة أو تزيد عليها؟ */
-export function atLeast(role, min) {
-  return (RANK[role] || 0) >= (RANK[min] || 99);
+/* ============================================================
+   ⚠️ لا جدول رتب في هذا الملف بعد اليوم.
+
+   كان هنا:  const RANK = { support: 1, content_manager: 2, ... }
+   ودالة atLeast(role, min) تقارن رقمين.
+
+   وهو نسخة ثانية من نموذج الخادم، ونسختان تختلفان يوماً ما. وقد
+   اختلفتا فعلاً: الرتبة كانت تعطي مدير المحتوى وصولاً لكل ما هو
+   عند «دعم» — بما فيه صفحة الباقات — لأن رقمه أكبر.
+
+   الآن اللوحة **لا تعرف** الأدوار إطلاقاً. تستقبل قائمة صلاحيات
+   جاهزة من GET /admin/auth/me وترسم منها. مصدر واحد في
+   admin/permissions.js، ولا شيء هنا يمكن أن يخالفه.
+
+   ويبقى الأصل: هذا كله إخفاء لراحة العين. المنع في الخادم، وكل
+   مسار يفحص بنفسه ويردّ 403 لمن كتب العنوان يدوياً.
+   ============================================================ */
+
+/** هل يملك المسؤول هذه الصلاحية؟ `me` من /admin/auth/me. */
+export function can(me, permission) {
+  return Array.isArray(me?.permissions) && me.permissions.includes(permission);
+}
+
+/** هل يملك أياً من هذه الصلاحيات؟ */
+export function canAny(me, permissions) {
+  return permissions.some((p) => can(me, p));
 }
 
 export const CONTENT_TYPE_LABEL = {
