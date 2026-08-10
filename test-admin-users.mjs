@@ -49,7 +49,38 @@ function adminCookie() {
    والدور يُزامَن قبل كل طلب لأنه لم يعد يُقرأ من حمولة الرمز:
    تغيير CURRENT_ADMIN.role يجب أن يصل إلى القاعدة ليسري.
    ============================================================ */
+/* هل نُظّفت بقايا التشغيلات السابقة في هذه الجلسة؟ مرة واحدة تكفي،
+   والدالة تُنادى قبل كل طلب إداري. */
+let harnessCleared = false;
+
 async function syncAdminRow() {
+  /* ------------------------------------------------------------
+     ⚠️ ON CONFLICT (id) وحدها لا تكفي.
+
+     المعرّف عشوائي في كل تشغيل (crypto.randomUUID)، والبريد ثابت،
+     وعلى admin_users فهرس فرادة على LOWER(email). فالتشغيل الثاني
+     يصطدم بصف التشغيل الأول:
+
+       duplicate key value violates unique constraint
+       "idx_admin_users_email_lower"
+
+     ووقع ذلك فعلاً على الإنتاج، لأن الملف لم يكن ينظّف حساب
+     الاختبار بعده — فكل تشغيل يترك حساب إدارة وهمياً في الجدول
+     يظهر في شاشة حسابات الإدارة. (غير قابل للدخول: password_hash
+     يساوي 'x' وbcrypt لا يطابقه، لكن وجوده وحده تلويث.)
+
+     فيُحذف أي صف قديم بنفس البريد ومعرّف مختلف، مرة واحدة في
+     الجلسة. ولا مفتاح أجنبي من سجلَّي التدقيق إلى admin_users
+     (صلاحية REFERENCES عليه غير مؤكَّدة — سابقة الترحيل 003)،
+     فالحذف لا يصطدم بقيد.
+     ------------------------------------------------------------ */
+  if (!harnessCleared) {
+    await query(
+      `DELETE FROM admin_users WHERE LOWER(email) = 'harness@kanaf.test' AND id <> $1`,
+      [CURRENT_ADMIN.id]
+    );
+    harnessCleared = true;
+  }
   await query(
     `INSERT INTO admin_users (id, name, email, password_hash, role, active)
      VALUES ($1, 'حساب اختبار', 'harness@kanaf.test', 'x', $2, true)
@@ -408,6 +439,11 @@ async function run() {
   await query(`DELETE FROM admin_action_log WHERE target_user_id IN (SELECT id FROM users WHERE LOWER(email) LIKE '%@example.com')`);
   await query(`DELETE FROM admin_access_log WHERE target_user_id IN (SELECT id FROM users WHERE LOWER(email) LIKE '%@example.com')`);
   await query(`DELETE FROM users WHERE LOWER(email) LIKE '%@example.com'`);
+
+  /* وحساب الاختبار الإداري وأثره في السجلّين. */
+  await query(`DELETE FROM admin_action_log WHERE admin_user_id IN (SELECT id FROM admin_users WHERE LOWER(email) = 'harness@kanaf.test')`);
+  await query(`DELETE FROM admin_access_log WHERE admin_user_id IN (SELECT id FROM admin_users WHERE LOWER(email) = 'harness@kanaf.test')`);
+  await query(`DELETE FROM admin_users WHERE LOWER(email) = 'harness@kanaf.test'`);
 
   console.log = realLog;
   let pass = 0, fail = 0;
