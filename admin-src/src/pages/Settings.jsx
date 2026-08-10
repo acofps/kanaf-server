@@ -234,6 +234,26 @@ function TaxSection({ section, registryFor, toast, onSaved }) {
 /* ============================================================
    إعدادات التشغيل
    ============================================================ */
+/* ------------------------------------------------------------
+   عرض قيمة الإعداد.
+
+   المرحلة 6 أدخلت أول إعداد **منطقي** (مفتاح زر واتساب) وأول
+   إعداد يجوز أن يكون **فارغاً** (الرقم قبل ضبطه). وJSON.stringify
+   كان يعرضهما "true" و null خامّين — نصّ برمجي في شاشة يقرؤها
+   مالك لا مبرمج.
+   ------------------------------------------------------------ */
+function SettingValue({ value }) {
+  if (typeof value === "boolean") {
+    return (
+      <Badge color={value ? "green" : "textFaint"}>{value ? "مفعّل" : "مطفأ"}</Badge>
+    );
+  }
+  if (value === null || value === undefined || value === "") {
+    return <span style={{ color: C.textFaint }}>غير مضبوط</span>;
+  }
+  return <span style={{ color: C.textMuted }}>{typeof value === "string" ? value : JSON.stringify(value)}</span>;
+}
+
 function AppSection({ section, registryFor, toast, onSaved }) {
   const [editing, setEditing] = useState(null);
   const rows = section.values || [];
@@ -260,7 +280,7 @@ function AppSection({ section, registryFor, toast, onSaved }) {
                 <span className="font-bold">{entry?.label || r.key}</span>
                 <span className="block text-[10px]" style={{ color: C.textFaint }}>{r.key}</span>
               </Td>
-              <Td><span style={{ color: C.textMuted }}>{typeof r.value === "string" ? r.value : JSON.stringify(r.value)}</span></Td>
+              <Td><SettingValue value={r.value} /></Td>
               <Td><WiredBadge entry={entry} /></Td>
               <Td>{r.updated_at ? fmtDateTime(r.updated_at) : "—"}</Td>
               <Td>
@@ -292,6 +312,19 @@ function AppSection({ section, registryFor, toast, onSaved }) {
 
 function EditAppSetting({ setting, entry, onClose, onDone }) {
   const isNumber = typeof setting.value === "number";
+  /* ------------------------------------------------------------
+     القيمة المنطقية تحتاج مفتاحاً لا حقل نص.
+
+     ⚠️ بلا هذا الفرع كان محرّر الإعدادات يرسل السلسلة "true"
+     لمفتاح زر واتساب، فيردّها الخادم بـvalue_must_be_boolean —
+     أي أن الزر **لا يمكن تشغيله من اللوحة إطلاقاً**. وكل إعداد
+     كان نصّاً قبل هذه المرحلة، فلم يظهر النقص.
+
+     ولا يُستنتج النوع من السجلّ بل من القيمة الحالية نفسها: هي
+     في الجدول من نوعها الصحيح (JSONB)، والسجلّ لا يصف الأنواع.
+     ------------------------------------------------------------ */
+  const isBool = typeof setting.value === "boolean";
+  const [boolValue, setBoolValue] = useState(setting.value === true);
   const [value, setValue] = useState(isNumber ? String(setting.value) : String(setting.value ?? ""));
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -299,10 +332,11 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
 
   const save = async () => {
     if (!reason.trim()) { setErr("السبب مطلوب."); return; }
-    if (!String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
+    if (!isBool && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
     setBusy(true); setErr("");
     try {
-      await api.updateAppSetting(setting.key, isNumber ? Number(value) : value, reason.trim());
+      const payload = isBool ? boolValue : (isNumber ? Number(value) : value);
+      await api.updateAppSetting(setting.key, payload, reason.trim());
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
@@ -321,7 +355,21 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
         )}
         <div className="grid gap-3">
           <Field label="القيمة">
-            {String(setting.value ?? "").length > 60
+            {isBool ? (
+              <div className="flex gap-2">
+                {[[true, "مفعّل"], [false, "مطفأ"]].map(([v, label]) => (
+                  <button key={String(v)} type="button" onClick={() => setBoolValue(v)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold flex-1"
+                    style={{
+                      background: boolValue === v ? C.tealSoft : C.surfaceAlt,
+                      color: boolValue === v ? C.teal : C.textMuted,
+                      border: `1px solid ${boolValue === v ? C.teal : C.line}`,
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : String(setting.value ?? "").length > 60
               ? <Textarea rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
               : <Input value={value} inputMode={isNumber ? "numeric" : undefined} onChange={(e) => setValue(e.target.value)} />}
           </Field>
