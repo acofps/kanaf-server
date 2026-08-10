@@ -150,6 +150,54 @@ export const SETTINGS_REGISTRY = [
     readBy: [],
     note: "notifications/service.js يبني تذييله حرفياً اليوم. ربطه بهذا الإعداد بند مفتوح.",
   },
+  /* ---------- إعدادات المرحلة 6 ----------
+
+     الخمسة أدناه `wired: false` **اليوم**، وليست كذلك بالتصميم:
+     قارئها الوحيد هو تطبيق المستخدم عبر GET /api/support-info،
+     والخادم يقدّمها فعلاً منذ هذه المرحلة — لكن نسخة التطبيق التي
+     تقرؤها لم تُنشر بعد على app.kanaf.me (النشر خطوة يدوية منفصلة
+     عن نشر الخادم في هذا المشروع).
+
+     فحالتها الصادقة الآن: **جاهزة في الخادم، غير مؤثرة على شاشة
+     المستخدم.** وتُقلب إلى true في نفس اللحظة التي تُنشر فيها
+     نسخة التطبيق ويُتحقَّق منها — لا قبلها.
+
+     وهذا ليس تشدداً: البند 6 من المرحلة 5 كُتب بعد أن بُذرت أربعة
+     إعدادات قبل أن يقرأها كود. الإعداد الذي يظهر في شاشة ويقول
+     «حُفظ» ولا يؤثر أخطر من الإعداد الغائب — المسؤول يبني على
+     أنه سرى.
+     ------------------------------------------------- */
+  {
+    key: "whatsapp_enabled", label: "إظهار زر واتساب العائم",
+    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    readBy: ["index.js (/api/support-info)"],
+    note: "الزر لا يظهر إلا إذا كان هذا مرفوعاً **و** الرقم مضبوطاً. رفعه برقم فارغ لا يُظهر شيئاً — والخادم يفرض ذلك، لا الواجهة.",
+  },
+  {
+    key: "whatsapp_number", label: "رقم واتساب الرسمي",
+    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    readBy: ["index.js (/api/support-info)"],
+    note: "يُخزَّن أرقاماً مجرّدة بصيغة E.164 بلا + ولا أصفار (مثال: 9665XXXXXXXX)، ويُطبَّع عند الحفظ فما تكتبه بأي صورة يستقر بصورة واحدة. الرابط يُبنى في الخادم لا في التطبيق. لمسحه أرسل القيمة null.",
+  },
+  {
+    key: "social_x_handle", label: "حساب X",
+    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    readBy: ["index.js (/api/support-info)"],
+    note: "المعرّف وحده، وقائمة محارف بيضاء تمنع أن يتحوّل الإعداد إلى رابط لموقع آخر. كان مكتوباً في التطبيق بالاسم القديم للمشروع (@marsah_app) فكان تغييره يحتاج بناءً ورفعاً.",
+  },
+  {
+    key: "social_instagram_handle", label: "حساب إنستقرام",
+    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    readBy: ["index.js (/api/support-info)"],
+    note: "كسابقه. كان @marsah.app في الكود.",
+  },
+  {
+    key: "daily_reminder_time", label: "الوقت الافتراضي لتذكير التسجيل اليومي",
+    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    readBy: ["index.js (/api/support-info)"],
+    note: "افتراضي لمن لم يختر وقتاً بعد، بتوقيته المحلي. **لا يغيّر وقت من اختار وقته** — قيمته محفوظة في user_reminder_prefs، وتغيير الافتراضي لا يمسّها.",
+  },
+
   {
     key: "admin_session_minutes", label: "عمر جلسة الإدارة (عرض فقط)",
     source: "app_settings", editPerm: "app_settings:edit", wired: false,
@@ -159,6 +207,57 @@ export const SETTINGS_REGISTRY = [
 ];
 
 const REGISTRY_BY_KEY = Object.fromEntries(SETTINGS_REGISTRY.map((s) => [s.key, s]));
+
+/* ------------------------------------------------------------
+   مدقّقات القيم — لكل مفتاح يحتاج شكلاً بعينه
+
+   المسار العام يقبل أي JSON، وهذا يكفي لنص معروض. ولا يكفي لرقم
+   يُبنى منه رابط، ولا لوقت يُقارَن به عمود TIME، ولا لمعرّف حساب
+   يُلصق في عنوان URL.
+
+   والمدقّق **يطبّع** لا يرفض فقط: المسؤول يلصق الرقم كما نسخه —
+   بمسافات أو بـ+ أو بصفرين بادئين — فيستقر في الجدول بصورة واحدة.
+   ترك التطبيع للقارئ كان يعني أن نفس الرقم يبدو أربعة أرقام في
+   أربعة أماكن.
+
+   ⚠️ ويعمل قبل الفحوص العامة أدناه، فما يخرج منه هو ما يُفحَص
+   طوله ويُكتب.
+   ------------------------------------------------------------ */
+const APP_SETTING_VALIDATORS = {
+  whatsapp_enabled: (v) =>
+    typeof v === "boolean" ? { value: v } : { error: "value_must_be_boolean" },
+
+  whatsapp_number: (v) => {
+    // null يمسح الرقم — وهو الطريق الوحيد لإخفاء الزر بلا إطفاء
+    // المفتاح، ولإفراغ إعداد لا يقبل النص الفارغ.
+    if (v === null) return { value: null };
+    if (typeof v !== "string") return { error: "value_must_be_string_or_null" };
+    const digits = v.replace(/\D/g, "").replace(/^0+/, "");
+    // E.164: رمز الدولة والرقم معاً بين ثمانٍ وخمس عشرة خانة.
+    if (digits.length < 8 || digits.length > 15) return { error: "invalid_whatsapp_number" };
+    return { value: digits };
+  },
+
+  social_x_handle: (v) => normalizeHandle(v),
+  social_instagram_handle: (v) => normalizeHandle(v),
+
+  daily_reminder_time: (v) => {
+    if (typeof v !== "string" || !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(v.trim())) {
+      return { error: "invalid_time_format" };
+    }
+    return { value: v.trim() };
+  },
+};
+
+function normalizeHandle(v) {
+  if (typeof v !== "string") return { error: "value_must_be_string" };
+  const handle = v.trim().replace(/^@+/, "");
+  /* نفس القائمة البيضاء المستعملة في بناء الرابط في index.js.
+     بدونها تقدر قيمة مثل "x.com/other" أو "../evil" أن تصنع رابطاً
+     لموقع آخر يظهر للمستخدم داخل تطبيق كنف. */
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(handle)) return { error: "invalid_handle" };
+  return { value: `@${handle}` };
+}
 
 /* مفاتيح app_settings القابلة للتعديل — قائمة بيضاء مشتقّة من
    السجلّ. بدونها يقدر مسؤول أن يكتب مفتاحاً مخترَعاً في الجدول،
@@ -313,7 +412,15 @@ adminSettingsRouter.put(
       if (!EDITABLE_APP_KEYS.has(key)) throw httpError(404, "unknown_setting");
       if (req.body?.value === undefined) throw httpError(400, "value_required");
 
-      const value = req.body.value;
+      /* التدقيق والتطبيع قبل أي شيء آخر: ما يُكتب في الجدول هو
+         الصورة الموحّدة لا ما وصل حرفياً. */
+      let value = req.body.value;
+      const validate = APP_SETTING_VALIDATORS[key];
+      if (validate) {
+        const result = validate(value);
+        if (result.error) throw httpError(400, result.error);
+        value = result.value;
+      }
       // النص الفارغ ليس قيمة صالحة لإعداد معروض للمستخدم — يترك
       // شاشة فيها فراغ بلا أن يقول أحد إن الإعداد ناقص.
       if (typeof value === "string" && !value.trim()) throw httpError(400, "value_cannot_be_empty");
