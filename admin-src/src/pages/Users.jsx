@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download} from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download, User as UserIcon, Bell, Compass } from "lucide-react";
 import { api } from "../api.js";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
@@ -18,6 +18,67 @@ import {
    وما يظهر منها (درجات المتابعة) يمر بمطالبة سبب تُكتب في سجل
    تدقيق غير قابل للتعديل **قبل** تنفيذ القراءة.
    ============================================================ */
+
+/* ------------------------------------------------------------
+   صورة المستخدم.
+
+   العنوان مبنيّ هنا لا في api.js عمداً: هذه ليست نداء fetch بل
+   src لوسم img. واللوحة تُخدَم من **نفس أصل** الخادم (السبب مكتوب
+   في رأس api.js)، فكوكي الجلسة يُرسل مع طلب الصورة تلقائياً بلا
+   أي ترويسة يدوية.
+
+   وعند غياب الصورة يردّ الخادم 404 نظيفة، فنرسم البديل بدل صورة
+   مكسورة — والمرحلة تطلب ذلك نصّاً. onError هو ما يلتقط ذلك:
+   الطلب لا يمكن قراءة حالته من وسم img.
+   ------------------------------------------------------------ */
+function Avatar({ id, name, size = 28, hasPhoto = true }) {
+  const [failed, setFailed] = useState(false);
+  const initial = (name || "").trim().charAt(0) || "؟";
+  const box = {
+    width: size, height: size, borderRadius: "50%",
+    background: C.surfaceAlt, color: C.textMuted,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    overflow: "hidden", flexShrink: 0,
+    fontSize: Math.round(size * 0.42), fontWeight: 700,
+  };
+  if (!hasPhoto || failed) return <div style={box}>{initial}</div>;
+  return (
+    <div style={box}>
+      <img
+        src={`/admin/users/${id}/avatar`}
+        alt=""
+        width={size} height={size}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
+/* أسماء الدول من الخادم لا من قائمة في اللوحة.
+
+   نفس المبدأ المطبَّق في التطبيق: قائمة هنا وقائمة هناك تختلفان
+   يوماً، فيظهر رمز الدولة خاماً أو باسم خاطئ. تُقرأ مرة واحدة في
+   عمر الصفحة وتُخزَّن في الوحدة. */
+let COUNTRY_CACHE = null;
+function useCountryNames() {
+  const [map, setMap] = useState(COUNTRY_CACHE);
+  useEffect(() => {
+    if (COUNTRY_CACHE) return;
+    let alive = true;
+    fetch("/api/countries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || !alive) return;
+        COUNTRY_CACHE = Object.fromEntries((d.countries || []).map((c) => [c.code, c.name]));
+        setMap(COUNTRY_CACHE);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  // الرمز نفسه احتياطاً: عرض "SA" أصدق من عرض فراغ.
+  return (code) => (code ? (map?.[code] || code) : null);
+}
 
 const ACCOUNT_STATUS = {
   active: { label: "نشط", color: "green" },
@@ -85,11 +146,12 @@ export default function Users({ me, toast }) {
         ) : rows.length === 0 ? (
           <Empty>لا يوجد مستخدمون مطابقون.</Empty>
         ) : (
-          <Table head={["الاسم", "البريد", "الحالة", "الاشتراك", "التسجيل", "آخر دخول", ""]}>
+          <Table head={["", "الاسم", "البريد", "الحالة", "الاشتراك", "التسجيل", "آخر دخول", ""]}>
             {rows.map((u) => {
               const s = ACCOUNT_STATUS[u.account_status] || { label: u.account_status, color: "textMuted" };
               return (
                 <tr key={u.id}>
+                  <Td><Avatar id={u.id} name={u.name} hasPhoto={u.has_photo === true} /></Td>
                   <Td className="font-bold">{u.name || "—"}</Td>
                   <Td>{u.email}</Td>
                   <Td><Badge color={s.color}>{s.label}</Badge></Td>
@@ -145,6 +207,7 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
   const [tab, setTab] = useState("profile");   // profile | sensitive | actions | billing
 
   const u = state.data;
+  const countryName = useCountryNames();
   /* ثلاث صلاحيات مستقلة لا شرط واحد: كان `isAdmin` يحكم الثلاثة
      معاً، والمحاسب يحتاج المالي ولا يجوز أن يرى المتابعة اليومية.
      الخادم يفصلها أصلاً، والشاشة تتبعه. */
@@ -195,8 +258,25 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
 
           {tab === "profile" && (
             <div>
+              <div className="flex items-center gap-3 pb-3">
+                <Avatar id={u.id} name={u.name} size={56} hasPhoto={u.has_photo === true} />
+                <div>
+                  <div className="text-sm font-bold" style={{ color: C.text }}>{u.name || "—"}</div>
+                  <div className="text-[11px]" style={{ color: C.textFaint }}>
+                    {u.has_photo ? "صورة محفوظة من التطبيق" : "لا صورة — يُعرض الحرف الأول"}
+                  </div>
+                </div>
+              </div>
+
               <Row label="المعرّف"><code className="text-[10px]">{u.id}</code></Row>
               <Row label="البريد">{u.email}</Row>
+
+              {/* الجوال يظهر للمالك وحده. والخادم لا يرسل الحقل أصلاً
+                  لمن لا يملك users:view_contact — فغيابه من الحمولة
+                  هو الحارس، لا هذا الشرط. هذا يمنع صفاً فارغاً لا
+                  معنى له في وجه بقية الأدوار. */}
+              {"phone" in u && <Row label="الجوال">{u.phone ? <span dir="ltr">{u.phone}</span> : "—"}</Row>}
+              {"country" in u && <Row label="الدولة">{countryName(u.country)}</Row>}
               <Row label="الحالة">
                 <Badge color={(ACCOUNT_STATUS[u.account_status] || {}).color}>
                   {(ACCOUNT_STATUS[u.account_status] || {}).label || u.account_status}
@@ -210,6 +290,54 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
               <Row label="محاولات دخول فاشلة">{u.failed_login_count ?? 0}</Row>
               {u.locked_until && <Row label="مقفل حتى">{fmtDateTime(u.locked_until)}</Row>}
               {u.suspended_at && <Row label="سبب الإيقاف">{u.suspended_reason || "—"}</Row>}
+
+              {/* ------------------------------------------------------
+                  حالة تشغيلية للإدارة — بلا أي محتوى نفسي.
+
+                  «له خطة» نعم أو لا، ولا شيء من داخلها: الملخّص
+                  ومجالات التركيز محتوى يخصّ صاحبه، ولا يختارها
+                  استعلام هذه الشاشة إطلاقاً (admin/routes.js).
+                  ------------------------------------------------------ */}
+              <Row label="تذكير التسجيل اليومي">
+                {u.reminders_on
+                  ? <span style={{ color: C.text }}>
+                      <Bell size={11} style={{ display: "inline", marginLeft: 4 }} />
+                      مفعّل{u.reminder_local_time ? ` · ${u.reminder_local_time}` : ""}
+                      {u.reminder_timezone ? ` (${u.reminder_timezone})` : ""}
+                    </span>
+                  : <span style={{ color: C.textFaint }}>مطفأ</span>}
+              </Row>
+              {u.reminders_on && (
+                <Row label="آخر تذكير أُرسل">
+                  {u.reminder_last_sent_on ? fmtDate(u.reminder_last_sent_on) : "لم يُرسل بعد"}
+                </Row>
+              )}
+              <Row label="خطة نشطة">
+                {u.has_active_plan
+                  ? <span style={{ color: C.text }}><Compass size={11} style={{ display: "inline", marginLeft: 4 }} />نعم</span>
+                  : <span style={{ color: C.textFaint }}>لا</span>}
+              </Row>
+
+              {/* ------------------------------------------------------
+                  الحالة الفعلية للاشتراك — لا العمود المخزّن.
+
+                  والعمود المخزّن يُعرض بجانبها **فقط حين يختلفان**:
+                  اختلافهما ليس عطباً بل هو التصميم (لا يمكن تخزين
+                  'expired' — قيد CHECK على جدول يملكه postgres)،
+                  لكن رؤيته تختصر تشخيص أي التباس مالي.
+                  ------------------------------------------------------ */}
+              {u.subscription_status && (
+                <Row label="الاشتراك">
+                  <span style={{ color: C.text }}>
+                    {u.subscription_plan || "—"} · {u.subscription_status}
+                  </span>
+                  {u.subscription_stored_status && u.subscription_stored_status !== u.subscription_status && (
+                    <span className="text-[10px]" style={{ color: C.textFaint }}>
+                      {" "}(المخزَّن: {u.subscription_stored_status})
+                    </span>
+                  )}
+                </Row>
+              )}
 
               {canSuspend && u.account_status !== "deleted" && (
                 <div className="flex gap-2 mt-4">
