@@ -648,12 +648,30 @@ async function run() {
       matrixRows().every((r) => typeof r.description === "string" && r.description.length > 0));
 
     /* الشرط الذي كُتب في admin/middleware.js: requireRole باقية
-       للانتقال وحده، ولا يجوز أن يبقى لها مستدعٍ. */
-    const callers = readdirSync("./admin")
-      .filter((f) => f.endsWith(".js") && f !== "middleware.js" && f !== "permissions.js")
-      .filter((f) => /requireRole\(/.test(readFileSync(`./admin/${f}`, "utf8")));
-    log("11-د. صفر مستدعٍ لـrequireRole في مجلد admin/ (شرط إغلاق المرحلة)",
-      callers.length === 0, callers.join(", "));
+       للانتقال وحده، ولا يجوز أن يبقى لها مستدعٍ.
+
+       ⚠️ صُحّح في 10 أغسطس 2026. كانت الصيغة السابقة تستثني
+       `permissions.js` من المسح، وعنوانها يقول «في مجلد admin/» —
+       فتَعِد بالمجلد كله وهي تمسح بعضه، ولو نُوديت `requireRole` من
+       `permissions.js` لمرّ الفحص ناجحاً. وهي القاعدة نفسها التي وُلد
+       منها تسريب نص اليومية: عنوان يَعِد بكل الحالات لفحصٍ يفحص بعضها.
+
+       الآن: تُنزع التعليقات أولاً (لأن الملفين المستثنيَين كانا يشرحان
+       النموذج القديم لا ينادونه)، ثم يُمسح **كل** ملف في المجلد، ويُسمح
+       بتكرار واحد في `middleware.js` هو التعريف نفسه لا نداء. */
+    const stripComments = (src) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    const offenders = [];
+    for (const f of readdirSync("./admin").filter((n) => n.endsWith(".js"))) {
+      const code = stripComments(readFileSync(`./admin/${f}`, "utf8"));
+      const hits = (code.match(/requireRole\s*\(/g) || []).length;
+      /* التعريف الوحيد المسموح، وشرطه أن يكون تعريفاً فعلاً. */
+      const allowed =
+        f === "middleware.js" && /export\s+function\s+requireRole\s*\(/.test(code) ? 1 : 0;
+      if (hits > allowed) offenders.push(`${f} (${hits})`);
+    }
+    log("11-د. لا نداء لـrequireRole في أي ملف داخل admin/ — عدا تعريفها الواحد في middleware.js (شرط إغلاق المرحلة)",
+      offenders.length === 0, offenders.join(", "));
 
     /* لا مسار إداري بلا حارس صلاحية — مع استثناءين معلَنين بسببهما.
 
