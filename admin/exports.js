@@ -376,7 +376,7 @@ adminExportsRouter.get("/exports/refunds.csv", requireAdminAuth, requirePermissi
 adminExportsRouter.get("/exports/users.csv", requireAdminAuth, requirePermission("exports:users"), async (req, res) => {
   try {
     const settings = await getBillingSettings();
-    const { fromAndJoins, params, filters } = buildUserListFilter(req.query);
+    const { fromAndJoins, params, filters, subscriptionStatusExpr } = buildUserListFilter(req.query);
 
     startCsv(res, `kanaf-users-${stamp()}.csv`);
     writeMeta(res, { title: "المستخدمون", admin: req.admin, filters, timezone: settings.reportingTimezone });
@@ -391,7 +391,19 @@ adminExportsRouter.get("/exports/users.csv", requireAdminAuth, requirePermission
                      WHEN u.email_verified_at IS NULL  THEN 'pending_verification'
                      ELSE 'active'
                    END AS account_status,
-                   sub.status AS subscription_status, sub.plan_id AS subscription_plan
+                   /* الحالة الفعلية لا العمود المخزّن — نفس التعبير
+                      الذي ترسم به الشاشة، مصدَّراً من بنّاء الشرط
+                      نفسه (المرحلة 6).
+
+                      البند المحفوظ من المرحلة 5 يقول: «شرط واحد
+                      للشاشة والتصدير — الانحراف هنا صامت، ويُبنى
+                      عليه قرار مالي». وكان الانحراف واقعاً فعلاً:
+                      الشاشة كانت تقرأ العمود الخام أيضاً، فلما
+                      صُحّحت وحدها كان الملف سيقول «نشط» لمشترك
+                      تقول عنه الشاشة «منتهٍ». والملف يغادر إلى قرص
+                      شخص، فتصحيحه بعد خروجه مستحيل. */
+                   ${subscriptionStatusExpr} AS subscription_status,
+                   sub.plan_id AS subscription_plan
               ${fromAndJoins}
              ORDER BY u.created_at DESC, u.id DESC`,
       params,
