@@ -1122,6 +1122,30 @@ userDataRouter.put(
   "/avatar",
   requireVerifiedUser,
   express.raw({ type: ["image/jpeg", "image/png", "image/webp"], limit: AVATAR_MAX_BYTES }),
+
+  /* ------------------------------------------------------------
+     معالج خطأ موضعي — أربعة معاملات، وهذا ما يجعله معالج خطأ.
+
+     ⚠️ كُتب بعد أن كشف اختبار المرحلة السلوك الحقيقي:
+     express.raw وسيطة **تسبق** المعالج، فحين يتجاوز الجسم الحد
+     ترمي هي، وexpress يتخطّى المعالج كلّه إلى معالج الأخطاء
+     العام. أي أن الـcatch المكتوب داخل المعالج لهذه الحالة لم
+     يكن يعمل أبداً.
+
+     والنتيجة على الإنتاج كانت 413 بجسم { error: "internal_error" }
+     — الحالة صحيحة والرسالة كاذبة. والتطبيق يقرأ الرمز لا الحالة،
+     فكان سيقول «صار خلل» لصورة كبيرة بدل أن يطلب أصغر منها.
+
+     ومرّ الاختبار الأول رغم ذلك لأنه فحص الحالة وحدها — وهذا
+     تذكير بأن الفحص الذي يقيس نصف الرد يشهد لنصف السلوك.
+     ------------------------------------------------------------ */
+  (err, req, res, next) => {
+    if (err?.type === "entity.too.large") {
+      return res.status(413).json({ error: "image_too_large", maxBytes: AVATAR_MAX_BYTES });
+    }
+    return next(err);
+  },
+
   async (req, res) => {
     try {
       const buf = req.body;
@@ -1158,8 +1182,9 @@ userDataRouter.put(
          سيكذب يوم يفشل تحديثه. مكتوب في رأس الترحيل 010. */
       res.json({ photo: { exists: true, version: rows[0].checksum, mime: rows[0].mime } });
     } catch (err) {
-      // حدّ express.raw يرمي بهذا الرمز قبل أن يصل الجسم كاملاً.
-      if (err?.type === "entity.too.large") return res.status(413).json({ error: "image_too_large" });
+      /* حدّ الحجم لا يصل إلى هنا — يلتقطه معالج الخطأ الموضعي
+         أعلاه. وما يبقى لهذا الـcatch هو ما يقع **بعد** اكتمال
+         الجسم: فشل قاعدة بيانات أو خطأ غير متوقَّع. */
       fail(res, err, "avatar/upload");
     }
   }
