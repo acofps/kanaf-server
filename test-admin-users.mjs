@@ -91,9 +91,35 @@ console.log = (...a) => { const l = a.join(" "); if (l.includes("[dev] Would sen
 async function makeUser(name, email, password, { verify = true } = {}) {
   await post("/api/auth/register", { name, email, password, confirmedAdult: true, agreedPolicy: true });
   if (!verify) return;
+
+  /* ------------------------------------------------------------
+     المسار المفضّل: الكود من سطر التطوير الذي يطبعه mail/send.js
+     حين لا يكون SMTP مضبوطاً، فيمرّ التوثيق بمسار
+     /api/auth/verify-email الحقيقي كما كُتب أصلاً.
+
+     ⚠️ وهو غير متاح على الإنتاج: SMTP مضبوط هناك فالبريد يُرسل
+     فعلاً ولا يُطبع سطر، والكود مجزّأ بـbcrypt في
+     email_verification_codes فلا يُسترجع من القاعدة.
+
+     وبلا احتياط كان الملف يرمي عند أول مستخدم ولا يصل إلى فحص
+     واحد — أي أن الثلاثة والخمسين فحصاً لا تُشغَّل في البيئة
+     الوحيدة المتاحة، وهي التي تغطي قائمة المستخدمين وصفحتها.
+     فحص لا يعمل ليس فحصاً.
+
+     والاحتياط **سقالة بذر لا كود تحت الفحص**: ما يقيسه هذا الملف
+     هو إدارة المستخدمين في اللوحة، ومسار التسجيل والتوثيق يفحصه
+     test-auth.mjs بمواجهته المباشرة.
+     ------------------------------------------------------------ */
   const entry = [...sent].reverse().find((m) => m.includes(email.toLowerCase()));
-  const code = /: (\d{6})/.exec(entry)[1];
-  await post("/api/auth/verify-email", { email, code });
+  const code = entry ? /: (\d{6})/.exec(entry)?.[1] : null;
+  if (code) {
+    await post("/api/auth/verify-email", { email, code });
+    return;
+  }
+  await query(
+    `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE LOWER(email) = $1`,
+    [email.toLowerCase()]
+  );
 }
 
 const ADMIN_ID = crypto.randomUUID();
