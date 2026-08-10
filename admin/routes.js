@@ -13,7 +13,7 @@ import { permissionsFor, ROLE_LABEL } from "./permissions.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { executeRefund } from "../payments/refund.js";
 import { billingRouter } from "./billing.js";
-import { entitledSql } from "../billing/subscription.js";
+import { entitledSql, effectiveStatusSql } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
 
 export const adminRouter = express.Router();
@@ -322,10 +322,22 @@ export function buildUserListFilter(reqQuery) {
     }
   }
 
+  /* ------------------------------------------------------------
+     فلتر الاشتراك يقيس **الاستحقاق الفعلي** لا العمود المخزّن.
+
+     كان `sub.status = 'active'`، وهو يعدّ مشتركاً كلَّ من انتهت
+     مدته ولم يمرّ على صفه حدث يغيّر العمود — والعمود لا يمكن أن
+     يحمل 'expired' أصلاً (قيد CHECK على جدول يملكه postgres).
+     فكانت شاشة «المشتركون» تعدّ منتهين، ويُبنى على العدد قرار.
+
+     وCOALESCE ليست زينة: من لا اشتراك له يعطي التعبيرُ عنه NULL،
+     و NULL NULL في WHERE تعني «لا يطابق» — فكان فلتر «بلا اشتراك»
+     سيُسقط بالضبط من لا اشتراك له.
+     ------------------------------------------------------------ */
   if (subscription === "active") {
-    where.push(`sub.status = 'active'`);
+    where.push(`COALESCE(${entitledSql("sub")}, false)`);
   } else if (subscription === "none") {
-    where.push(`(sub.status IS NULL OR sub.status <> 'active')`);
+    where.push(`NOT COALESCE(${entitledSql("sub")}, false)`);
   }
 
   if (from) where.push(`u.created_at >= ${p(from)}`);
@@ -349,13 +361,32 @@ export function buildUserListFilter(reqQuery) {
     FROM users u
     LEFT JOIN user_auth_state s ON s.user_id = u.id
     LEFT JOIN (
-      SELECT DISTINCT ON (user_id) user_id, status, plan_id, current_period_end
+      SELECT DISTINCT ON (user_id) id, user_id, status, plan_id, current_period_end
       FROM subscriptions
       ORDER BY user_id, created_at DESC
     ) sub ON sub.user_id = u.id
+    /* subscription_state لازم لاشتقاق الحالة الفعلية: منه يُقرأ
+       cancel_at_period_end الذي يميّز «ملغى بنهاية المدة» عن
+       «نشط». أُضيف في المرحلة 6 مع تصحيح الحالة المعروضة. */
+    LEFT JOIN subscription_state ss ON ss.subscription_id = sub.id
     WHERE ${where.join(" AND ")}`;
 
-  return { fromAndJoins, params, next: (v) => `$${params.push(v)}`, filters: { search, status, subscription, from, to } };
+  /* ------------------------------------------------------------
+     تعبير الحالة يُصدَّر مع الشرط لا يُكتب في كل قارئ.
+
+     البند المحفوظ من المرحلة 5: «شرط واحد للشاشة والتصدير —
+     الانحراف هنا صامت، ويُبنى عليه قرار مالي». وهذا يشمل ما
+     يُعرَض لا ما يُرشَّح فقط: لو كتبت الشاشة الحالة الفعلية وبقي
+     التصدير على العمود المخزّن، لخرج ملفٌ يقول غير ما تقوله
+     الشاشة عن نفس المستخدم.
+     ------------------------------------------------------------ */
+  const subscriptionStatusExpr = effectiveStatusSql("sub", "ss");
+
+  return {
+    fromAndJoins, params, subscriptionStatusExpr,
+    next: (v) => `$${params.push(v)}`,
+    filters: { search, status, subscription, from, to },
+  };
 }
 
 // GET /admin/users?search=&page=&pageSize=&status=&subscription=&from=&to=&sort=&dir=
@@ -368,7 +399,7 @@ adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), asy
     const sortCol = USER_SORT_COLUMNS[String(req.query.sort || "created_at")] || "u.created_at";
     const dir = String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
 
-    const { fromAndJoins, params, next, filters } = buildUserListFilter(req.query);
+    const { fromAndJoins, params, next, filters, subscriptionStatusExpr } = buildUserListFilter(req.query);
 
     // يُعدّ بنفس مجموعة الشروط بالضبط، فلا يمكن للإجمالي أن يصف
     // مجتمعاً غير المعروض.
@@ -382,8 +413,15 @@ adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), asy
       `SELECT u.id, u.name, u.email, u.created_at, u.email_verified_at,
               s.last_login_at, s.suspended_at,
               ${ACCOUNT_STATUS_SQL} AS account_status,
-              sub.status AS subscription_status,
-              sub.plan_id AS subscription_plan
+              ${subscriptionStatusExpr} AS subscription_status,
+              sub.plan_id AS subscription_plan,
+              /* وجود الصورة فقط — البايتات من مسار مستقل بـETag.
+                 إدخالها في هذا الرد كان يضاعف حجم الصفحة عشرات
+                 المرات لأجل صور لا يفتح المسؤول أكثر من واحدة منها.
+
+                 وEXISTS لا JOIN: لا يمسّ بنّاء الشرط المشترك مع
+                 التصدير، وملف CSV لا يحتاج عمود "له صورة". */
+              EXISTS (SELECT 1 FROM user_avatars av WHERE av.user_id = u.id) AS has_photo
        ${fromAndJoins}
        -- u.id هو كاسر التعادل، وليس اختيارياً: بدونه تتبدّل مواضع
        -- الصفوف المتساوية في created_at بين طلبين، فتتكرر سجلات في
@@ -401,39 +439,160 @@ adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), asy
   } catch (err) { fail(res, err, "admin/users:list", req); }
 });
 
-// GET /admin/users/:id — حقول الملف غير الحساسة. لا تسجيل: الاسم
-// والبريد والتواريخ ليست الجزء الحساس.
+/* GET /admin/users/:id — حقول الملف غير الحساسة. لا تسجيل: الاسم
+   والبريد والتواريخ ليست الجزء الحساس.
+
+   ============================================================
+   ما تغيّر في المرحلة 6
+   ============================================================
+   • **حالة الاشتراك صارت الفعلية لا المخزّنة.** كان هذا المسار
+     يقرأ subscriptions.status الخام، والتطبيق يقرأ
+     effectiveStatusSql. فاشتراك انتهت مدته يظهر «active» للإدارة
+     و«expired» لصاحبه — وهو حرفياً ما يمنعه بند المرحلة: «Admin
+     Dashboard يعرض قيمة مختلفة عن User App لنفس الحقل».
+     ولا يمكن تخزين 'expired' أصلاً (قيد CHECK على جدول يملكه
+     postgres)، فالاشتقاق ليس التفافاً بل هو التعريف الوحيد.
+
+   • **الدولة والجوال** من user_profile — الحقول التي أضافتها
+     المرحلة.
+
+   • **وجود صورة** لا الصورة نفسها: البايتات تُطلب من مسار مستقل
+     يخزّنها المتصفح بـETag، فلا تُحمَّل مع كل فتح للصفحة.
+
+   • **حالة التذكير ووجود خطة** — قيمة تشغيلية للإدارة بلا أي
+     محتوى نفسي.
+
+   ============================================================
+   🔒 الخصوصية — قراران مكتوبان لا مصادفة
+   ============================================================
+   1. **رقم الجوال والدولة لا يُستعلَمان أصلاً** لمن لا يملك
+      users:view_contact — لا يُقرآن ثم يُحذفان من الرد. هذا هو
+      المبدأ الذي طُبِّق في المرحلة 5 على كتلة الإيراد وعلى
+      daily_logs.note: **ما لا يجب أن يُرى لا يُستعلَم.** الفرق
+      عملي لا فلسفي: الحقل الذي لا يدخل الاستعلام لا يمكن أن
+      يتسرّب في سجل استعلام بطيء ولا في رسالة خطأ ولا في نسخة
+      احتياطية من ذاكرة.
+
+   2. **وجود الخطة يُفحص بـEXISTS ولا يُختار منها عمود واحد.**
+      summary و focus_areas و specialist_note محتوى نفسي يخصّ
+      صاحبه. الإدارة تعرف «هل له خطة» لأن لذلك قيمة تشغيلية،
+      ولا ترى حرفاً منها — نفس معاملة user_notebook_entries.answers
+      و daily_logs.note منذ المرحلة 4.
+*/
 adminRouter.get(
   "/users/:id",
   requireAdminAuth, requirePermission("users:view"), requireUuidParam("id"),
   async (req, res) => {
     try {
+      const canSeeContact = req.admin.can("users:view_contact");
+
+      /* الجزء الذي لا يُقرأ إلا لمن يملك الصلاحية. لا COALESCE ولا
+         NULL بديل: العمود غائب عن الاستعلام كله. */
+      const contactSelect = canSeeContact
+        ? `, up.country_code AS country,
+             up.phone_country_code AS phone_dial,
+             up.phone_national     AS phone_national`
+        : "";
+      const contactJoin = canSeeContact
+        ? `LEFT JOIN user_profile up ON up.user_id = u.id`
+        : "";
+
       const { rows } = await query(
         `SELECT u.id, u.name, u.email, u.age_range, u.gender, u.confirmed_adult,
                 u.created_at, u.updated_at, u.email_verified_at, u.deleted_at,
+                u.reminders_on,
                 s.last_login_at, s.suspended_at, s.suspended_reason,
                 COALESCE(s.failed_login_count, 0) AS failed_login_count,
                 s.locked_until,
                 ${ACCOUNT_STATUS_SQL} AS account_status,
-                sub.status AS subscription_status,
+                ${effectiveStatusSql("sub", "ss")} AS subscription_status,
+                sub.status AS subscription_stored_status,
                 sub.plan_id AS subscription_plan,
-                sub.current_period_end AS subscription_renews_at
+                sub.current_period_end AS subscription_renews_at,
+                (av.user_id IS NOT NULL) AS has_photo,
+                to_char(rp.local_time, 'HH24:MI') AS reminder_local_time,
+                rp.timezone   AS reminder_timezone,
+                rp.last_sent_on AS reminder_last_sent_on,
+                -- وجود الخطة فقط. لا عمود من محتواها في هذا الاستعلام.
+                EXISTS (SELECT 1 FROM user_plans pl
+                         WHERE pl.user_id = u.id AND pl.status = 'active') AS has_active_plan
+                ${contactSelect}
            FROM users u
            LEFT JOIN user_auth_state s ON s.user_id = u.id
            LEFT JOIN (
-             SELECT DISTINCT ON (user_id) user_id, status, plan_id, current_period_end
+             SELECT DISTINCT ON (user_id) id, user_id, status, plan_id, current_period_end
              FROM subscriptions ORDER BY user_id, created_at DESC
            ) sub ON sub.user_id = u.id
+           LEFT JOIN subscription_state ss ON ss.subscription_id = sub.id
+           LEFT JOIN user_avatars av ON av.user_id = u.id
+           LEFT JOIN user_reminder_prefs rp ON rp.user_id = u.id
+           ${contactJoin}
           WHERE u.id = $1`,
         [req.params.id]
       );
       if (!rows[0]) return res.status(404).json({ error: "not_found" });
 
+      const row = rows[0];
+
+      /* الرقم يُركَّب بنفس الصيغة التي يبنيها مسار المستخدم
+         (userdata/routes.js): E.164 مشتقّ من جزأين، لا نص مخزّن.
+         تركيبه في اللوحة بصورة أخرى كان سيجعل نفس الرقم يبدو
+         رقمين. */
+      if (canSeeContact && row.phone_dial && row.phone_national) {
+        row.phone = `+${row.phone_dial}${row.phone_national}`;
+      } else if (canSeeContact) {
+        row.phone = null;
+      }
+      delete row.phone_dial;
+      delete row.phone_national;
+
       // غائب عن هذه الحمولة عمداً: password_hash و pin_hash وكل رمز
       // جلسة. لا استعمال تشغيلياً لها في اللوحة، والحقل الذي لا
       // يُرسَل لا يمكن أن يتسرّب.
-      res.json(rows[0]);
+      res.json(row);
     } catch (err) { fail(res, err, "admin/users:detail", req); }
+  }
+);
+
+/* GET /admin/users/:id/avatar — صورة المستخدم كما حفظها هو.
+
+   مسار مستقل لا حقل في الحمولة: الصورة عشرون كيلوبايت، وإدخالها
+   في رد قائمة المستخدمين كان يضاعف حجم كل صفحة خمساً وعشرين مرة
+   بلا أن ينظر أحد إلى أكثر من صورة أو اثنتين.
+
+   وETag يجعل الطلب الثاني 304 بلا جسم — فالجدول الذي يعرض خمساً
+   وعشرين صورة يحمّلها مرة واحدة في عمر الجلسة.
+
+   الصلاحية users:view لا صلاحية جديدة: الصورة جزء من الملف غير
+   الحساس الذي تعرضه هذه الشاشة أصلاً، والمرحلة تطلبها في القائمة
+   وفي صفحة المستخدم معاً.
+*/
+adminRouter.get(
+  "/users/:id/avatar",
+  requireAdminAuth, requirePermission("users:view"), requireUuidParam("id"),
+  async (req, res) => {
+    try {
+      const { rows } = await query(
+        `SELECT mime, bytes, byte_size, checksum FROM user_avatars WHERE user_id = $1`,
+        [req.params.id]
+      );
+      // 404 نظيف: الشاشة ترسم البديل الافتراضي ولا تعرض صورة مكسورة.
+      if (!rows[0]) return res.status(404).json({ error: "no_avatar" });
+
+      const etag = `"${rows[0].checksum}"`;
+      if (req.headers["if-none-match"] === etag) {
+        res.setHeader("ETag", etag);
+        return res.status(304).end();
+      }
+
+      res.setHeader("Content-Type", rows[0].mime);
+      res.setHeader("Content-Length", rows[0].byte_size);
+      res.setHeader("ETag", etag);
+      // private: صورة شخص لا تُخزَّن في وسيط مشترك.
+      res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+      res.setHeader("Content-Disposition", "inline");
+      res.end(rows[0].bytes);
+    } catch (err) { fail(res, err, "admin/users:avatar", req); }
   }
 );
 
