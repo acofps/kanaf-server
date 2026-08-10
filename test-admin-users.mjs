@@ -91,7 +91,6 @@ console.log = (...a) => { const l = a.join(" "); if (l.includes("[dev] Would sen
 async function makeUser(name, email, password, { verify = true } = {}) {
   await post("/api/auth/register", { name, email, password, confirmedAdult: true, agreedPolicy: true });
   if (!verify) return;
-
   /* ------------------------------------------------------------
      المسار المفضّل: الكود من سطر التطوير الذي يطبعه mail/send.js
      حين لا يكون SMTP مضبوطاً، فيمرّ التوثيق بمسار
@@ -123,6 +122,24 @@ async function makeUser(name, email, password, { verify = true } = {}) {
 }
 
 const ADMIN_ID = crypto.randomUUID();
+
+/* ============================================================
+   حصر كل عدّ على مستخدمي هذا الملف وحدهم
+
+   ⚠️ كُتب هذا الملف لقاعدة معزولة (pg-mem — انظر رأسه)، فكل فحص
+   يعدّ صفوفاً كان يفترض أن الجدول لا يحوي غير خمسته. وعلى قاعدة
+   الإنتاج فيها مستخدمون حقيقيون، فسقطت خمسة فحوص وهي تصف الواقع
+   بدقة: total = 8 لأن ثمانية أحياء فعلاً.
+
+   والحل ليس تعديل الأرقام — الأرقام تتغيّر مع كل تسجيل جديد.
+   الحل حصر مجتمع القياس: كل مستخدمي هذا الملف على نطاق
+   example.com، والبحث في اللوحة يطابق البريد. فيصير كل عدّ وصفاً
+   لما بذره الملف لا لما في القاعدة.
+
+   والفحص T1 كان يستعمل هذه الحيلة أصلاً (search=EXAMPLE.COM)
+   وهو الوحيد من فحوص العدّ الذي نجا.
+   ============================================================ */
+const SCOPE = "search=" + encodeURIComponent("example.com");
 
 async function run() {
   // A pool of users with staggered creation times so ordering and
@@ -170,18 +187,18 @@ async function run() {
   log("T1 no match returns empty set with total 0", r.body.total === 0 && r.body.users.length === 0);
 
   // ---------- TEST 2 — Filter ----------
-  r = await get("/admin/users?status=pending_verification");
+  r = await get(`/admin/users?status=pending_verification&${SCOPE}`);
   log("T2 filter: pending_verification",
     r.body.total === 1 && r.body.users[0].email === "reem@example.com",
     JSON.stringify(r.body.users?.map((u) => u.email)));
 
-  r = await get("/admin/users?status=active");
+  r = await get(`/admin/users?status=active&${SCOPE}`);
   log("T2 filter: active excludes the unverified one", r.body.total === 4, String(r.body.total));
 
-  r = await get("/admin/users?status=suspended");
+  r = await get(`/admin/users?status=suspended&${SCOPE}`);
   log("T2 filter: suspended is empty before any suspension", r.body.total === 0, String(r.body.total));
 
-  r = await get("/admin/users?subscription=none");
+  r = await get(`/admin/users?subscription=none&${SCOPE}`);
   log("T2 filter: no active subscription matches everyone", r.body.total === 5, String(r.body.total));
 
   // Combined filters must AND together, not replace one another.
@@ -196,7 +213,7 @@ async function run() {
   let totalReported = null;
   let dupes = 0;
   for (let page = 1; page <= 3; page++) {
-    const pr = await get(`/admin/users?pageSize=2&page=${page}`);
+    const pr = await get(`/admin/users?pageSize=2&page=${page}&${SCOPE}`);
     totalReported = pr.body.total;
     for (const u of pr.body.users) {
       if (seen.has(u.id)) dupes++;
@@ -207,16 +224,23 @@ async function run() {
   log("T3 every record is reached exactly once", seen.size === 5, `seen=${seen.size}`);
   log("T3 total is reported and correct", totalReported === 5, String(totalReported));
 
-  r = await get("/admin/users?pageSize=2");
+  r = await get(`/admin/users?pageSize=2&${SCOPE}`);
   log("T3 totalPages computed correctly", r.body.totalPages === 3, String(r.body.totalPages));
 
   // The tiebreaker matters: force identical created_at on every row
   // and confirm pagination still doesn't repeat or lose records.
-  await query(`UPDATE users SET created_at = now()`);
+  /* 🔴 كانت هذه العبارة بلا WHERE، فتدهس created_at لكل مستخدم في
+     القاعدة — ووقع ذلك فعلاً على الإنتاج في 10 أغسطس 2026: ضاعت
+     تواريخ تسجيل المستخدمين الحقيقيين الثلاثة، واستُرجعت تقريباً
+     من أقدم أثر لكل واحد (جلسة أو اشتراك أو فاتورة أو يومية).
+
+     القاعدة المستخلَصة: **لا عبارة كتابة في ملف اختبار بلا WHERE
+     يحصرها في صفوفه.** */
+  await query(`UPDATE users SET created_at = now() WHERE LOWER(email) LIKE '%@example.com'`);
   const seen2 = new Set();
   let dupes2 = 0;
   for (let page = 1; page <= 5; page++) {
-    const pr = await get(`/admin/users?pageSize=1&page=${page}`);
+    const pr = await get(`/admin/users?pageSize=1&page=${page}&${SCOPE}`);
     for (const u of pr.body.users) {
       if (seen2.has(u.id)) dupes2++;
       seen2.add(u.id);
@@ -253,7 +277,7 @@ async function run() {
     JSON.stringify(dbState[0]));
   log("T4 suspending admin recorded", dbState[0]?.suspended_by === ADMIN_ID);
 
-  r = await get("/admin/users?status=suspended");
+  r = await get(`/admin/users?status=suspended&${SCOPE}`);
   log("T4 user now appears under the suspended filter",
     r.body.total === 1 && r.body.users[0].id === target.id, String(r.body.total));
 
@@ -370,6 +394,20 @@ async function run() {
   }
   log("P1 list omits age_range and gender (not needed to triage)",
     !("age_range" in listRow) && !("gender" in listRow), Object.keys(listRow).join(","));
+
+  /* ------------------------------------------------------------
+     التنظيف — لم يكن في هذا الملف تنظيف إطلاقاً.
+
+     فكل تشغيل يترك خمسة مستخدمين وهميين في الجدول، يظهرون في لوحة
+     الإدارة ويدخلون في كل عدّاد فيها. ولمّا شُغِّل على الإنتاج
+     ظهروا بين المستخدمين الحقيقيين وحُذفوا يدوياً.
+
+     وسجلّا التدقيق أولاً: كلاهما يشير إلى users بمفتاح أجنبي، وحذف
+     المستخدم قبلهما يسقط على القيد. وبقية الجداول تتبعه بـCASCADE.
+     ------------------------------------------------------------ */
+  await query(`DELETE FROM admin_action_log WHERE target_user_id IN (SELECT id FROM users WHERE LOWER(email) LIKE '%@example.com')`);
+  await query(`DELETE FROM admin_access_log WHERE target_user_id IN (SELECT id FROM users WHERE LOWER(email) LIKE '%@example.com')`);
+  await query(`DELETE FROM users WHERE LOWER(email) LIKE '%@example.com'`);
 
   console.log = realLog;
   let pass = 0, fail = 0;
