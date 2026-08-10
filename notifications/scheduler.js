@@ -1,5 +1,6 @@
 import { query, pool } from "../db/pool.js";
 import { dispatchCampaign } from "./service.js";
+import { sweepDailyReminders } from "./reminders.js";
 
 /* ============================================================
    الجدولة — بلا Cron ولا Queue ولا Background Job.
@@ -45,6 +46,21 @@ import { dispatchCampaign } from "./service.js";
 const SWEEP_MIN_INTERVAL_MS = Number(process.env.SWEEP_MIN_INTERVAL_MS || 60_000);
 let lastSweepAt = 0;
 let sweepInFlight = false;
+
+/* ------------------------------------------------------------
+   مسح ثانٍ مستقل: تذكير التسجيل اليومي (المرحلة 6).
+
+   خنقه الزمني أوسع عمداً — خمس دقائق بدل دقيقة. نافذة إرسال
+   التذكير ثلاث ساعات (notifications/reminders.js)، فالمسح كل
+   دقيقة لا يضيف دقة ويضيف استعلاماً على كل حركة مرور.
+
+   وحالته منفصلة عن حالة مسح الحملات: تأخّر أحدهما أو تعثّره لا
+   يمسّ الآخر. دمجهما في عدّاد واحد كان سيجعل مسحاً طويلاً
+   للحملات يبتلع موعد التذكيرات.
+   ------------------------------------------------------------ */
+const REMINDER_SWEEP_MIN_INTERVAL_MS = Number(process.env.REMINDER_SWEEP_MIN_INTERVAL_MS || 300_000);
+let lastReminderSweepAt = 0;
+let reminderSweepInFlight = false;
 
 /**
  * ينفّذ كل حملة حان وقتها. آمن للاستدعاء المتزامن: قفل استشاري
@@ -115,13 +131,34 @@ export function sweepMiddleware(req, res, next) {
   next();
 
   const now = Date.now();
-  if (sweepInFlight || now - lastSweepAt < SWEEP_MIN_INTERVAL_MS) return;
-  lastSweepAt = now;
-  sweepInFlight = true;
 
-  sweepDueCampaigns()
-    .catch((err) => console.error("[scheduler] فشل المسح:", err))
-    .finally(() => { sweepInFlight = false; });
+  /* المسحان مستقلان تماماً: شرط كل واحد يُقيَّم وحده، وفشله
+     يُلتقط وحده. الشكل القديم كان return مبكراً عند عدم استحقاق
+     مسح الحملات — ولو أُضيف التذكير بعده لَما عمل أبداً في أي
+     طلب تمرّ فيه الحملات على خنقها. */
+  if (!sweepInFlight && now - lastSweepAt >= SWEEP_MIN_INTERVAL_MS) {
+    lastSweepAt = now;
+    sweepInFlight = true;
+    sweepDueCampaigns()
+      .catch((err) => console.error("[scheduler] فشل المسح:", err))
+      .finally(() => { sweepInFlight = false; });
+  }
+
+  if (!reminderSweepInFlight && now - lastReminderSweepAt >= REMINDER_SWEEP_MIN_INTERVAL_MS) {
+    lastReminderSweepAt = now;
+    reminderSweepInFlight = true;
+    /* log مُمرَّرة هنا خلافاً لمسح الحملات — وعن قصد.
+
+       الحملة تترك أثرها في notification_campaigns و
+       notification_deliveries، فيُقرأ ما جرى من القاعدة. والتذكير
+       اليومي لا حملة له ولا صفوف تسليم؛ أثره الوحيد صف في صندوق
+       المستخدم. فسطر السجل هو الدليل الوحيد على أن المسح جرى
+       وماذا خرج منه — وبدونه يصير التحقق من عمل التذكير تخميناً.
+       والدالة لا تسجّل شيئاً حين لا يحدث شيء، فلا ضجيج. */
+    sweepDailyReminders({ log: (m) => console.log(m) })
+      .catch((err) => console.error("[scheduler] فشل مسح التذكيرات:", err))
+      .finally(() => { reminderSweepInFlight = false; });
+  }
 }
 
 /**
@@ -137,10 +174,34 @@ export async function schedulerStatus() {
      ORDER BY scheduled_at
      LIMIT 50`
   );
+  /* عدد المفعِّلين للتذكير يُقرأ هنا لا لتزيين الشاشة: السؤال
+     الذي يجب أن تجيب عليه هذه الشاشة هو «هل التذكير يعمل فعلاً؟»،
+     وجوابه يحتاج رقمين — كم مفعِّلاً، ومتى جرى آخر مسح.
+
+     بلا فهرس على users.reminders_on: العمود في جدول يملكه
+     postgres فـCREATE INDEX عليه يفشل. مسح كامل لجدول بهذا الحجم
+     مقبول لمسار إداري يُنادى عند فتح شاشة. */
+  const { rows: rem } = await query(
+    `SELECT count(*)::int AS enabled,
+            count(*) FILTER (WHERE p.last_sent_on = CURRENT_DATE)::int AS sent_today
+       FROM users u
+       LEFT JOIN user_reminder_prefs p ON p.user_id = u.id
+      WHERE u.reminders_on = true AND u.deleted_at IS NULL`
+  );
+
   return {
     pending: rows,
     overdue: rows.filter((r) => r.overdue_minutes > 0).length,
     lastSweepAt: lastSweepAt ? new Date(lastSweepAt).toISOString() : null,
     minIntervalMs: SWEEP_MIN_INTERVAL_MS,
+    dailyReminders: {
+      enabledUsers: rem[0].enabled,
+      /* بتاريخ الخادم (UTC) لا بتاريخ كل مستخدم المحلي — رقم
+         تشغيلي تقريبي للوحة، والدقة المحلية تخصّ قرار الإرسال
+         نفسه لا هذا العدّاد. مكتوب حتى لا يُقرأ على غير معناه. */
+      sentTodayServerDate: rem[0].sent_today,
+      lastSweepAt: lastReminderSweepAt ? new Date(lastReminderSweepAt).toISOString() : null,
+      minIntervalMs: REMINDER_SWEEP_MIN_INTERVAL_MS,
+    },
   };
 }
