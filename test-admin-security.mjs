@@ -34,7 +34,7 @@ import { query } from "./db/pool.js";
 import { adminRouter } from "./admin/routes.js";
 import { adminAccountsRouter } from "./admin/accounts.js";
 import { adminExportsRouter } from "./admin/exports.js";
-import { adminSettingsRouter, getAppSetting } from "./admin/settings.js";
+import { adminSettingsRouter, getAppSetting, SETTINGS_REGISTRY } from "./admin/settings.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
 import { ROLES, ALL_PERMISSIONS, can, permissionsFor, matrixRows } from "./admin/permissions.js";
@@ -446,13 +446,37 @@ async function run() {
         && Number(planLog[1].old_value.price_sar) === 29 && Number(planLog[1].new_value.price_sar) === 39,
       JSON.stringify(planLog.map((r) => r.action)));
 
-    await put("/admin/tax-settings", { legalName: "اكاديمية علم النفس", vatNumber: "310000000000003", reason: "ضبط للاختبار" });
-    const { rows: taxLog } = await query(`SELECT entity, entity_id FROM admin_action_log WHERE entity = 'tax_settings'`);
-    log("7-د. تعديل البيانات الضريبية مسجَّل بكيان لا بمستخدم",
-      taxLog.length === 1 && taxLog[0].entity_id === "singleton", JSON.stringify(taxLog));
+    /* ------------------------------------------------------------
+       يُقاس **الفرق** لا عدد الجدول كله.
 
-    const { rows: accessLog } = await query(`SELECT count(*)::int n FROM admin_access_log WHERE action = 'update_tax_settings'`);
-    log("7-هـ. ونفس التعديل له صف في سجل الوصول بسببه", accessLog[0].n === 1, String(accessLog[0].n));
+       ⚠️ كانت النسخة الأولى تعدّ كل صفوف الكيان وتتوقع صفاً واحداً،
+       أي أنها تفترض أن سجل الإنتاج خالٍ من تعديلات البيانات
+       الضريبية. وبطلت الفرضية في 10 أغسطس 2026 بفعل حقيقي مقصود:
+       أُدخل الاسم النظامي بالهمزة خطأً ثم صُحّح بعد مراجعة شهادة
+       التسجيل الضريبي، **والصفّان باقيان عمداً** — سجلٌّ يُخفي
+       المحاولة الخاطئة لا يكشف كيف وقع الخطأ (دلتا المرحلة 5 §6.3).
+
+       فصار الفحص يسقط على كود سليم، وكل تعديل ضريبي قادم كان
+       سيزيده سقوطاً. والقياس بالفرق يفحص ما يهمّ فعلاً — أن هذا
+       التعديل بالذات كتب صفاً واحداً بكيانه — ويبقى صحيحاً مهما
+       طال تاريخ الجدول.
+       ------------------------------------------------------------ */
+    const { rows: taxBefore } = await query(`SELECT count(*)::int n FROM admin_action_log WHERE entity = 'tax_settings'`);
+    const { rows: accessBefore } = await query(`SELECT count(*)::int n FROM admin_access_log WHERE action = 'update_tax_settings'`);
+
+    await put("/admin/tax-settings", { legalName: "اكاديمية علم النفس", vatNumber: "310000000000003", reason: "ضبط للاختبار" });
+
+    const { rows: taxAfter } = await query(
+      `SELECT entity, entity_id, count(*) OVER ()::int AS n FROM admin_action_log
+        WHERE entity = 'tax_settings' ORDER BY created_at DESC LIMIT 1`
+    );
+    log("7-د. تعديل البيانات الضريبية يكتب صفاً واحداً بكيانه لا بمستخدم",
+      taxAfter.length === 1 && taxAfter[0].entity_id === "singleton" && (taxAfter[0].n - taxBefore[0].n) === 1,
+      JSON.stringify({ before: taxBefore[0].n, after: taxAfter[0]?.n, entity_id: taxAfter[0]?.entity_id }));
+
+    const { rows: accessAfter } = await query(`SELECT count(*)::int n FROM admin_access_log WHERE action = 'update_tax_settings'`);
+    log("7-هـ. ونفس التعديل يزيد سجل الوصول صفاً واحداً بسببه",
+      accessAfter[0].n - accessBefore[0].n === 1, `${accessBefore[0].n} → ${accessAfter[0].n}`);
 
     // كيان ليس مستخدماً — وهو ما كان مستحيلاً قبل المرحلة 5
     const { rows: nonUser } = await query(
@@ -510,9 +534,23 @@ async function run() {
     log("8-هـ. قيمة فارغة مرفوضة (400)", emptyVal.status === 400 && emptyVal.body.error === "value_cannot_be_empty");
 
     const list = await get("/admin/app-settings");
-    log("8-و. كل إعداد يحمل حالة ربطه صراحةً (wired)",
-      list.status === 200 && list.body.settings.length === 5 && list.body.settings.every((s) => typeof s.wired === "boolean"),
-      list.body.settings?.map((s) => `${s.key}:${s.wired}`).join(" "));
+    /* العدد المتوقَّع مشتقّ من السجلّ لا مكتوب رقماً.
+
+       ⚠️ كان مكتوباً `=== 5`، فأسقطته المرحلة 6 حين أضافت خمسة
+       إعدادات مشروعة (واتساب والحسابان ووقت التذكير). والفحص الذي
+       يقيس عدداً بدل سلوك يسقط مع كل إضافة صحيحة — وهو أسوأ ما
+       يُطلب من فحص: أن يعاقب التقدّم.
+
+       والمقصود منه فعلاً — أن كل إعداد مسجَّل يظهر ومعه حالة ربطه
+       صريحة — محفوظ كما هو وأدقّ: المقارنة الآن مع مفاتيح
+       app_settings في SETTINGS_REGISTRY نفسه. */
+    const registeredAppKeys = SETTINGS_REGISTRY.filter((s) => s.source === "app_settings").map((s) => s.key);
+    const listedKeys = (list.body.settings || []).map((s) => s.key);
+    log("8-و. كل إعداد مسجَّل يظهر ومعه حالة ربطه صراحةً (wired)",
+      list.status === 200
+        && registeredAppKeys.every((k) => listedKeys.includes(k))
+        && list.body.settings.every((s) => typeof s.wired === "boolean"),
+      `مسجَّل=${registeredAppKeys.length} معروض=${listedKeys.length} · ${list.body.settings?.map((s) => `${s.key}:${s.wired}`).join(" ")}`);
 
     log("8-ز. admin_session_minutes معلَّم بأنه لا يؤثر (قيمته السارية من متغيّر بيئة)",
       list.body.settings.find((s) => s.key === "admin_session_minutes")?.wired === false);
