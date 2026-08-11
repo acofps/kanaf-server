@@ -117,26 +117,31 @@ export const SETTINGS_REGISTRY = [
 
   /* ---------- إعدادات التشغيل ----------
 
-     ⚠️ الأربعة الأولى `wired: false` اليوم، وأقولها صراحةً بدل أن
-     أعرضها كأنها تعمل: الترحيل 008 أنشأ الجدول وبذر القيم، وهذه
-     المرحلة بنت لها قراءة وكتابة وشاشة — والخادم يقدّمها الآن على
-     GET /api/support-info، لكن **تطبيق المستخدم لا يقرؤها بعد**،
-     لأن تحديث التطبيق ليس ضمن المرحلة 5.
+     تحديث 10 أغسطس 2026 (المرحلة 6، بعد النشر والتحقق اليدوي):
+     كان الأربعة كلها `wired: false` لأن الخادم كان يقدّمها
+     و**تطبيق المستخدم لا يقرؤها**. ونُشرت نسخة التطبيق التي
+     تقرؤها، وشوهد أثرها على الشاشة، فقُلب الاثنان اللذان ثبت
+     أثرهما ولا غير:
 
-     فحالتها الصادقة: جاهزة في الخادم، غير مستهلَكة في الواجهة.
-     تُعرض في اللوحة بشارة «لا يؤثر بعد»، ومقيَّدة في
-     05_SETTINGS_AUDIT.md كبند مفتوح. ------------------------- */
+       support_email          → true  (ظهر أسفل نموذج «تواصل معنا»)
+       support_hours          → true  (ظهر معه في نفس السطر)
+       app_public_name        → false (لا قارئ له بعد)
+       marketing_email_footer → false (لا قارئ له بعد)
+
+     القلب تمّ بعد المشاهدة لا معها ولا قبلها. والإعداد الذي يظهر
+     في شاشة ويقول «حُفظ» ولا يؤثر أخطر من الإعداد الغائب: المسؤول
+     يبني على أنه سرى. ------------------------- */
   {
     key: "support_email", label: "بريد الدعم المعروض",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "يقدّمه الخادم؛ التطبيق يعرضه حين يُحدَّث.",
+    note: "يظهر أسفل نموذج «تواصل معنا» في التطبيق. شوهد على الشاشة بعد نشر 10 أغسطس 2026.",
   },
   {
     key: "support_hours", label: "أوقات عمل الدعم",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "يقدّمه الخادم؛ التطبيق يعرضه حين يُحدَّث.",
+    note: "يظهر أسفل نموذج «تواصل معنا» في التطبيق. شوهد على الشاشة بعد نشر 10 أغسطس 2026.",
   },
   {
     key: "app_public_name", label: "الاسم التجاري المعروض",
@@ -152,15 +157,17 @@ export const SETTINGS_REGISTRY = [
   },
   /* ---------- إعدادات المرحلة 6 ----------
 
-     الخمسة أدناه `wired: false` **اليوم**، وليست كذلك بالتصميم:
-     قارئها الوحيد هو تطبيق المستخدم عبر GET /api/support-info،
-     والخادم يقدّمها فعلاً منذ هذه المرحلة — لكن نسخة التطبيق التي
-     تقرؤها لم تُنشر بعد على app.kanaf.me (النشر خطوة يدوية منفصلة
-     عن نشر الخادم في هذا المشروع).
+     كُتبت هذه الخمسة `wired: false` يوم بنائها لأن نسخة التطبيق
+     التي تقرؤها لم تكن منشورة بعد. ونُشرت في 10 أغسطس 2026،
+     فقُلب أربعة منها إلى true بعد مشاهدة أثر كل واحد على الشاشة:
 
-     فحالتها الصادقة الآن: **جاهزة في الخادم، غير مؤثرة على شاشة
-     المستخدم.** وتُقلب إلى true في نفس اللحظة التي تُنشر فيها
-     نسخة التطبيق ويُتحقَّق منها — لا قبلها.
+       whatsapp_enabled         → true (الزر ظهر عند رفعه)
+       whatsapp_number          → true (الرابط فتح المحادثة الصحيحة)
+       social_x_handle          → true (@KANAFme في «تواصل معنا»)
+       social_instagram_handle  → true (كسابقه)
+       daily_reminder_time      → **باقٍ false — انظر سببه أدناه**
+
+     الخامس ليس متأخراً عن النشر: **لا قارئ له في المنتج كله.**
 
      وهذا ليس تشدداً: البند 6 من المرحلة 5 كُتب بعد أن بُذرت أربعة
      إعدادات قبل أن يقرأها كود. الإعداد الذي يظهر في شاشة ويقول
@@ -169,25 +176,25 @@ export const SETTINGS_REGISTRY = [
      ------------------------------------------------- */
   {
     key: "whatsapp_enabled", label: "إظهار زر واتساب العائم",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
     note: "الزر لا يظهر إلا إذا كان هذا مرفوعاً **و** الرقم مضبوطاً. رفعه برقم فارغ لا يُظهر شيئاً — والخادم يفرض ذلك، لا الواجهة.",
   },
   {
     key: "whatsapp_number", label: "رقم واتساب الرسمي",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
     note: "يُخزَّن أرقاماً مجرّدة بصيغة E.164 بلا + ولا أصفار (مثال: 9665XXXXXXXX)، ويُطبَّع عند الحفظ فما تكتبه بأي صورة يستقر بصورة واحدة. الرابط يُبنى في الخادم لا في التطبيق. لمسحه أرسل القيمة null.",
   },
   {
     key: "social_x_handle", label: "حساب X",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
     note: "المعرّف وحده، وقائمة محارف بيضاء تمنع أن يتحوّل الإعداد إلى رابط لموقع آخر. كان مكتوباً في التطبيق بالاسم القديم للمشروع (@marsah_app) فكان تغييره يحتاج بناءً ورفعاً.",
   },
   {
     key: "social_instagram_handle", label: "حساب إنستقرام",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
     note: "كسابقه. كان @marsah.app في الكود.",
   },
@@ -195,7 +202,7 @@ export const SETTINGS_REGISTRY = [
     key: "daily_reminder_time", label: "الوقت الافتراضي لتذكير التسجيل اليومي",
     source: "app_settings", editPerm: "app_settings:edit", wired: false,
     readBy: ["index.js (/api/support-info)"],
-    note: "افتراضي لمن لم يختر وقتاً بعد، بتوقيته المحلي. **لا يغيّر وقت من اختار وقته** — قيمته محفوظة في user_reminder_prefs، وتغيير الافتراضي لا يمسّها.",
+    note: "🔴 لا قارئ له. كُتب هنا أنه «الافتراضي لمن لم يختر وقتاً» — وليس كذلك: الافتراضي مكتوب حرفياً '20:00'::time في userdata/routes.js عند إنشاء صف user_reminder_prefs، والتطبيق يعرض profile.reminder.localTime مع بديل '20:00' ثابت في الكود، ومسح التذكيرات يقرأ user_reminder_prefs وحده. فتغيير هذه القيمة اليوم لا يغيّر شيئاً لأي مستخدم. اكتُشف في مراجعة 10 أغسطس 2026 ومقيَّد بنداً مفتوحاً في تقرير المرحلة 6. ربطه ثلاثة أسطر: يُقرأ الإعداد بدل الثابت في الموضعين.",
   },
 
   {
