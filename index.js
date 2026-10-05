@@ -42,7 +42,17 @@ const app = express();
 // read the real client IP from X-Forwarded-For instead of either
 // rate-limiting everyone as a single client, or trusting a
 // spoofable header from an untrusted number of hops.
-app.set("trust proxy", 1);
+/* KANAF-ORD-0001 R15-07: عدد الوكلاء الموثوقين صار متغيّر بيئة
+   TRUST_PROXY_HOPS، والافتراضي 1 — نفس سلوك الإنتاج حرفياً. لا يُغيَّر
+   قبل قياس سلسلة الوكلاء الفعلية عبر GET /admin/diagnostics/client-ip
+   (للمالك) من شبكتين مختلفتين: رقم أكبر من عدد الوكلاء الفعلي يجعل
+   X-Forwarded-For الذي يرسله العميل نفسه «عنوانه» — أي قابلاً للتزوير. */
+const TRUST_PROXY_HOPS = process.env.TRUST_PROXY_HOPS === undefined ? 1 : Number(process.env.TRUST_PROXY_HOPS);
+if (!Number.isInteger(TRUST_PROXY_HOPS) || TRUST_PROXY_HOPS < 0 || TRUST_PROXY_HOPS > 4) {
+  console.error("FATAL: TRUST_PROXY_HOPS يجب أن يكون عدداً صحيحاً من 0 إلى 4.");
+  process.exit(1);
+}
+app.set("trust proxy", TRUST_PROXY_HOPS);
 app.use(express.json({ limit: "200kb" }));
 app.use(cookieParser());
 

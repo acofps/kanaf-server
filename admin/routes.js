@@ -53,6 +53,10 @@ adminRouter.use("/billing", billingRouter);
    لكل عنوان تجعل التخمين المتصل غير عملي أصلاً.
 
    موثّق في 05_ADMIN_SECURITY_AUDIT.md كقيد معروف لا كثغرة مجهولة.
+
+   تحديث KANAF-ORD-0001 R15-23: أُضيفت تهدئة لكل حساب (جدول جانبي
+   admin_auth_state، الترحيل 013) — انظر verifyAdminCredentials في
+   admin/auth.js. هذا الحد بالعنوان باقٍ طبقةً ثانية.
    ------------------------------------------------------------ */
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 

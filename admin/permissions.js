@@ -166,6 +166,8 @@ export const PERMISSION_CATALOG = {
   "break_glass:request":      "طلب وصول طارئ",
   "break_glass:view":         "عرض طلبات الوصول الطارئ المعلّقة",
   "break_glass:approve":      "اعتماد طلب وصول طارئ",
+  /* --- التشغيل — KANAF-ORD-0001 R15-07: للمالك وحده (ALL_PERMISSIONS) --- */
+  "system:diagnostics":       "تشخيص سلسلة الوكلاء وعنوان العميل كما يراه الخادم (بلا أسرار ولا رموز)",
 };
 
 export const ALL_PERMISSIONS = Object.freeze(Object.keys(PERMISSION_CATALOG));

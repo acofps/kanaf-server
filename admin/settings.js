@@ -472,3 +472,36 @@ adminSettingsRouter.put(
     } catch (err) { fail(res, err, "admin/settings:app-update", req); }
   }
 );
+
+
+/* ============================================================
+   GET /admin/diagnostics/client-ip — KANAF-ORD-0001 R15-07 (للمالك)
+
+   يجيب عن سؤال واحد بدليل لا بتخمين: كم وكيلاً بين العميل والخادم؟
+   يعرض لطلب المالك نفسه: req.ip بالإعداد الحالي، وعدد عناوين
+   X-Forwarded-For، والعنوان الذي يُختار لو كان عدد الوكلاء الموثوقين
+   0..3، ووجود ترويسة CF-Connecting-IP وهل تطابق أحدها. لا يعرض كوكي
+   ولا رمزاً ولا ترويسة مصادقة، ولا يكتب شيئاً.
+   الاستعمال: افتحه من شبكتين (جوال وواي فاي) بعد نشر مأذون؛ العدد
+   الصحيح هو الذي يعطي عنوانك الحقيقي في الحالتين.
+   ============================================================ */
+adminSettingsRouter.get(
+  "/diagnostics/client-ip",
+  requireAdminAuth, requirePermission("system:diagnostics"),
+  (req, res) => {
+    const xff = String(req.headers["x-forwarded-for"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const chain = [...xff, req.socket.remoteAddress];
+    const pick = (hops) => chain[Math.max(0, chain.length - 1 - hops)];
+    const cf = req.headers["cf-connecting-ip"] || null;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      trustProxySetting: req.app.settings["trust proxy"],
+      reqIp: req.ip,
+      forwardedForCount: xff.length,
+      candidateByHops: { 0: pick(0), 1: pick(1), 2: pick(2), 3: pick(3) },
+      cfConnectingIpPresent: Boolean(cf),
+      cfConnectingIpMatchesHops: cf ? [0, 1, 2, 3].filter((h) => pick(h) === cf) : [],
+      note: "الرقم الصحيح لـTRUST_PROXY_HOPS هو الذي يعطي عنوانك الحقيقي من شبكتين مختلفتين.",
+    });
+  }
+);

@@ -31,18 +31,58 @@ export async function hashPassword(plaintext) {
  * exist or the password is wrong, so the API never confirms which
  * admin emails are valid to someone probing it.
  */
+/* ============================================================
+   تهدئة لكل حساب — KANAF-ORD-0001 R15-23
+
+   بعد THROTTLE_FREE_ATTEMPTS إخفاقات متتالية يُهدَّأ الحساب دقيقة،
+   وتتضاعف المدة مع كل إخفاق بعدها حتى سقف ربع ساعة — **لا قفل دائم**،
+   فلا يصير التخمين المتعمّد أداة لحجب المالك عن حسابه إلى أجل غير
+   مسمّى. الدخول الناجح يصفّر العدّاد.
+
+   والرد واحد في كل الحالات (بريد مجهول، كلمة خاطئة، حساب معطّل، حساب
+   مُهدَّأ): invalid_credentials بنفس الزمن تقريباً — مقارنة bcrypt
+   تجري دائماً (على تجزئة وهمية حين لا حساب)، فلا يكشف الزمن ولا الرد
+   وجود بريد إدارة ولا حالة تهدئته. ثمن ذلك أن المسؤول المُهدَّأ لا
+   يُقال له «انتظر»؛ رسالة اللوحة تذكر الاحتمالين معاً.
+   ============================================================ */
+const THROTTLE_FREE_ATTEMPTS = Number(process.env.ADMIN_LOGIN_FREE_ATTEMPTS || 5);
+const THROTTLE_BASE_MS = 60 * 1000;
+const THROTTLE_MAX_MS = 15 * 60 * 1000;
+const DUMMY_ADMIN_HASH = bcrypt.hashSync("kanaf-dummy-" + Math.random(), BCRYPT_ROUNDS);
+
+async function recordAdminFailure(adminId) {
+  const { rows } = await query(
+    `INSERT INTO admin_auth_state (admin_user_id, failed_count, last_failed_at, updated_at)
+     VALUES ($1, 1, now(), now())
+     ON CONFLICT (admin_user_id) DO UPDATE
+       SET failed_count = admin_auth_state.failed_count + 1, last_failed_at = now(), updated_at = now()
+     RETURNING failed_count`,
+    [adminId]
+  );
+  const n = rows[0].failed_count;
+  if (n >= THROTTLE_FREE_ATTEMPTS) {
+    const ms = Math.min(THROTTLE_BASE_MS * 2 ** (n - THROTTLE_FREE_ATTEMPTS), THROTTLE_MAX_MS);
+    await query(`UPDATE admin_auth_state SET locked_until = now() + ($2 || ' milliseconds')::interval WHERE admin_user_id = $1`, [adminId, String(ms)]);
+  }
+}
+
 export async function verifyAdminCredentials(email, plaintextPassword) {
   const { rows } = await query(
-    `SELECT id, name, email, password_hash, role, active FROM admin_users WHERE LOWER(email) = LOWER($1)`,
+    `SELECT a.id, a.name, a.email, a.password_hash, a.role, a.active,
+            (s.locked_until IS NOT NULL AND s.locked_until > now()) AS throttled
+     FROM admin_users a LEFT JOIN admin_auth_state s ON s.admin_user_id = a.id
+     WHERE LOWER(a.email) = LOWER($1)`,
     [email]
   );
   const admin = rows[0];
+  // المقارنة تجري دائماً — زمن الرد لا يميّز بين الحالات.
+  const matches = await bcrypt.compare(String(plaintextPassword || ""), admin?.password_hash || DUMMY_ADMIN_HASH).catch(() => false);
   if (!admin || !admin.active) return null;
+  if (admin.throttled) return null;
+  if (!matches) { await recordAdminFailure(admin.id); return null; }
 
-  const matches = await bcrypt.compare(plaintextPassword, admin.password_hash);
-  if (!matches) return null;
-
-  const { password_hash, ...safeAdmin } = admin;
+  await query(`DELETE FROM admin_auth_state WHERE admin_user_id = $1`, [admin.id]);
+  const { password_hash, throttled, ...safeAdmin } = admin;
   return safeAdmin;
 }
 
