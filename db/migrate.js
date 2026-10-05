@@ -48,6 +48,20 @@ function listMigrationFiles() {
 export async function runMigrations({ log = console.log } = {}) {
   await ensureMigrationsTable();
 
+  /* نداءان متزامنان (نقرتان، أو إعادة طلب بعد انقطاع الرد) كانا يتسابقان: كل ملف يُطبَّق
+     مرة واحدة فعلاً (المعاملة + المفتاح الأساسي)، لكن الثاني يرد 500 بخطأ «موجود مسبقاً».
+     قفل استشاري على مستوى الجلسة يجعل الثاني ينتظر ثم يرى كل شيء مطبَّقاً — KANAF-ORD-0002 PKG-D. */
+  const lock = await pool.connect();
+  try {
+    await lock.query(`SELECT pg_advisory_lock(hashtext('kanaf_schema_migrations'))`);
+    return await applyPending(log);
+  } finally {
+    await lock.query(`SELECT pg_advisory_unlock(hashtext('kanaf_schema_migrations'))`).catch(() => {});
+    lock.release();
+  }
+}
+
+async function applyPending(log) {
   const { rows } = await pool.query(`SELECT filename FROM schema_migrations`);
   const applied = new Set(rows.map((r) => r.filename));
 
