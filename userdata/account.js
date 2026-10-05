@@ -231,6 +231,8 @@ export async function purgeDeletedAccount(userId, { policy } = {}) {
     await del("user_notifications", `DELETE FROM user_notifications WHERE user_id = $1`);
     await del("push_subscriptions", `DELETE FROM push_subscriptions WHERE user_id = $1`);
     await del("user_sessions", `DELETE FROM user_sessions WHERE user_id = $1`);
+    // إيصالات منع التكرار (014): معرّفات فقط، لكن الحذف النهائي يشملها — الحساب يُجهَّل لا يُحذف فلا يعمل CASCADE.
+    await del("user_write_receipts", `DELETE FROM user_write_receipts WHERE user_id = $1`);
     await del("email_verification_codes", `DELETE FROM email_verification_codes WHERE LOWER(email) = LOWER($1)`, [u[0].email]);
     await client.query(
       `UPDATE users SET name = 'حساب محذوف', email = $2, password_hash = '!deleted', photo_url = NULL,

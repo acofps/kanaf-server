@@ -12,6 +12,7 @@ const bcrypt = (await import("bcrypt")).default;
 const { query, pool } = await import("./db/pool.js");
 const { issueAccessToken } = await import("./auth/tokens.js");
 const { userDataRouter } = await import("./userdata/routes.js");
+const { purgeDeletedAccount } = await import("./userdata/account.js");
 
 const R = []; const ok = (l, c, x = "") => R.push([l, !!c, x]);
 const app = express(); app.use(express.json()); app.use("/api/me", userDataRouter);
@@ -103,6 +104,24 @@ try {
   await query(`DELETE FROM users WHERE id = $1`, [Bu.id]);
   ok("W9b deleting the account removes its receipts (ON DELETE CASCADE)", await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [Bu.id]) === 0);
   ok("W9c the other account's receipts are untouched", await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [A.id]) === 4);
+
+  /* W10 — إعادة بنفس المفتاح بعد زوال الاستبيان الأصلي: 410 لا 200 بجسم فارغ */
+  const k10 = crypto.randomUUID();
+  const s10 = await call("POST", "/api/me/screenings", { ...SCR, clientRef: k10 }, A.token);
+  await query(`DELETE FROM screenings WHERE id = $1`, [s10.body.id]);
+  const s10b = await call("POST", "/api/me/screenings", { ...SCR, clientRef: k10 }, A.token);
+  ok("W10 replay whose screening row is gone → 410 already_deleted, nothing recreated", s10b.status === 410 && s10b.body.error === "already_deleted"
+    && await count(`SELECT count(*) n FROM screenings WHERE id = $1`, [s10.body.id]) === 0, JSON.stringify(s10b));
+
+  /* W11 — الحذف النهائي يجهّل صف المستخدم (لا CASCADE) فيجب أن يحذف الإيصالات صراحةً */
+  const C = await mkUser("c");
+  await call("POST", "/api/me/screenings", { ...SCR, clientRef: crypto.randomUUID() }, C.token);
+  const before = await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [C.id]);
+  await query(`UPDATE users SET deleted_at = now() WHERE id = $1`, [C.id]); // fixture: حساب معطَّل بانتظار الحذف النهائي
+  const pc = await purgeDeletedAccount(C.id, { policy: "TEST_ONLY_not_an_approved_policy" });
+  ok("W11 purge removes the account's receipts (1 → 0) and reports the count", before === 1 && pc.user_write_receipts === 1
+    && await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [C.id]) === 0, JSON.stringify(pc));
+  ok("W11b purge leaves other accounts' receipts", await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [A.id]) >= 4);
 } catch (e) { R.push(["!! stopped: " + String(e.stack || e).slice(0, 300), false]); }
 
 let p = 0, f = 0;

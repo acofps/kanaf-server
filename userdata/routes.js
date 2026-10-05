@@ -272,6 +272,7 @@ userDataRouter.post("/screenings", requireVerifiedUser, async (req, res) => {
       async (c, id) => (await c.query(
         `SELECT id, kind, total, band_label, created_at FROM screenings WHERE id = $1 AND user_id = $2`,
         [id, req.userId])).rows[0]);
+    if (!out.row) return res.status(410).json({ error: "already_deleted" });
     sendCreated(res, out);
   } catch (err) { fail(res, err, "screenings"); }
 });
