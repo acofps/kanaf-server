@@ -164,6 +164,11 @@ try {
   r = await call(base.B, "POST", "/api/setup/run-migrations", { body: { token: SECRETS.SETUP_TOKEN } });
   const migsAfter = (await q(`SELECT count(*)::int n FROM schema_migrations`)).rows[0].n;
   ok("T6", "baseline's migration endpoint on the migrated schema is a no-op (no reverse migration, nothing re-applied)", r.status === 200 && (r.body.results || []).every((x) => x.status === "skipped") && migsAfter === rows.migs, JSON.stringify(r.body).slice(0, 160));
+  /* التطبيق الجديد مع الخادم القديم (تراجع الخادم وحده): الحقول الجديدة تُتجاهل */
+  const nr = crypto.randomUUID();
+  const a1 = await call(base.B, "POST", "/api/me/screenings", { token: rbToken, body: { kind: "gad7", total: 1, bandLabel: "طفيف", answers: {}, clientRef: nr } });
+  const a2 = await call(base.B, "POST", "/api/me/screenings", { token: rbToken, body: { kind: "gad7", total: 1, bandLabel: "طفيف", answers: {}, clientRef: nr } });
+  ok("T7 new app → old server: requests with clientRef are accepted (field ignored; no dedupe — two rows)", a1.status === 201 && a2.status === 201 && a1.body.id !== a2.body.id, `${a1.status} ${a2.status}`);
   await stop(base); base = null;
 
   /* ---------- 6) العودة إلى الجديد ---------- */
