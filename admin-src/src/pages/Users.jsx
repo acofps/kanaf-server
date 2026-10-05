@@ -283,6 +283,9 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
                 </Badge>
               </Row>
               <Row label="الفئة العمرية">{u.age_range}</Row>
+              {/* الجنس: نفس مستوى الفئة العمرية (users:view) — الحقل في الحمولة منذ البداية ولم يكن يُعرض.
+                  لا توسيع للاطلاع: لا حقل جديد يُقرأ من القاعدة (KANAF-ORD-0002 B-07). */}
+              <Row label="الجنس">{u.gender === "male" ? "ذكر" : u.gender === "female" ? "أنثى" : "—"}</Row>
               <Row label="أكّد أنه بالغ">{u.confirmed_adult ? "نعم" : "لا"}</Row>
               <Row label="تفعيل البريد">{u.email_verified_at ? fmtDateTime(u.email_verified_at) : "غير مفعّل"}</Row>
               <Row label="التسجيل">{fmtDateTime(u.created_at)}</Row>
