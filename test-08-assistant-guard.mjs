@@ -48,6 +48,15 @@ try {
     const x = await call("POST", "/api/chat", { body: msg(`والله ${t} هالأيام`) });
     ok(`A1+ spelling/spacing variant detected: ${t}`, x.status === 200 && x.body.crisis === true, JSON.stringify(x.body));
   }
+  /* KANAF-ORD-0002 CONS-04: التطبيع في الاتجاهين — ما يُلتقط جديداً، وما لا يُلتقط خطأً */
+  for (const t of ["مافي داعي اعيش", "ابي اموت", "انتحاري", "أفكر بالانتحار", "اقتل  نفسي", "kill   myself", "selfharm"]) {
+    const x = await call("POST", "/api/chat", { body: msg(`والله ${t} هالأيام`) });
+    ok(`A1c caught (spacing/spelling): ${t}`, x.status === 200 && x.body.crisis === true, JSON.stringify(x.body));
+  }
+  for (const t of ["إنت حار اليوم", "كان تحار في الشغل", "see you weekend mylife is busy", "الجو حار وانت تعبان"]) {
+    const x = await call("POST", "/api/chat", { body: msg(t) });
+    ok(`A1n not a crisis signal (no false catch from removing spaces): ${t}`, x.status === 401 && x.body.crisis !== true, `${x.status} ${JSON.stringify(x.body)}`);
+  }
   r = await call("POST", "/api/chat", { body: msg("مرحبا") });
   ok("A2 ordinary chat without account → 401", r.status === 401);
 

@@ -365,13 +365,24 @@ function normalizeArabic(s) {
 const CRISIS_PATTERNS_NORMALIZED = CRISIS_PATTERNS.map(normalizeArabic);
 /* ومقارنة ثانية بلا مسافات: «ما في داعي أعيش» = «مافي داعي أعيش».
    الخطأ هنا في اتجاه الأمان (إظهار لوحة الأزمة لا إخفاؤها). وهذا لا
-   يجعل القائمة تغطية لغوية كاملة — انظر سجل X08. */
-const CRISIS_PATTERNS_COMPACT = CRISIS_PATTERNS_NORMALIZED.map((p) => p.replace(/ /g, ""));
+   يجعل القائمة تغطية لغوية كاملة — انظر سجل X08.
+
+   حدّها (KANAF-ORD-0002 CONS-04): كانت تقارن **كل** العبارات بالنص كله بعد حذف
+   مسافاته، فتلتقط ما ليس إشارة: «إنت حار» → «انتحار»، «كان تحار»، «friend my life»
+   → «endmylife». فصار للمقارنة بلا مسافات شرطان: (1) للعبارات متعددة الكلمات وحدها —
+   الكلمة المفردة («انتحار») تُطابَق بالتطبيع العادي، ومنه «انتحاري» و«الانتحار»؛
+   (2) أن يبدأ التطابق عند بداية كلمة في النص. العبارات نفسها لم تتغير. */
+const CRISIS_PATTERNS_COMPACT = CRISIS_PATTERNS_NORMALIZED.filter((p) => p.includes(" ")).map((p) => p.replace(/ /g, ""));
 function containsCrisisSignal(text = "") {
   const norm = normalizeArabic(normalizeContent(text));
   if (!norm.trim()) return false;
-  const compact = norm.replace(/ /g, "");
-  return CRISIS_PATTERNS_NORMALIZED.some((p) => norm.includes(p)) || CRISIS_PATTERNS_COMPACT.some((p) => compact.includes(p));
+  if (CRISIS_PATTERNS_NORMALIZED.some((p) => norm.includes(p))) return true;
+  const words = norm.trim().split(" ");
+  for (let i = 0; i < words.length; i++) {
+    const tail = words.slice(i).join("");
+    if (CRISIS_PATTERNS_COMPACT.some((p) => tail.startsWith(p))) return true;
+  }
+  return false;
 }
 
 const CHAT_SYSTEM_PROMPT = `أنت مساعد تثقيفي داعم داخل تطبيق للصحة النفسية اسمه Kanaf، اسمك "رفيق". قواعدك صارمة ولا يجوز كسرها:
