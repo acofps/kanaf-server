@@ -1,7 +1,7 @@
 import express from "express";
 import { query, withTransaction } from "../db/pool.js";
 import {
-  requireAdminAuth, requirePermission, requireReasonAndLog,
+  requireAdminAuth, requirePermission, requireAnyPermission, requireReasonAndLog,
   logAdminAction, fail, httpError,
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
@@ -316,12 +316,8 @@ adminSettingsRouter.get(
   "/settings/overview",
   requireAdminAuth,
   // يكفي أن يملك القارئ صلاحية قراءة قسم واحد؛ الأقسام تُرشَّح أدناه.
-  (req, res, next) => {
-    const any = ["billing_settings:view", "tax_settings:view", "app_settings:view"]
-      .some((p) => req.admin.can(p));
-    if (!any) return res.status(403).json({ error: "insufficient_permission" });
-    next();
-  },
+  // (R15-24: صريحة بدل دالة مجهولة حتى تراها مصفوفة الصلاحيات المولّدة)
+  requireAnyPermission("billing_settings:view", "tax_settings:view", "app_settings:view"),
   async (req, res) => {
     try {
       const sections = {};

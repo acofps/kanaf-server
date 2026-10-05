@@ -122,22 +122,28 @@ export async function requireAdminAuth(req, res, next) {
    ملاحظة أن دوراً آخر يمرّ منه بحكم رتبته.
    ------------------------------------------------------------ */
 export function requirePermission(permission) {
-  return (req, res, next) => {
+  const mw = (req, res, next) => {
     if (!req.admin?.can(permission)) {
       return res.status(403).json({ error: "insufficient_permission", required: permission });
     }
     next();
   };
+  // KANAF-ORD-0001 R15-24: وسم للقراءة فقط — tools/rbac-matrix.mjs يولّد
+  // مصفوفة المسارات من مكدس Express نفسه لا من نص الكود.
+  mw.kanafPermissions = [permission];
+  return mw;
 }
 
 /** يكفي امتلاك واحدة من عدة صلاحيات — لمسار يخدم غرضين. */
 export function requireAnyPermission(...permissions) {
-  return (req, res, next) => {
+  const mw = (req, res, next) => {
     if (!canAny(req.admin?.role, permissions)) {
       return res.status(403).json({ error: "insufficient_permission", requiredAny: permissions });
     }
     next();
   };
+  mw.kanafAnyPermissions = permissions;
+  return mw;
 }
 
 /* ------------------------------------------------------------
