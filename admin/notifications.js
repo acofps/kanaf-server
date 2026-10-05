@@ -409,7 +409,8 @@ adminNotificationsRouter.get("/broadcasts", requireAdminAuth, requirePermission(
   }
 });
 
-adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requirePermission("notifications:create"), async (req, res) => {
+/* هذا المسار ينشئ الحملة ويرسلها فوراً، فيحتاج صلاحية الإرسال أيضاً كما في sendNow (B-08). */
+adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requirePermission("notifications:create"), requirePermission("notifications:send"), async (req, res) => {
   const { subject, message, audience } = req.body || {};
   if (!subject?.trim() || !message?.trim()) {
     return res.status(400).json({ error: "subject_message_and_valid_audience_required" });

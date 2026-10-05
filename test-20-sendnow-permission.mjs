@@ -54,6 +54,10 @@ try {
     const draftId = r.body.id;
     r = await call("POST", `/admin/notifications/${draftId}/send`);
     ok("P5 sending that draft through the send route is refused too (403)", r.status === 403);
+    const c0 = await count(`SELECT count(*) n FROM notification_campaigns`), i0 = await count(`SELECT count(*) n FROM user_notifications WHERE user_id = $1`, [u.id]);
+    r = await call("POST", "/admin/broadcasts", { subject: "بث", message: "نص", audience: "all" });
+    ok("P6 the legacy POST /admin/broadcasts (create + immediate send) is refused without send (403), nothing created or delivered", r.status === 403 && r.body.required === SEND
+      && await count(`SELECT count(*) n FROM notification_campaigns`) === c0 && await count(`SELECT count(*) n FROM user_notifications WHERE user_id = $1`, [u.id]) === i0, JSON.stringify(r.body));
   } finally { ROLE_PERMISSIONS.admin.add(SEND); }
 } catch (e) { R.push(["!! stopped: " + String(e.stack || e).slice(0, 300), false]); }
 
