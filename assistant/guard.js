@@ -18,6 +18,9 @@ import { getUserSubscription } from "../billing/subscription.js";
         • طلب واحد قيد التنفيذ لكل مستخدم (409).
         • سقف طلبات لكل مستخدم في نافذة 15 دقيقة (429).
       القيم من متغيرات البيئة، والافتراضي اقتراح قابل للمراجعة.
+      والسقوف واسعة عمداً: نسخة التطبيق المنشورة ترسل سياقاً (آخر يومية
+      + كل نتائج الاستبيانات) ولا تقصّ تاريخ المحادثة، فسقف ضيق كان
+      سيكسر سند لمستخدم قديم قبل نشر التطبيق الجديد الذي يقصّ.
       حدّها الصادق: ذاكرة نسخة خادم واحدة.
 
    3) شكل المحادثة (للمحادثة وحدها): أدوار user/assistant فقط، نص فقط،
@@ -29,9 +32,9 @@ const WINDOW_MS = 15 * 60 * 1000;
 export const LIMITS = {
   chatPerWindow: Number(process.env.CHAT_MAX_PER_15MIN || 40),
   planPerWindow: Number(process.env.PLAN_MAX_PER_15MIN || 6),
-  maxMessages: Number(process.env.CHAT_MAX_MESSAGES || 40),
-  maxMessageChars: Number(process.env.CHAT_MAX_MESSAGE_CHARS || 4000),
-  maxTotalChars: Number(process.env.CHAT_MAX_TOTAL_CHARS || 24000),
+  maxMessages: Number(process.env.CHAT_MAX_MESSAGES || 80),
+  maxMessageChars: Number(process.env.CHAT_MAX_MESSAGE_CHARS || 8000),
+  maxTotalChars: Number(process.env.CHAT_MAX_TOTAL_CHARS || 32000),
 };
 
 export const ASSISTANT_POLICIES = ["all_verified", "plus_only"];
