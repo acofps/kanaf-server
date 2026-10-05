@@ -11,6 +11,7 @@ import {
 } from "./middleware.js";
 import { permissionsFor, ROLE_LABEL } from "./permissions.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
+import { withDocumentSlot } from "../invoicing/slot.js";
 import { executeRefund } from "../payments/refund.js";
 import { billingRouter } from "./billing.js";
 import { entitledSql, effectiveStatusSql } from "../billing/subscription.js";
@@ -1375,7 +1376,8 @@ adminRouter.post(
   async (req, res) => {
     const reason = String(req.body?.reason || "").trim() || "إعادة إصدار وثيقة فاتورة مدفوعة بلا رقم ضريبي";
     try {
-      const result = await withTransaction(async (client) => {
+      // X09: البوابة قبل المعاملة — المنتظر لا يمسك اتصالاً من المجمّع
+      const result = await withDocumentSlot(() => withTransaction(async (client) => {
         // يُقفل الصف أولاً — نفس إصلاح تكرار تسليم الـwebhook،
         // مطبَّقاً هنا لأن مسؤولين اثنين (أو واحداً يضغط مرتين) قد
         // يمرّان معاً من فحص «لا رقم فاتورة بعد» قبل أن تصل كتابة
@@ -1417,7 +1419,7 @@ adminRouter.post(
         );
         if (!generated) return { httpStatus: 422, body: { error: "tax_settings_not_configured" } };
         return { httpStatus: 200, body: generated, userId: invoice.user_id };
-      });
+      }));
 
       if (result.httpStatus === 200) {
         await logAdminAction({

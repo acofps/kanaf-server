@@ -1,6 +1,7 @@
 import express from "express";
 import crypto from "node:crypto";
 import { query } from "../db/pool.js";
+import { documentSlotStats } from "../invoicing/slot.js";
 import { sweepDueCampaigns } from "../notifications/scheduler.js";
 import { sweepDailyReminders } from "../notifications/reminders.js";
 
@@ -108,7 +109,7 @@ internalRouter.get("/ready", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   try {
     await query("SELECT 1");
-    res.json({ ok: true, db: "ok", sweep: { lastSuccessAt: state.lastSuccessAt, lastFailureAt: state.lastFailureAt }, version: process.env.RENDER_GIT_COMMIT?.slice(0, 7) || null });
+    res.json({ ok: true, db: "ok", sweep: { lastSuccessAt: state.lastSuccessAt, lastFailureAt: state.lastFailureAt }, documents: documentSlotStats(), version: process.env.RENDER_GIT_COMMIT?.slice(0, 7) || null });
   } catch {
     res.status(503).json({ ok: false, db: "unreachable" });
   }

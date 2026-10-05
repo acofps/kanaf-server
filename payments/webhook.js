@@ -1,6 +1,7 @@
 import { withTransaction } from "../db/pool.js";
 import { isGenuineWebhook, HANDLED_WEBHOOK_EVENTS } from "./moyasar.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
+import { withDocumentSlot } from "../invoicing/slot.js";
 import { recordRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "./refund.js";
 import { activateOrExtendSubscription, markPastDueIfEntitled } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
@@ -385,7 +386,8 @@ async function handlePaymentVoided(client, providerPayment) {
 export async function issueInvoiceDocument(invoiceId) {
   if (!invoiceId) return null;
   try {
-    return await withTransaction(async (client) => {
+    // X09: البوابة قبل المعاملة — المنتظر لا يمسك اتصالاً من المجمّع
+    return await withDocumentSlot(() => withTransaction(async (client) => {
       const { rows } = await client.query(
         `SELECT i.id, i.user_id, i.plan_id, i.amount_sar, i.zatca_invoice_number,
                 u.name AS user_name, u.email AS user_email,
@@ -420,7 +422,7 @@ export async function issueInvoiceDocument(invoiceId) {
       }, client);
 
       return generated?.invoiceNumber || null;
-    });
+    }));
   } catch (err) {
     console.error(
       `[invoice] تعذّر إصدار الفاتورة الضريبية للفاتورة ${invoiceId}. ` +

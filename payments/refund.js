@@ -1,6 +1,7 @@
 import { withTransaction } from "../db/pool.js";
 import { refundPayment } from "./moyasar.js";
 import { generateAndStoreCreditNote } from "../invoicing/generate.js";
+import { withDocumentSlot } from "../invoicing/slot.js";
 import { getBillingSettings } from "../billing/config.js";
 
 /* ============================================================
@@ -185,7 +186,8 @@ export async function recordRefund(client, {
 export async function issueCreditNoteDocument(refundId) {
   if (!refundId) return null;
   try {
-    return await withTransaction(async (client) => {
+    // X09: البوابة قبل المعاملة — المنتظر لا يمسك اتصالاً من المجمّع
+    return await withDocumentSlot(() => withTransaction(async (client) => {
       const { rows } = await client.query(
         `SELECT r.id, r.user_id, r.invoice_id, r.amount, r.reason, r.provider_refund_id,
                 r.credit_note_id, i.plan_id, u.name AS user_name, u.email AS user_email
@@ -221,7 +223,7 @@ export async function issueCreditNoteDocument(refundId) {
         );
       }
       return creditNote?.creditNoteNumber || null;
-    });
+    }));
   } catch (err) {
     console.error(
       `[refund] تعذّر إصدار الإشعار الدائن للاسترداد ${refundId}. ` +
