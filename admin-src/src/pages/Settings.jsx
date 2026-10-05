@@ -335,7 +335,8 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
      المرحلة 6، والشاشة كانت ترفض الفراغ فيستحيل المسح منها. الفراغ هنا
      = مسح صريح يُرسل null؛ الزر يختفي في التطبيق حتى لو بقي المفتاح
      مرفوعاً (الخادم يقرّر ذلك). */
-  const nullable = setting.key === "whatsapp_number";
+  // التذييل التسويقي اختياري: مسحه = بلا تذييل؛ رابط إلغاء الاشتراك يُلحق بكل رسالة بث مستقلاً عنه (B-11)
+  const nullable = setting.key === "whatsapp_number" || setting.key === "marketing_email_footer";
   const save = async (forceClear = false) => {
     if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     const clearing = nullable && (forceClear || !String(value).trim());
@@ -385,14 +386,16 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
           </Field>
           {nullable && (
             <p className="text-[11px] leading-5" style={{ color: C.textFaint }}>
-              اترك الحقل فارغاً أو اضغط «مسح الرقم» لإزالته. بلا رقم صالح لا يظهر زر واتساب في التطبيق حتى لو كان مفتاح الإظهار مفعّلاً — فلا رابط مكسور.
+              {setting.key === "whatsapp_number"
+                ? "اترك الحقل فارغاً أو اضغط «مسح الرقم» لإزالته. بلا رقم صالح لا يظهر زر واتساب في التطبيق حتى لو كان مفتاح الإظهار مفعّلاً — فلا رابط مكسور."
+                : "اترك الحقل فارغاً أو اضغط «مسح التذييل» لتُرسل رسائل البث بلا تذييل. رابط إلغاء الاشتراك يُضاف لكل رسالة بث دائماً ولا يتأثر."}
             </p>
           )}
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div className="flex gap-2">
             <Button onClick={() => save(false)} busy={busy}>حفظ</Button>
             {nullable && setting.value !== null && setting.value !== "" && (
-              <Button variant="warn" onClick={() => save(true)} disabled={busy}>مسح الرقم</Button>
+              <Button variant="warn" onClick={() => save(true)} disabled={busy}>{setting.key === "whatsapp_number" ? "مسح الرقم" : "مسح التذييل"}</Button>
             )}
             <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
           </div>

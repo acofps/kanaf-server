@@ -53,6 +53,19 @@ try {
   await put("marketing_email_footer", "بلا");
   ok("F2 footer is not added to verification/reset mail", !sent.filter((m) => /كود/.test(m)).some((m) => m.includes(FOOT)));
 
+  /* KANAF-ORD-0002 B-11 (F-EXTRA-FOOTER-CLEAR): مسح التذييل الاختياري ممكن، والإلزامي يبقى */
+  r = await put("marketing_email_footer", FOOT);
+  r = await put("marketing_email_footer", "");
+  const { rows: [fv] } = await query(`SELECT value FROM app_settings WHERE key = 'marketing_email_footer'`);
+  ok("F3 an empty footer is accepted (200) and stored as no footer (null)", r.status === 200 && fv.value === null, `${r.status} ${JSON.stringify(fv)}`);
+  const uF = await mkUser("g");
+  await call("POST", "/admin/notifications", { cookie, body: { title: "حملة بلا تذييل", body: "نص بلا تذييل", audience: "selected_users", audienceFilter: { userIds: [uF.id] }, channels: ["email"], sendNow: true } });
+  await new Promise((x) => setTimeout(x, 500));
+  const mail3 = sent.find((m) => m.includes(uF.email));
+  ok("F4 the campaign e-mail has no footer but still carries the unsubscribe link", !!mail3 && !mail3.includes(FOOT) && /api\/unsubscribe\?token=/.test(mail3.replace(/=\r?\n/g, "")), mail3 ? mail3.slice(0, 80) : "no mail");
+  r = await put("app_public_name", "");
+  ok("F5 other display settings still refuse an empty value (400 value_cannot_be_empty)", r.status === 400 && r.body.error === "value_cannot_be_empty");
+
   /* daily_reminder_time */
   r = await put("daily_reminder_time", "07:30");
   ok("D0 default time saved", r.status === 200 && r.body.setting?.wired === true);

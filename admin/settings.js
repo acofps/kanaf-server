@@ -446,6 +446,10 @@ adminSettingsRouter.put(
       }
       // النص الفارغ ليس قيمة صالحة لإعداد معروض للمستخدم — يترك
       // شاشة فيها فراغ بلا أن يقول أحد إن الإعداد ناقص.
+      /* استثناء صريح (KANAF-ORD-0002 B-11): تذييل البث التسويقي اختياري — الفارغ = بلا تذييل
+         (كما يقول سجل الإعدادات أعلاه). رابط إلغاء الاشتراك لا يمر من هنا: deliverEmail يلحقه
+         دائماً مستقلاً عن التذييل، فمسح التذييل لا يمس الالتزام. */
+      if (key === "marketing_email_footer" && typeof value === "string" && !value.trim()) value = null;
       if (typeof value === "string" && !value.trim()) throw httpError(400, "value_cannot_be_empty");
       // حدّ طول معقول: هذه إعدادات عرض لا مقالات.
       if (typeof value === "string" && value.length > 500) throw httpError(400, "value_too_long");
