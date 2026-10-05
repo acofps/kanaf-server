@@ -318,9 +318,14 @@ userDataRouter.post("/journeys", requireVerifiedUser, async (req, res) => {
                            ELSE user_journey_enrollments.status END,
              client_state = COALESCE($6::jsonb, user_journey_enrollments.client_state),
              updated_at = now()
+         /* رحلة أنهاها المستخدم (abandoned) لا يُعاد تسجيلها بالكتابة فوق حالتها
+            (KANAF-ORD-0002 B-03): الصف واحد لكل رحلة، و«البدء من جديد» بلا معنى
+            محدد في الخادم (هل تُمسح أيامها؟) — قرار مالك، لا يُخترع هنا. */
+         WHERE user_journey_enrollments.status <> 'abandoned'
        RETURNING id, journey_key, status, total_days, started_at, client_state`,
       [req.userId, journeyKey, journeyType, contentVersion, totalDays, JSON.stringify(clientState || {})]
     );
+    if (!rows[0]) return res.status(409).json({ error: "journey_stopped" });
     res.status(201).json(rows[0]);
   } catch (err) { fail(res, err, "journeys"); }
 });
@@ -411,13 +416,23 @@ userDataRouter.post("/journeys/:key/status", requireVerifiedUser, async (req, re
   const status = req.body?.status;
   if (!["active", "paused", "abandoned"].includes(status)) return res.status(400).json({ error: "invalid_status" });
   try {
+    /* الانتقالات المسموحة تطابق ENROLLMENT_TRANSITIONS في التطبيق (B-03):
+       نشطة ↔ موقوفة، ونشطة/موقوفة → منتهية. تكرار نفس الحالة لا يغيّر شيئاً
+       (إعادة طلب بعد انقطاع)، ولا خروج من «منتهية» أو «مكتملة». */
+    const FROM = { paused: ["active", "paused"], active: ["paused", "active"], abandoned: ["active", "paused", "abandoned"] };
     const { rows } = await query(
-      `UPDATE user_journey_enrollments SET status = $3, updated_at = now()
-       WHERE user_id = $1 AND journey_key = $2 AND status <> 'completed'
+      `UPDATE user_journey_enrollments
+          SET status = $3, updated_at = CASE WHEN status = $3 THEN updated_at ELSE now() END
+       WHERE user_id = $1 AND journey_key = $2 AND status = ANY($4::text[])
        RETURNING journey_key, status`,
-      [req.userId, req.params.key, status]
+      [req.userId, req.params.key, status, FROM[status]]
     );
-    if (!rows[0]) return res.status(404).json({ error: "not_found_or_completed" });
+    if (!rows[0]) {
+      const { rows: cur } = await query(
+        `SELECT status FROM user_journey_enrollments WHERE user_id = $1 AND journey_key = $2`, [req.userId, req.params.key]);
+      if (cur[0]) return res.status(409).json({ error: "invalid_transition", from: cur[0].status, to: status });
+      return res.status(404).json({ error: "not_found_or_completed" });
+    }
     res.json(rows[0]);
   } catch (err) { fail(res, err, "journeys/status"); }
 });
