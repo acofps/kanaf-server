@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Send, Ban, Eye, Plus, RefreshCw, Clock, AlertTriangle } from "lucide-react";
 import { api } from "../api.js";
+import { can } from "../theme.js";
 import {
   C, AUDIENCE_LABEL, CHANNEL_LABEL, CAMPAIGN_STATUS, DELIVERY_STATUS,
   fmtDateTime, toIsoWithOffset,
@@ -30,7 +31,7 @@ const CHANNELS = ["in_app", "email", "push"];
 const AUDIENCES = ["all", "active_subscribers", "trial_or_free", "account_status", "selected_users"];
 const ACCOUNT_STATUSES = ["active", "suspended", "pending_verification"];
 
-export default function Notifications({ toast }) {
+export default function Notifications({ me, toast }) {
   const [status, setStatus] = useState("");
   const [channel, setChannel] = useState("");
   const [search, setSearch] = useState("");
@@ -52,11 +53,15 @@ export default function Notifications({ toast }) {
 
   const reloadAll = () => { list.reload(); sched.reload(); };
 
-  const doSend = (c) =>
+  const doSend = (c, retry = false) =>
     setReason({
-      title: `إرسال «${c.title}»`,
-      description: "الإرسال لا يمكن التراجع عنه. يُسجَّل باسمك في سجل التدقيق.",
-      confirmLabel: "إرسال الآن",
+      title: retry ? `إعادة محاولة الفاشلة في «${c.title}»` : `إرسال «${c.title}»`,
+      /* B-11: الخادم يعيد محاولة صفوف التسليم الفاشلة وحدها لنفس الجمهور الأصلي؛ الناجح لا يُعاد،
+         ومن ألغى البريد التسويقي بعد الإرسال الأول يُتجاوز في البريد. */
+      description: retry
+        ? "تُعاد محاولة التسليمات الفاشلة فقط، لنفس المستلمين الأصليين — الرسائل الناجحة لا تُرسل مرة ثانية، ومن ألغى البريد التسويقي يُتجاوز. يُسجَّل باسمك في سجل التدقيق."
+        : "الإرسال لا يمكن التراجع عنه. يُسجَّل باسمك في سجل التدقيق.",
+      confirmLabel: retry ? "إعادة المحاولة" : "إرسال الآن",
       run: async (r) => {
         const res = await api.sendCampaign(c.id, r);
         /* skipped في الرد رقم (عدد المتجاوَزين) أو true (الحملة نفسها لم
@@ -134,6 +139,7 @@ export default function Notifications({ toast }) {
             {campaigns.map((c) => {
               const st = CAMPAIGN_STATUS[c.status] || { label: c.status, color: "textMuted" };
               const cancellable = c.status === "draft" || c.status === "scheduled";
+              const retryable = (c.status === "failed" || c.status === "partially_failed") && can(me, "notifications:send");
               return (
                 <tr key={c.id}>
                   <Td>
@@ -177,6 +183,11 @@ export default function Notifications({ toast }) {
                       <Button size="sm" variant="ghost" onClick={() => setDetail(c)}>
                         <Eye size={12} /> التفاصيل
                       </Button>
+                      {retryable && (
+                        <Button size="sm" variant="soft" onClick={() => doSend(c, true)}>
+                          <RefreshCw size={12} /> إعادة محاولة الفاشلة
+                        </Button>
+                      )}
                       {cancellable && (
                         <>
                           <Button size="sm" variant="soft" onClick={() => doSend(c)}>

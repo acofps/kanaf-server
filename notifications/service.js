@@ -238,7 +238,9 @@ export async function dispatchCampaign(campaignId, { trigger = "manual", onClaim
          WHERE id = $1`,
         [campaignId]
       );
-      return { campaign: c };
+      /* إعادة محاولة حملة فاشلة (KANAF-ORD-0002 B-11): الجمهور هو صفوف التسليم الموجودة
+         وحدها — لا يُعاد حساب الجمهور فيُضاف من صار يطابق الفلتر بعد الإرسال الأول. */
+      return { campaign: c, retryOnly: c.status === "failed" || c.status === "partially_failed" };
     });
 
     if (claim.alreadyHandled) return { skipped: true, reason: `status_${claim.status}` };
@@ -257,8 +259,8 @@ export async function dispatchCampaign(campaignId, { trigger = "manual", onClaim
     // صفوف التسليم queued — ON CONFLICT DO NOTHING يجعل إعادة
     // التشغيل آمنة: ما أُنشئ سابقاً لا يُنشأ ثانية.
     /* إدراج دفعة واحدة بدل عبارة لكل (مستخدم × قناة) — R15-13. القيد
-       الفريد نفسه يمنع التكرار عند الاستئناف. */
-    if (recipients.length && channels.length) {
+       الفريد نفسه يمنع التكرار عند الاستئناف. في إعادة محاولة الفاشلة لا إدراج. */
+    if (!claim.retryOnly && recipients.length && channels.length) {
       await query(
         `INSERT INTO notification_deliveries (campaign_id, user_id, channel)
          SELECT $1, u, ch FROM unnest($2::uuid[]) u CROSS JOIN unnest($3::text[]) ch
@@ -267,10 +269,12 @@ export async function dispatchCampaign(campaignId, { trigger = "manual", onClaim
       );
     }
 
-    await query(
-      `UPDATE notification_campaigns SET recipient_count = $2, updated_at = now() WHERE id = $1`,
-      [campaignId, recipients.length]
-    );
+    if (!claim.retryOnly) {
+      await query(
+        `UPDATE notification_campaigns SET recipient_count = $2, updated_at = now() WHERE id = $1`,
+        [campaignId, recipients.length]
+      );
+    }
 
     // 2) الإرسال — خارج أي معاملة
     if (typeof onClaimed === "function") {
