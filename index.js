@@ -29,6 +29,7 @@ import { adminSettingsRouter, getAppSettings } from "./admin/settings.js";
 import { sweepMiddleware } from "./notifications/scheduler.js";
 import { requireVerifiedUser } from "./auth/middleware.js";
 import { userAccountRouter } from "./userdata/account.js";
+import { assistantGate } from "./assistant/guard.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -330,10 +331,35 @@ function normalizeContent(c) {
   if (c && typeof c === "object" && typeof c.text === "string") return c.text;
   return "";
 }
+/* ⚠️ تطبيع الإملاء العربي — مسار أمان، لا تجميل (KANAF-ORD-0001 X08).
+   المطابقة كانت حرفية: «ابي اموت» في القائمة بلا همزة، فالصيغة الشائعة
+   «أبي أموت» **لا تُكتشف**، ومثلها «أذي نفسي» و«انتحاري» بتاء أو
+   تشكيل. التطبيع يُطبَّق على النص وعلى العبارات معاً، فلا عبارة جديدة
+   تُضاف ولا معيار يتغيّر: العبارات العشرون نفسها تطابق صيغها الإملائية.
+   (همزات الألف → ا، ى → ي، ة → ه، ؤ → و، ئ → ي، حذف التشكيل والتطويل
+   وتوحيد المسافات.) */
+function normalizeArabic(s) {
+  return s
+    .toLowerCase()
+    .replace(/[ً-ٰٟـ]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/[’'`]/g, "'")
+    .replace(/\s+/g, " ");
+}
+const CRISIS_PATTERNS_NORMALIZED = CRISIS_PATTERNS.map(normalizeArabic);
+/* ومقارنة ثانية بلا مسافات: «ما في داعي أعيش» = «مافي داعي أعيش».
+   الخطأ هنا في اتجاه الأمان (إظهار لوحة الأزمة لا إخفاؤها). وهذا لا
+   يجعل القائمة تغطية لغوية كاملة — انظر سجل X08. */
+const CRISIS_PATTERNS_COMPACT = CRISIS_PATTERNS_NORMALIZED.map((p) => p.replace(/ /g, ""));
 function containsCrisisSignal(text = "") {
-  const norm = normalizeContent(text).toLowerCase();
-  if (!norm) return false;
-  return CRISIS_PATTERNS.some((p) => norm.includes(p.toLowerCase()));
+  const norm = normalizeArabic(normalizeContent(text));
+  if (!norm.trim()) return false;
+  const compact = norm.replace(/ /g, "");
+  return CRISIS_PATTERNS_NORMALIZED.some((p) => norm.includes(p)) || CRISIS_PATTERNS_COMPACT.some((p) => compact.includes(p));
 }
 
 const CHAT_SYSTEM_PROMPT = `أنت مساعد تثقيفي داعم داخل تطبيق للصحة النفسية اسمه Kanaf، اسمك "رفيق". قواعدك صارمة ولا يجوز كسرها:
@@ -399,7 +425,7 @@ function crisisFirewall(req, res, next) {
    والتعليق على requireVerifiedUser نفسه يشترطه لما يصرف مالاً. بدونه
    يظل حساب معلّق أو طلب حذفه يستهلك النموذج حتى ينتهي رمز وصوله
    (15 دقيقة). جدار الأمان قبله كما كان — بلا مصادقة. KANAF-ORD-0001 R15-02/X08 */
-app.post("/api/chat", crisisFirewall, requireVerifiedUser, async (req, res) => {
+app.post("/api/chat", crisisFirewall, requireVerifiedUser, assistantGate("chat"), async (req, res) => {
   try {
     const { messages } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -545,7 +571,7 @@ function normalizePlan(obj) {
   return { summary, focus_areas: focusAreas, specialist_note: specialistNote };
 }
 
-app.post("/api/plan", crisisFirewall, requireVerifiedUser, async (req, res) => {
+app.post("/api/plan", crisisFirewall, requireVerifiedUser, assistantGate("plan"), async (req, res) => {
   const dataNote = req.body?.dataNote;
   if (typeof dataNote !== "string" || !dataNote.trim()) {
     return res.status(400).json({ error: "dataNote is required" });

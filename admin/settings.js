@@ -206,6 +206,13 @@ export const SETTINGS_REGISTRY = [
   },
 
   {
+    key: "assistant_access_policy", label: "من يصل إلى سند والخطة الأسبوعية",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["assistant/guard.js (/api/chat و /api/plan)"],
+    note: "all_verified = أي حساب موثّق (السلوك الحالي، الافتراضي). plus_only = مشترك كنف+ مستحق فقط؛ غيره يأخذ 402. مسار الأمان العام لا يمر بهذا الإعداد إطلاقاً. اختيار القيمة قرار تجاري للمالك (D-02 في KANAF-ORD-0001) — وتحذير موثق: ربط التجربة بتاريخ التسجيل ينزع سند فجأة ممن تجاوز 14 يوماً.",
+  },
+
+  {
     key: "admin_session_minutes", label: "عمر جلسة الإدارة (عرض فقط)",
     source: "app_settings", editPerm: "app_settings:edit", wired: false,
     readBy: [],
@@ -231,6 +238,9 @@ const REGISTRY_BY_KEY = Object.fromEntries(SETTINGS_REGISTRY.map((s) => [s.key, 
    طوله ويُكتب.
    ------------------------------------------------------------ */
 const APP_SETTING_VALIDATORS = {
+  assistant_access_policy: (v) =>
+    v === "all_verified" || v === "plus_only" ? { value: v } : { error: "invalid_assistant_policy" },
+
   whatsapp_enabled: (v) =>
     typeof v === "boolean" ? { value: v } : { error: "value_must_be_boolean" },
 
