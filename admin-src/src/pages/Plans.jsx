@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { C, can } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Spinner, Empty,
-  ErrorBar, Modal, Table, Td, useAsync,
+  ErrorBar, Modal, ReasonPrompt, Table, Td, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -24,10 +24,15 @@ export default function Plans({ me, toast }) {
 
   const plans = state.data?.plans || [];
 
-  const toggle = async (p) => {
+  /* KANAF-ORD-0001: الخادم يشترط سبباً مكتوباً (reason_required) لتشغيل
+     الباقة أو إيقافها، والزر كان يرسل { active } وحده فيفشل دائماً بـ400.
+     السبب يُطلب الآن كبقية الإجراءات المسجّلة في سجل التدقيق. */
+  const [toggling, setToggling] = useState(null);
+  const toggle = (p) => setToggling(p);
+  const runToggle = async (reason) => {
+    const p = toggling;
     setBusyId(p.id);
-    try { await api.togglePlanActive(p.id, !p.is_active); state.reload(); }
-    catch (e) { toast(e?.arabic || "تعذّر التغيير."); }
+    try { await api.togglePlanActive(p.id, !p.is_active, reason); state.reload(); toast(p.is_active ? "أُوقفت الباقة." : "فُعّلت الباقة."); }
     finally { setBusyId(null); }
   };
 
@@ -74,6 +79,11 @@ export default function Plans({ me, toast }) {
             ))}
           </Table>
         )}
+      <ReasonPrompt open={!!toggling}
+        title={toggling?.is_active ? `إيقاف باقة «${toggling?.name}»` : `تفعيل باقة «${toggling?.name || ""}»`}
+        description={toggling?.is_active ? "الباقة الموقوفة تختفي من صفحة الاشتراك للمستخدمين الجدد. الاشتراكات القائمة والفواتير الصادرة لا تتأثر." : "الباقة المفعّلة تظهر في صفحة الاشتراك بسعرها الحالي."}
+        confirmLabel={toggling?.is_active ? "إيقاف" : "تفعيل"} danger={!!toggling?.is_active}
+        onConfirm={runToggle} onClose={() => setToggling(null)} />
       </Card>
 
 

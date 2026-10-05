@@ -147,7 +147,7 @@ export const api = {
   listPlans: () => req("/plans"),
   createPlan: (body) => req("/plans", { method: "POST", body }),
   updatePlan: (id, body) => req(`/plans/${id}`, { method: "PATCH", body }),
-  togglePlanActive: (id, active) => req(`/plans/${id}/toggle-active`, { method: "POST", body: { active } }),
+  togglePlanActive: (id, active, reason) => req(`/plans/${id}/toggle-active`, { method: "POST", body: { active, reason } }),
   getTaxSettings: () => req("/tax-settings"),
   saveTaxSettings: (body) => req("/tax-settings", { method: "PUT", body }),
 
