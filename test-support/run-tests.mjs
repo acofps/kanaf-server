@@ -27,6 +27,11 @@ const ENV_FILE = path.join(HERE, ".local", "test-env.json");
 if (!fs.existsSync(ENV_FILE)) { console.error("شغّل setup-isolated-db.mjs أولاً"); process.exit(2); }
 const cfg = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
 
+/* الإصدار الذي شُغّلت عليه الملفات، يُسجَّل في summary.json دليلاً لا استنتاجاً من الزمن.
+   dirty=true يعني تعديلات غير محفوظة في ملفات متتبَّعة وقت التشغيل — النتيجة لا تخص commit بعينه. */
+const git = (...a) => { const r = spawnSync("git", ["-C", ROOT, ...a], { encoding: "utf8" }); return r.status === 0 ? r.stdout.trim() : null; };
+const REVISION = { "kanaf-server": git("rev-parse", "--short", "HEAD"), dirty: (git("status", "--porcelain", "--untracked-files=no") ?? "x") !== "" };
+
 const TEMPLATE_FOR = { "test-migrate.mjs": "kanaf_tpl_schema" };
 const NEEDS_SUPERUSER = new Set(["test-billing-resilience.mjs", "test-12-refund-edges.mjs"]);
 
@@ -83,7 +88,7 @@ for (const file of files) {
   if (!process.env.KEEP_DB) await suQuery("postgres", `DROP DATABASE IF EXISTS ${slug} WITH (FORCE)`);
 }
 
-fs.writeFileSync(path.join(LOG_DIR, "summary.json"), JSON.stringify({ at: new Date().toISOString(), node: process.version, summary }, null, 2));
+fs.writeFileSync(path.join(LOG_DIR, "summary.json"), JSON.stringify({ at: new Date().toISOString(), node: process.version, revision: REVISION, summary }, null, 2));
 const total = summary.reduce((a, s) => ({ p: a.p + s.passes, f: a.f + s.fails, s: a.s + s.skips }), { p: 0, f: 0, s: 0 });
 console.log(`\nTOTAL pass=${total.p} fail=${total.f} skip=${total.s} files=${summary.length} nonzero-exit=${summary.filter((s) => s.exit !== 0).length}`);
 process.exit(summary.some((s) => s.exit !== 0) ? 1 : 0);
