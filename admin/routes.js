@@ -1115,6 +1115,40 @@ adminRouter.get("/plans", requireAdminAuth, requirePermission("plans:view"), asy
 });
 
 // POST /admin/plans  { planKey, name, priceSar, durationDays, features, displayOrder, reason }
+/* تحقق واحد لحقول الباقة القابلة للتحرير — KANAF-ORD-0002 B-09.
+   كان التعديل (PATCH) بلا تحقق للاسم والمدة والترتيب والمزايا: الاسم الفارغ
+   يُحفظ، ومدة أو ترتيب غير رقمي يصل Postgres فيرد 500. القواعد هي قواعد
+   الإنشاء القائمة نفسها؛ partial=true للتعديل (الحقل الغائب لا يُمس).
+   يرمي httpError(400) قبل أي كتابة. */
+function validatePlanFields(body, { partial }) {
+  const out = {};
+  const has = (k) => body[k] !== undefined;
+  if (!partial || has("name")) {
+    if (typeof body.name !== "string" || !body.name.trim()) throw httpError(400, "invalid_name");
+    out.name = body.name.trim();
+  }
+  if (!partial || has("priceSar")) {
+    const v = body.priceSar;
+    if (v === null || v === undefined || String(v).trim() === "" || !Number.isFinite(Number(v)) || Number(v) < 0) throw httpError(400, "invalid_price");
+    out.price = Number(v);
+  }
+  if (!partial || has("durationDays")) {
+    const d = Number(body.durationDays);
+    if (body.durationDays === null || String(body.durationDays).trim() === "" || !Number.isInteger(d) || d <= 0) throw httpError(400, "invalid_duration");
+    out.days = d;
+  }
+  if (has("features")) {
+    if (!Array.isArray(body.features) || !body.features.every((f) => typeof f === "string")) throw httpError(400, "invalid_features");
+    out.features = body.features;
+  }
+  if (has("displayOrder")) {
+    const o = Number(body.displayOrder);
+    if (body.displayOrder === null || String(body.displayOrder).trim() === "" || !Number.isInteger(o)) throw httpError(400, "invalid_display_order");
+    out.order = o;
+  }
+  return out;
+}
+
 adminRouter.post("/plans", requireAdminAuth, requirePermission("plans:edit"), async (req, res) => {
   const reason = String(req.body?.reason || "").trim();
   try {
@@ -1129,16 +1163,13 @@ adminRouter.post("/plans", requireAdminAuth, requirePermission("plans:edit"), as
       // Moyasar — يُحصر في مجموعة محارف آمنة متوقَّعة، لا نص حرّ.
       throw httpError(400, "planKey_must_be_lowercase_letters_numbers_underscores_only");
     }
-    const price = Number(priceSar);
-    if (!Number.isFinite(price) || price < 0) throw httpError(400, "invalid_price");
-    const days = Number(durationDays);
-    if (!Number.isInteger(days) || days <= 0) throw httpError(400, "invalid_duration");
+    const v = validatePlanFields(req.body || {}, { partial: false });
 
     const { rows } = await query(
       `INSERT INTO subscription_plans (plan_key, name, price_sar, duration_days, features, display_order, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, plan_key, name, price_sar, duration_days, features, is_active, display_order`,
-      [planKey, name, price, days, features || [], displayOrder || 0, req.admin.id]
+      [planKey, v.name, v.price, v.days, v.features || [], v.order ?? 0, req.admin.id]
     );
 
     await logAdminAction({
@@ -1167,10 +1198,8 @@ adminRouter.patch(
     const reason = String(req.body?.reason || "").trim();
     try {
       if (!reason) throw httpError(400, "reason_required");
-      const { name, priceSar, durationDays, features, displayOrder } = req.body || {};
-      if (priceSar !== undefined && (priceSar === null || String(priceSar).trim() === "" || !Number.isFinite(Number(priceSar)) || Number(priceSar) < 0)) {
-        throw httpError(400, "invalid_price");
-      }
+      const v = validatePlanFields(req.body || {}, { partial: true });
+      if (!["name", "price", "days", "features", "order"].some((k) => v[k] !== undefined)) throw httpError(400, "nothing_to_update");
 
       /* القيمة القديمة تُقرأ داخل نفس المعاملة وتحت قفل الصف.
          قراءتها في استعلام منفصل قبل التحديث تجعل السجل يقول قيمة
@@ -1195,11 +1224,11 @@ adminRouter.patch(
            WHERE id = $7
            RETURNING id, plan_key, name, price_sar, duration_days, features, is_active, display_order`,
           [
-            name ?? null,
-            priceSar === undefined ? null : Number(priceSar),
-            durationDays === undefined ? null : Number(durationDays),
-            features ?? null,
-            displayOrder === undefined ? null : Number(displayOrder),
+            v.name ?? null,
+            v.price ?? null,
+            v.days ?? null,
+            v.features ?? null,
+            v.order ?? null,
             req.admin.id, req.params.id,
           ]
         );
