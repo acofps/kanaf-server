@@ -5,6 +5,7 @@ import { requireVerifiedUser } from "../auth/middleware.js";
 import { getUserSubscription } from "../billing/subscription.js";
 import { assertContentAvailable } from "../content/catalog.js";
 import { saveSubscription, removeSubscription, getPublicKey } from "../notifications/push.js";
+import { isClientRef, onceByClientRef } from "./receipts.js";
 
 export const userDataRouter = express.Router();
 
@@ -59,6 +60,19 @@ async function assertCanStart(userId, contentType, contentKey) {
   if (subscriptionTier === "plus" && !(await hasPlusAccess(userId))) {
     throw Object.assign(new Error("subscription_required"), { status: 402 });
   }
+}
+
+/* clientRef اختياري (B-04): مفقود ← إدراج عادي؛ موجود وغير UUID ← 400. */
+function clientRefOf(req, res) {
+  const v = (req.body || {}).clientRef;
+  if (v === undefined || v === null) return { ok: true, ref: null };
+  if (!isClientRef(v)) { res.status(400).json({ error: "invalid_client_ref" }); return { ok: false }; }
+  return { ok: true, ref: v.toLowerCase() };
+}
+/* إعادة كتابة وصلت سابقاً تُرد 200 بنفس جسم الإنشاء، وإنشاء جديد 201. */
+function sendCreated(res, { row, replayed }) {
+  if (replayed) res.set("Idempotent-Replayed", "true");
+  return res.status(replayed ? 200 : 201).json(row);
 }
 
 function fail(res, err, where) {
@@ -246,14 +260,19 @@ userDataRouter.post("/screenings", requireVerifiedUser, async (req, res) => {
   if (!Number.isInteger(total) || !bandLabel) {
     return res.status(400).json({ error: "total_and_band_label_required" });
   }
+  const cr = clientRefOf(req, res); if (!cr.ok) return;
   try {
-    const { rows } = await query(
-      `INSERT INTO screenings (user_id, kind, total, band_label, answers)
-       VALUES ($1, $2, $3, $4, $5::jsonb)
-       RETURNING id, kind, total, band_label, created_at`,
-      [req.userId, kind, total, bandLabel, JSON.stringify(answers || {})]
-    );
-    res.status(201).json(rows[0]);
+    const out = await onceByClientRef(req.userId, cr.ref, "screening",
+      async (c) => (await c.query(
+        `INSERT INTO screenings (user_id, kind, total, band_label, answers)
+         VALUES ($1, $2, $3, $4, $5::jsonb)
+         RETURNING id, kind, total, band_label, created_at`,
+        [req.userId, kind, total, bandLabel, JSON.stringify(answers || {})]
+      )).rows[0],
+      async (c, id) => (await c.query(
+        `SELECT id, kind, total, band_label, created_at FROM screenings WHERE id = $1 AND user_id = $2`,
+        [id, req.userId])).rows[0]);
+    sendCreated(res, out);
   } catch (err) { fail(res, err, "screenings"); }
 });
 
@@ -412,15 +431,22 @@ userDataRouter.post("/journeys/:key/status", requireVerifiedUser, async (req, re
 userDataRouter.post("/notebooks", requireVerifiedUser, async (req, res) => {
   const { templateKey, templateVersion = "1.0.0" } = req.body || {};
   if (!templateKey) return res.status(400).json({ error: "template_key_required" });
+  const cr = clientRefOf(req, res); if (!cr.ok) return;
   try {
     await assertCanStart(req.userId, "notebook", templateKey);
-    const { rows } = await query(
-      `INSERT INTO user_notebook_entries (user_id, template_key, template_version)
-       VALUES ($1, $2, $3)
-       RETURNING id, template_key, status, revision, started_at`,
-      [req.userId, templateKey, templateVersion]
-    );
-    res.status(201).json(rows[0]);
+    const out = await onceByClientRef(req.userId, cr.ref, "notebook",
+      async (c) => (await c.query(
+        `INSERT INTO user_notebook_entries (user_id, template_key, template_version)
+         VALUES ($1, $2, $3)
+         RETURNING id, template_key, status, revision, started_at`,
+        [req.userId, templateKey, templateVersion]
+      )).rows[0],
+      async (c, id) => (await c.query(
+        `SELECT id, template_key, status, revision, started_at FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
+        [id, req.userId])).rows[0]);
+    /* الدفتر قد يُحذف بعد إنشائه؛ إعادة نفس المفتاح بعدها لا تعيد إنشاءه. */
+    if (!out.row) return res.status(410).json({ error: "already_deleted" });
+    sendCreated(res, out);
   } catch (err) { fail(res, err, "notebooks"); }
 });
 
@@ -499,15 +525,21 @@ userDataRouter.post("/cbt-sessions", requireVerifiedUser, async (req, res) => {
   if (!["in_progress", "completed", "abandoned"].includes(status)) {
     return res.status(400).json({ error: "invalid_status" });
   }
+  const cr = clientRefOf(req, res); if (!cr.ok) return;
   try {
     await assertCanStart(req.userId, "cbt_tool", toolId);
-    const { rows } = await query(
-      `INSERT INTO user_cbt_sessions (user_id, tool_id, status, payload, completed_at)
-       VALUES ($1, $2, $3, $4::jsonb, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
-       RETURNING id, tool_id, status, started_at, completed_at`,
-      [req.userId, toolId, status, JSON.stringify(payload || {})]
-    );
-    res.status(201).json(rows[0]);
+    const out = await onceByClientRef(req.userId, cr.ref, "cbt_session",
+      async (c) => (await c.query(
+        `INSERT INTO user_cbt_sessions (user_id, tool_id, status, payload, completed_at)
+         VALUES ($1, $2, $3, $4::jsonb, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
+         RETURNING id, tool_id, status, started_at, completed_at`,
+        [req.userId, toolId, status, JSON.stringify(payload || {})]
+      )).rows[0],
+      async (c, id) => (await c.query(
+        `SELECT id, tool_id, status, started_at, completed_at FROM user_cbt_sessions WHERE id = $1 AND user_id = $2`,
+        [id, req.userId])).rows[0]);
+    if (!out.row) return res.status(410).json({ error: "already_deleted" });
+    sendCreated(res, out);
   } catch (err) { fail(res, err, "cbt-sessions"); }
 });
 
