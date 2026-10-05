@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync,
+  ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync, ValueDiff,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -351,7 +351,7 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
             </div>
           )}
 
-          {tab === "billing" && <Billing user={u} toast={toast} onChanged={() => { state.reload(); onChanged(); }} />}
+          {tab === "billing" && <Billing user={u} me={me} toast={toast} onChanged={() => { state.reload(); onChanged(); }} />}
           {tab === "sensitive" && <Sensitive id={id} />}
           {tab === "actions" && <Actions id={id} />}
         </>
@@ -451,14 +451,13 @@ function Actions({ id }) {
   if (state.error) return <ErrorBar error={state.error} />;
   if (!rows.length) return <Empty>لا إجراءات إدارية على هذا الحساب.</Empty>;
   return (
-    <Table head={["الإجراء", "من", "إلى", "السبب", "التاريخ"]}>
+    <Table head={["الإجراء", "قبل ← بعد", "السبب", "التاريخ"]}>
       {rows.map((a) => (
         <tr key={a.id}>
           <Td className="font-bold">{a.action}</Td>
-          <Td>{a.old_value || "—"}</Td>
-          <Td>{a.new_value || "—"}</Td>
+          <Td><ValueDiff oldValue={a.old_value} newValue={a.new_value} /></Td>
           <Td className="max-w-xs"><span style={{ color: C.textMuted }}>{a.reason || "—"}</span></Td>
-          <Td>{fmtDateTime(a.created_at)}</Td>
+          <Td dir="ltr">{fmtDateTime(a.created_at)}</Td>
         </tr>
       ))}
     </Table>
@@ -471,10 +470,18 @@ function Actions({ id }) {
    الإلغاء لا يحرّك مالاً والاسترداد يحرّكه — ولذلك زران منفصلان
    بنصّين مختلفين، لا زر واحد بخيار.
    ------------------------------------------------------------ */
-function Billing({ user, toast, onChanged }) {
+function Billing({ user, me, toast, onChanged }) {
   const [reason, setReason] = useState(null);
-  const [atPeriodEnd, setAtPeriodEnd] = useState(false);
+  const [atPeriodEnd, setAtPeriodEnd] = useState(true);
   const [amount, setAmount] = useState("");
+  /* KANAF-ORD-0001 R15-09: الزران كانا يظهران لكل من يرى الملف المالي،
+     والخادم يشترط subscriptions:cancel و payments:refund — فيرى المحاسب
+     زراً يردّ 403. والملف المالي الكامل (GET /admin/billing/users/:id/billing)
+     كان بلا شاشة. */
+  const canCancel = can(me, "subscriptions:cancel");
+  const canRefundIt = can(me, "payments:refund");
+  const full = useAsync(() => api.userBilling(user.id), [user.id]);
+  const t = full.data?.totals;
 
   const has = !!user.subscription_status;
 
@@ -483,10 +490,12 @@ function Billing({ user, toast, onChanged }) {
       <Row label="الحالة">{user.subscription_status || "لا يوجد اشتراك"}</Row>
       <Row label="الباقة">{user.subscription_plan}</Row>
       <Row label="ينتهي / يتجدد">{user.subscription_renews_at ? fmtDateTime(user.subscription_renews_at) : "—"}</Row>
+      {t && <Row label="إجمالي ما دفع / المسترد / الصافي"><span dir="ltr">{t.lifetimeGross.toFixed(2)} / {t.lifetimeRefunded.toFixed(2)} / {t.lifetimeNet.toFixed(2)} ر.س</span></Row>}
+      {full.data && <Row label="دفعات · فواتير · إشعارات دائنة">{full.data.payments.length} · {full.data.invoices.length} · {full.data.creditNotes.length}</Row>}
 
       {has && (
         <div className="mt-4 grid gap-3">
-          <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
+          {canCancel && <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
             <p className="text-xs font-bold mb-2" style={{ color: C.text }}>إلغاء الاشتراك</p>
             <p className="text-[11px] leading-6 mb-2" style={{ color: C.textFaint }}>
               لا يحرّك مالاً ولا يصدر إشعاراً دائناً.
@@ -505,9 +514,9 @@ function Billing({ user, toast, onChanged }) {
             })}>
               <CreditCard size={12} /> إلغاء
             </Button>
-          </div>
+          </div>}
 
-          <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
+          {canRefundIt && <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
             <p className="text-xs font-bold mb-2" style={{ color: C.text }}>استرداد مبلغ</p>
             <p className="text-[11px] leading-6 mb-2" style={{ color: C.textFaint }}>
               يحرّك مالاً فعلاً ويصدر إشعاراً دائناً بترقيم رسمي. اتركه فارغاً لاسترداد كامل.
@@ -527,7 +536,7 @@ function Billing({ user, toast, onChanged }) {
                 },
               })}>استرداد</Button>
             </div>
-          </div>
+          </div>}
         </div>
       )}
 

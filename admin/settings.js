@@ -1,5 +1,5 @@
 import express from "express";
-import { query } from "../db/pool.js";
+import { query, withTransaction } from "../db/pool.js";
 import {
   requireAdminAuth, requirePermission, requireReasonAndLog,
   logAdminAction, fail, httpError,
@@ -448,15 +448,20 @@ adminSettingsRouter.put(
       // حدّ طول معقول: هذه إعدادات عرض لا مقالات.
       if (typeof value === "string" && value.length > 500) throw httpError(400, "value_too_long");
 
-      const { rows: before } = await query(`SELECT value FROM app_settings WHERE key = $1`, [key]);
-      if (!before[0]) throw httpError(404, "unknown_setting");
-
-      const { rows } = await query(
-        `UPDATE app_settings SET value = $2::jsonb, updated_by = $3, updated_at = now()
-          WHERE key = $1
-          RETURNING key, value, category, description, updated_at`,
-        [key, JSON.stringify(value), req.admin.id]
-      );
+      /* القيمة «قبل» تُقرأ تحت قفل الصف في نفس معاملة التحديث
+         (KANAF-ORD-0001 R15-22): بدونها كان حفظان متزامنان يسجّلان
+         نفس القيمة القديمة، فيكذب سطر التدقيق على أحدهما. */
+      const { before, rows } = await withTransaction(async (client) => {
+        const { rows: b } = await client.query(`SELECT value FROM app_settings WHERE key = $1 FOR UPDATE`, [key]);
+        if (!b[0]) throw httpError(404, "unknown_setting");
+        const { rows: r } = await client.query(
+          `UPDATE app_settings SET value = $2::jsonb, updated_by = $3, updated_at = now()
+            WHERE key = $1
+            RETURNING key, value, category, description, updated_at`,
+          [key, JSON.stringify(value), req.admin.id]
+        );
+        return { before: b, rows: r };
+      });
 
       if (key === "admin_session_minutes") await refreshAdminSessionMinutes();
       await logAdminAction({

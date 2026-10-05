@@ -27,7 +27,15 @@ globalThis.fetch = async (url, opts = {}) => {
     }
     const m = /^\/payments\/([^/]+)(\/refund)?$/.exec(p);
     if (m) {
-      const pay = fakeMoyasar.payments.get(m[1]);
+      let pay = fakeMoyasar.payments.get(m[1]);
+      /* دفعات E2E تُحاكى بـwebhook من خارج العملية فلا يعرفها المزوّد الوهمي.
+         عند أول استرداد أو مطابقة تُنشأ له كدفعة مدفوعة (المبلغ من الطلب أو
+         KANAF_FAKE_PAYMENT_HALALAS). اختبار فقط — لا وجود له خارج هذا الملف. */
+      if (!pay && process.env.KANAF_FAKE_LAZY_PAYMENTS === "1") {
+        const amount = Number(process.env.KANAF_FAKE_PAYMENT_HALALAS || 2900);
+        pay = { id: m[1], status: "paid", amount, refunded: 0, currency: "SAR" };
+        fakeMoyasar.payments.set(m[1], pay);
+      }
       if (!pay) return json(404, { message: "not found" });
       if (m[2]) { const amt = body.amount ?? pay.amount - pay.refunded; pay.refunded += amt; pay.status = pay.refunded >= pay.amount ? "refunded" : "paid"; }
       return json(200, { ...pay, refunded_amount: pay.refunded });

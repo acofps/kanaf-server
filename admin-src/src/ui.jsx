@@ -216,9 +216,9 @@ export function Table({ head, children }) {
   );
 }
 
-export function Td({ children, className = "" }) {
+export function Td({ children, className = "", dir }) {
   return (
-    <td className={`text-xs py-3 px-2 align-middle ${className}`}
+    <td dir={dir} className={`text-xs py-3 px-2 align-middle ${className}`}
       style={{ color: C.text, borderBottom: `1px solid ${C.line}` }}>
       {children}
     </td>
@@ -256,4 +256,51 @@ export function useAsync(fn, deps = []) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce]);
   return { ...state, reload: () => setNonce((n) => n + 1) };
+}
+
+
+/* ------------------------------------------------------------
+   فرق القيم قبل/بعد — مشترك بين «سجل الإجراءات» وتبويب «الإجراءات»
+   في صفحة المستخدم. KANAF-ORD-0001 R15-22:
+   • حقول الطوابع (updated_at وما شابه) تتغيّر في كل حفظ فتظهر «تغييراً»
+     بلا معنى — تُخفى من العرض فقط وتبقى كاملة في التخزين والتصدير.
+   • القيمة كائن أو نص أو null — كانت صفحة المستخدم تعرضها مباشرة
+     كعنصر React فتنهار النافذة مع أول كائن.
+   • التواريخ والأرقام باتجاه LTR داخل واجهة RTL.
+   ------------------------------------------------------------ */
+const DIFF_NOISE = new Set(["updated_at", "updatedAt", "updated_by", "created_at", "last_used_at"]);
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+function showValue(v) {
+  if (v === undefined || v === null || v === "") return "—";
+  if (typeof v === "string" && ISO_RE.test(v)) {
+    try { return new Date(v).toLocaleString("ar-SA-u-ca-gregory-nu-latn", { dateStyle: "medium", timeStyle: "short" }); } catch { return v; }
+  }
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+function asObject(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") { try { const p = JSON.parse(v); return p && typeof p === "object" ? p : { value: v }; } catch { return { value: v }; } }
+  return typeof v === "object" ? v : { value: v };
+}
+export function ValueDiff({ oldValue, newValue }) {
+  const a0 = asObject(oldValue), b0 = asObject(newValue);
+  if (!a0 && !b0) return <span style={{ color: C.textFaint }}>—</span>;
+  const keys = [...new Set([...Object.keys(a0 || {}), ...Object.keys(b0 || {})])].filter((k) => !DIFF_NOISE.has(k));
+  if (!keys.length) return <span style={{ color: C.textFaint }}>—</span>;
+  return (
+    <div className="grid gap-1">
+      {keys.map((k) => {
+        const a = a0?.[k], b = b0?.[k];
+        const changed = JSON.stringify(a) !== JSON.stringify(b);
+        return (
+          <div key={k} className="text-[11px] flex items-center gap-1.5 flex-wrap">
+            <span style={{ color: C.textFaint }}>{k}:</span>
+            {a0 && <span dir="ltr" style={{ color: changed ? C.crisis : C.textMuted, textDecoration: changed && b0 ? "line-through" : "none" }}>{showValue(a)}</span>}
+            {changed && b0 && <span style={{ color: C.textFaint }}>←</span>}
+            {b0 && changed && <span dir="ltr" className="font-bold" style={{ color: C.green }}>{showValue(b)}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }

@@ -34,6 +34,19 @@ export class ApiError extends Error {
       title_cannot_be_empty: "العنوان لا يمكن أن يكون فارغاً.",
       already_resolved: "هذا الطلب حُسم مسبقاً.",
       cannot_self_approve: "لا يمكنك اعتماد طلبك بنفسك.",
+      refund_exceeds_available_amount: "المبلغ أكبر من المتبقّي القابل للاسترداد في هذه الدفعة.",
+      refund_already_recorded: "هذا الاسترداد مسجّل مسبقاً — لم يُكرَّر.",
+      already_fully_refunded: "هذه الدفعة مستردة بالكامل.",
+      payment_not_captured: "الدفعة غير محصّلة — لا شيء يُسترد.",
+      provider_refund_failed: "رفض المزوّد الاسترداد — لم يتغيّر شيء عندنا.",
+      refund_amount_must_be_positive: "مبلغ الاسترداد يجب أن يكون أكبر من صفر.",
+      refund_exceeds_captured_amount: "المبلغ أكبر من المحصَّل.",
+      no_provider_payment_id: "لا رقم معاملة لدى المزوّد لهذه الدفعة — لا يمكن مطابقتها.",
+      provider_status_not_actionable: "حالة الدفعة لدى المزوّد لا تستدعي تغييراً.",
+      replay_failed: "تعذّرت إعادة معالجة الحدث — التفاصيل في سجل الخادم.",
+      reconcile_failed: "تعذّرت المطابقة مع المزوّد — حاول لاحقاً.",
+      session_minutes_must_be_5_to_60: "عمر الجلسة عدد صحيح من 5 إلى 60 دقيقة.",
+      invalid_assistant_policy: "القيمة يجب أن تكون all_verified أو plus_only.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -164,6 +177,21 @@ export const api = {
   /* ---------- قبول الدعوة وضبط كلمة المرور — بلا مصادقة ---------- */
   validateSetupToken: (token) => req("/setup/validate", { params: { token } }),
   acceptSetup: (token, password) => req("/setup/accept", { method: "POST", body: { token, password } }),
+
+  /* ---------- المالية — /admin/billing/* — KANAF-ORD-0001 R15-09 ----------
+     كانت هذه المسارات مبنية ومختبرة في الخادم بلا شاشة. */
+  billingKpis: (params) => req("/billing/kpis", { params }),
+  billingSubscriptions: (params) => req("/billing/subscriptions", { params }),
+  billingPayments: (params) => req("/billing/payments", { params }),
+  billingRefunds: (params) => req("/billing/refunds", { params }),
+  refundPayment: (id, reason, amountSar) =>
+    req(`/billing/payments/${id}/refund`, { method: "POST", body: { reason, amountSar } }),
+  reconcilePayment: (id, reason) => req(`/billing/payments/${id}/reconcile`, { method: "POST", body: { reason } }),
+  webhookEvents: (params) => req("/billing/webhook-events", { params }),
+  webhookEvent: (id) => req(`/billing/webhook-events/${id}`),
+  replayWebhookEvent: (id, reason) => req(`/billing/webhook-events/${id}/replay`, { method: "POST", body: { reason } }),
+  billingIntegrity: () => req("/billing/integrity"),
+  userBilling: (id) => req(`/billing/users/${id}/billing`),
 
   /* ---------- الإعدادات ---------- */
   settingsOverview: () => req("/settings/overview"),

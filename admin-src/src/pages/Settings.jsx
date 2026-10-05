@@ -330,12 +330,18 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const save = async () => {
+  /* KANAF-ORD-0001 R15-21: رقم واتساب يُمسح. الخادم يقبل null لمسحه منذ
+     المرحلة 6، والشاشة كانت ترفض الفراغ فيستحيل المسح منها. الفراغ هنا
+     = مسح صريح يُرسل null؛ الزر يختفي في التطبيق حتى لو بقي المفتاح
+     مرفوعاً (الخادم يقرّر ذلك). */
+  const nullable = setting.key === "whatsapp_number";
+  const save = async (forceClear = false) => {
     if (!reason.trim()) { setErr("السبب مطلوب."); return; }
-    if (!isBool && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
+    const clearing = nullable && (forceClear || !String(value).trim());
+    if (!isBool && !clearing && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
     setBusy(true); setErr("");
     try {
-      const payload = isBool ? boolValue : (isNumber ? Number(value) : value);
+      const payload = clearing ? null : isBool ? boolValue : (isNumber ? Number(value) : value);
       await api.updateAppSetting(setting.key, payload, reason.trim());
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
@@ -376,9 +382,17 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
           <Field label="السبب" hint="يُحفظ في سجل التدقيق بالقيمة القديمة والجديدة.">
             <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
+          {nullable && (
+            <p className="text-[11px] leading-5" style={{ color: C.textFaint }}>
+              اترك الحقل فارغاً أو اضغط «مسح الرقم» لإزالته. بلا رقم صالح لا يظهر زر واتساب في التطبيق حتى لو كان مفتاح الإظهار مفعّلاً — فلا رابط مكسور.
+            </p>
+          )}
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div className="flex gap-2">
-            <Button onClick={save} busy={busy}>حفظ</Button>
+            <Button onClick={() => save(false)} busy={busy}>حفظ</Button>
+            {nullable && setting.value !== null && setting.value !== "" && (
+              <Button variant="warn" onClick={() => save(true)} disabled={busy}>مسح الرقم</Button>
+            )}
             <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
           </div>
         </div>

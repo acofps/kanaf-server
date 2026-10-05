@@ -988,7 +988,11 @@ function readPaging(req, { defaultSize = 50, maxSize = 200 } = {}) {
 
 /* بنّاء شرط سجل الإجراءات — يشاركه التصدير حرفياً، للسبب نفسه:
    ملف يقول غير ما تقوله الشاشة أسوأ من غياب الملف. */
-export function buildAuditFilter(reqQuery) {
+/* KANAF-ORD-0001 R15-22: حدود «من/إلى» يوم تقويمي بالمنطقة الزمنية
+   المحاسبية (billing_settings.reporting_timezone) كبقية التقارير — كانت
+   ::date بتوقيت جلسة القاعدة (UTC على Render)، فيسقط من يوم مختار ما
+   بين منتصف الليل والثالثة فجراً بتوقيت الرياض. */
+export function buildAuditFilter(reqQuery, tz = "Asia/Riyadh") {
   const where = [];
   const params = [];
   const p = (v) => `$${params.push(v)}`;
@@ -1004,8 +1008,9 @@ export function buildAuditFilter(reqQuery) {
   if (entity) where.push(`al.entity = ${p(entity)}`);
   if (entityId) where.push(`al.entity_id = ${p(entityId)}`);
   if (adminUserId && UUID_RE.test(adminUserId)) where.push(`al.admin_user_id = ${p(adminUserId)}`);
-  if (from) where.push(`al.created_at >= ${p(from)}::date`);
-  if (to) where.push(`al.created_at < (${p(to)}::date + interval '1 day')`);
+  const tzP = from || to ? p(tz) : null;
+  if (from) where.push(`al.created_at >= ((${p(from)}::date)::timestamp AT TIME ZONE ${tzP})`);
+  if (to) where.push(`al.created_at < (((${p(to)}::date + 1)::timestamp) AT TIME ZONE ${tzP})`);
 
   return {
     whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "",
@@ -1049,7 +1054,8 @@ adminRouter.get("/access-log", requireAdminAuth, requirePermission("audit_log:vi
 adminRouter.get("/audit-log", requireAdminAuth, requirePermission("audit_log:view_actions"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const { whereSql, params, next } = buildAuditFilter(req.query);
+    const { reportingTimezone } = await getBillingSettings();
+    const { whereSql, params, next } = buildAuditFilter(req.query, reportingTimezone);
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS n FROM admin_action_log al ${whereSql}`, params);
     const total = countRows[0].n;

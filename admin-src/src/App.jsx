@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History,
+  SlidersHorizontal, History, Wallet,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny } from "./theme.js";
@@ -16,6 +16,7 @@ import Content from "./pages/Content.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import Plans from "./pages/Plans.jsx";
 import Invoices from "./pages/Invoices.jsx";
+import Billing, { BILLING_PERMS } from "./pages/Billing.jsx";
 import BreakGlass from "./pages/BreakGlass.jsx";
 import AdminUsers from "./pages/AdminUsers.jsx";
 import AccessLog from "./pages/AccessLog.jsx";
@@ -48,6 +49,8 @@ const SECTIONS = [
   { key: "notifications",label: "الإشعارات",      icon: Bell,              perms: ["notifications:view"] },
   { key: "plans",        label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
   { key: "invoices",     label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
+  // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
+  { key: "billing",      label: "المالية",        icon: Wallet,            perms: BILLING_PERMS },
   { key: "break-glass",  label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
   { key: "settings",     label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
   { key: "admin-users",  label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
@@ -133,6 +136,7 @@ export default function App() {
     notifications: Notifications,
     plans: Plans,
     invoices: Invoices,
+    billing: Billing,
     "break-glass": BreakGlass,
     settings: SettingsPage,
     "admin-users": AdminUsers,

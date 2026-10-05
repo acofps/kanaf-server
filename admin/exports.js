@@ -429,7 +429,8 @@ adminExportsRouter.get("/exports/users.csv", requireAdminAuth, requirePermission
 adminExportsRouter.get("/exports/audit-log.csv", requireAdminAuth, requirePermission("exports:audit"), async (req, res) => {
   try {
     const settings = await getBillingSettings();
-    const { whereSql, params, filters } = buildAuditFilter(req.query);
+    const { reportingTimezone } = await getBillingSettings();
+    const { whereSql, params, filters } = buildAuditFilter(req.query, reportingTimezone);
 
     startCsv(res, `kanaf-audit-log-${stamp()}.csv`);
     writeMeta(res, { title: "سجل الإجراءات الإدارية", admin: req.admin, filters, timezone: settings.reportingTimezone });
