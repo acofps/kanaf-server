@@ -118,7 +118,8 @@ export const api = {
     req(`/users/${id}/subscription/refund`, { method: "POST", body: { reason, amountSar } }),
 
   /* ---------- الرسائل ---------- */
-  listMessages: () => req("/messages"),
+  // الصفحة تقول «أحدث 100 رسالة»؛ بلا pageSize كان الخادم يعيد 50 (افتراضيه)
+  listMessages: () => req("/messages?pageSize=100"),
   setMessageStatus: (id, status) => req(`/messages/${id}/status`, { method: "POST", body: { status } }),
 
   /* ---------- المحتوى ---------- */
