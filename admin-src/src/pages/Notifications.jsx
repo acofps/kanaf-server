@@ -59,9 +59,14 @@ export default function Notifications({ toast }) {
       confirmLabel: "إرسال الآن",
       run: async (r) => {
         const res = await api.sendCampaign(c.id, r);
+        /* skipped في الرد رقم (عدد المتجاوَزين) أو true (الحملة نفسها لم
+           تُنفَّذ) — كان يُقرأ بولياناً فيظهر «تُخطّيت: undefined». و202 =
+           الإرسال مستمر في الخلفية (KANAF-ORD-0001 R15-13). */
         toast(
-          res?.skipped
-            ? `تُخطّيت: ${res.reason}`
+          res?.accepted
+            ? `بدأ الإرسال${res.recipients != null ? ` لـ ${res.recipients} مستلم` : ""} ويستمر في الخلفية — تابع حالته في القائمة.`
+            : res?.skipped === true
+            ? `لم تُنفَّذ: ${res.reason}`
             : `أُرسل ${res.sent ?? 0} · فشل ${res.failed ?? 0} · متجاوَز ${res.skipped ?? 0}`
         );
         reloadAll();
@@ -82,7 +87,7 @@ export default function Notifications({ toast }) {
     setSweeping(true);
     try {
       const res = await api.runSweep();
-      toast(res?.skipped ? "المسح يعمل الآن في مكان آخر." : `نُفِّذت ${res.swept ?? 0} حملة مجدولة.`);
+      toast(res?.skipped === true ? "المسح يعمل الآن في مكان آخر." : `نُفِّذت ${res.swept ?? 0} حملة مجدولة.`);
       reloadAll();
     } catch (e) { toast(e?.arabic || "تعذّر المسح."); }
     finally { setSweeping(false); }
@@ -342,8 +347,11 @@ function Compose({ open, onClose, onDone }) {
       const res = await api.createCampaign(payload);
       const d = res.dispatch;
       onDone(
-        d && !d.skipped
+        d?.accepted
+          ? `بدأ الإرسال${d.recipients != null ? ` لـ ${d.recipients} مستلم` : ""} ويستمر في الخلفية — تابع حالته في القائمة.`
+          : d && d.skipped !== true
           ? `أُرسل ${d.sent ?? 0} · فشل ${d.failed ?? 0} · متجاوَز ${d.skipped ?? 0}`
+          : d && d.skipped === true ? `لم تُنفَّذ: ${d.reason}`
           : when === "schedule" ? "جُدولت الحملة." : "حُفظت كمسودة."
       );
       onClose();

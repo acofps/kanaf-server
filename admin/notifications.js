@@ -210,7 +210,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     });
 
     if (sendNow === true && !scheduled) {
-      const result = await dispatchCampaign(campaign.id, { trigger: "manual" });
+      const { done, result } = await dispatchWithBudget(campaign.id);
       await logAdminAction({
         adminUserId: req.admin.id,
         action: "notification_send",
@@ -219,7 +219,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
         metadata: { campaign_id: campaign.id },
         ipAddress: req.ip,
       });
-      return res.status(201).json({ ...campaign, dispatch: result, audienceCount: count });
+      return res.status(done ? 201 : 202).json({ ...campaign, dispatch: result, audienceCount: count });
     }
 
     res.status(201).json({ ...campaign, audienceCount: count });
@@ -231,6 +231,29 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
 });
 
 /* ------------------------------------------------------------
+   الإرسال بميزانية زمنية — KANAF-ORD-0001 R15-13
+
+   كان طلب «إرسال الآن» ينتظر الإرسال كاملاً: بالقياس ~0.2 ثانية لكل
+   مستلم بريد (خادم SMTP بتأخير 150ms)، أي ~100 ثانية لخمسمئة — أطول من
+   مهلة الوكلاء المعتادة. الآن: ينتظر حتى CAMPAIGN_SYNC_BUDGET_MS (8 ثوانٍ
+   افتراضياً). إن انتهى الإرسال قبلها فالرد كما كان تماماً؛ وإلا يرد 202
+   والإرسال مستمر في الخلفية، وحالته في قائمة الحملات وسجل التسليم.
+   المصدر الدائم هو notification_deliveries، والمسح يستأنف أي حملة عالقة.
+   ------------------------------------------------------------ */
+async function dispatchWithBudget(campaignId) {
+  const budgetMs = Number(process.env.CAMPAIGN_SYNC_BUDGET_MS || 8000);
+  let claimed = null;
+  const p = dispatchCampaign(campaignId, { trigger: "manual", onClaimed: (info) => { claimed = info; } });
+  let timer;
+  const first = await Promise.race([p, new Promise((r) => { timer = setTimeout(() => r("__budget"), budgetMs); })]);
+  clearTimeout(timer);
+  if (first !== "__budget") return { done: true, result: first };
+  p.then((r) => console.log(`[notifications] اكتملت الحملة ${campaignId} في الخلفية: ${JSON.stringify({ sent: r?.sent, failed: r?.failed, skipped: r?.skipped })}`))
+   .catch((e) => console.error(`[notifications] فشلت الحملة ${campaignId} في الخلفية:`, e.message));
+  return { done: false, result: { accepted: true, status: "sending", campaignId, recipients: claimed?.recipients ?? null } };
+}
+
+/* ------------------------------------------------------------
    POST /admin/notifications/:id/send — إرسال مسودة أو إعادة محاولة.
 
    إعادة الاستدعاء آمنة: صفوف التسليم الناجحة محمية بالقيد الفريد
@@ -238,7 +261,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
    ------------------------------------------------------------ */
 adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requirePermission("notifications:send"), requireUuidParam("id"), async (req, res) => {
   try {
-    const result = await dispatchCampaign(req.params.id, { trigger: "manual" });
+    const { done, result } = await dispatchWithBudget(req.params.id);
     await logAdminAction({
       adminUserId: req.admin.id,
       action: "notification_send",
@@ -247,7 +270,7 @@ adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requi
       metadata: { campaign_id: req.params.id },
       ipAddress: req.ip,
     });
-    res.json(result);
+    res.status(done ? 200 : 202).json(result);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error("[admin/notifications] send failed:", err);

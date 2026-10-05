@@ -172,7 +172,12 @@ async function withCampaignLock(campaignId, fn) {
    فيتحوّل COMMIT إلى ROLLBACK صامت — وهو ما أضاع أول دفعة حقيقية.
    الطبقة المالية أُعيد تشكيلها لهذا السبب، وهذه الطبقة تُولد به.
    ------------------------------------------------------------ */
-export async function dispatchCampaign(campaignId, { trigger = "manual" } = {}) {
+/* onClaimed (KANAF-ORD-0001 R15-13): يُنادى بعد حجز الحملة وإنشاء صفوف
+   التسليم وقبل الإرسال الفعلي. يسمح لمسار اللوحة أن يرد 202 فوراً
+   ويكمل الإرسال في الخلفية — والسجل الدائم (notification_deliveries)
+   هو مصدر الحقيقة لا الذاكرة: لو أُعيد تشغيل الخادم في المنتصف، يستأنف
+   المسح الحملة العالقة في sending بعد 15 دقيقة. */
+export async function dispatchCampaign(campaignId, { trigger = "manual", onClaimed = null } = {}) {
   return withCampaignLock(campaignId, async () => {
     // 1) الحجز
     const claim = await withTransaction(async (client) => {
@@ -251,14 +256,15 @@ export async function dispatchCampaign(campaignId, { trigger = "manual" } = {}) 
 
     // صفوف التسليم queued — ON CONFLICT DO NOTHING يجعل إعادة
     // التشغيل آمنة: ما أُنشئ سابقاً لا يُنشأ ثانية.
-    for (const r of recipients) {
-      for (const channel of channels) {
-        await query(
-          `INSERT INTO notification_deliveries (campaign_id, user_id, channel)
-           VALUES ($1, $2, $3) ON CONFLICT (campaign_id, user_id, channel) DO NOTHING`,
-          [campaignId, r.user_id, channel]
-        );
-      }
+    /* إدراج دفعة واحدة بدل عبارة لكل (مستخدم × قناة) — R15-13. القيد
+       الفريد نفسه يمنع التكرار عند الاستئناف. */
+    if (recipients.length && channels.length) {
+      await query(
+        `INSERT INTO notification_deliveries (campaign_id, user_id, channel)
+         SELECT $1, u, ch FROM unnest($2::uuid[]) u CROSS JOIN unnest($3::text[]) ch
+         ON CONFLICT (campaign_id, user_id, channel) DO NOTHING`,
+        [campaignId, recipients.map((r) => r.user_id), channels]
+      );
     }
 
     await query(
@@ -267,6 +273,9 @@ export async function dispatchCampaign(campaignId, { trigger = "manual" } = {}) 
     );
 
     // 2) الإرسال — خارج أي معاملة
+    if (typeof onClaimed === "function") {
+      try { onClaimed({ campaignId, recipients: recipients.length, channels }); } catch { /* المنادي لا يوقف الإرسال */ }
+    }
     const byUser = new Map(recipients.map((r) => [r.user_id, r]));
     const { rows: pending } = await query(
       `SELECT id, user_id, channel FROM notification_deliveries
