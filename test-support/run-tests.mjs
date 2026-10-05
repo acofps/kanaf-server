@@ -28,7 +28,7 @@ if (!fs.existsSync(ENV_FILE)) { console.error("شغّل setup-isolated-db.mjs أ
 const cfg = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
 
 const TEMPLATE_FOR = { "test-migrate.mjs": "kanaf_tpl_schema" };
-const NEEDS_SUPERUSER = new Set(["test-billing-resilience.mjs"]);
+const NEEDS_SUPERUSER = new Set(["test-billing-resilience.mjs", "test-12-refund-edges.mjs"]);
 
 const files = process.argv.slice(2).length
   ? process.argv.slice(2)

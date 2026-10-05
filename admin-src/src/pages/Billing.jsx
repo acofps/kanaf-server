@@ -275,7 +275,12 @@ function Refunds() {
               <Td dir="ltr">{r.user_email}</Td>
               <Td dir="ltr">{money(r.amount, r.currency)}</Td>
               <Td>{r.kind === "full" ? "كامل" : r.kind === "partial" ? "جزئي" : r.kind}</Td>
-              <Td><Badge color={r.status === "succeeded" ? "green" : r.status === "failed" ? "crisis" : "amber"}>{r.status}</Badge>{r.error && <div className="text-[10px] mt-1" style={{ color: C.textFaint }}>{r.error}</div>}</Td>
+              <Td>
+                <Badge color={r.status === "succeeded" ? "green" : r.status === "failed" ? "crisis" : "amber"}>
+                  {r.status === "pending" && /^outcome_unknown/.test(r.error || "") ? "غير مؤكد — طابِق الدفعة" : ({ succeeded: "نجح", failed: "فشل", pending: "قيد التنفيذ" }[r.status] || r.status)}
+                </Badge>
+                {r.error && <div className="text-[10px] mt-1" style={{ color: C.textFaint }} dir="ltr">{r.error}</div>}
+              </Td>
               <Td dir="ltr">{r.credit_note_number || "—"}</Td>
               <Td className="max-w-xs"><span style={{ color: C.textMuted }}>{r.reason || "—"}</span></Td>
               <Td>{r.initiated_by === "admin" ? "الإدارة" : r.initiated_by === "provider" ? "لوحة المزوّد" : r.initiated_by || "—"}</Td>

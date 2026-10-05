@@ -10,7 +10,7 @@ import {
   UUID_RE, likeTerm, readPaging,
   buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter,
 } from "./filters.js";
-import { executeRefund, issueCreditNoteDocument } from "../payments/refund.js";
+import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "../payments/refund.js";
 import { processWebhookEvent, issueInvoiceDocument } from "../payments/webhook.js";
 import { fetchPayment } from "../payments/moyasar.js";
 
@@ -663,13 +663,19 @@ billingRouter.post(
         delete result.needsCreditNote;
       }
 
+      /* R15-11: إجمالي المزوّد صار معروفاً — يُحسم أي حجز استرداد معلّق
+         نتيجته مجهولة (أقدم من 10 دقائق) إن طابق المسجَّل. */
+      if (providerPayment?.refunded_amount !== undefined) {
+        result.releasedHolds = await withTransaction((client) =>
+          releaseStaleRefundHolds(client, req.params.id, Number((Number(providerPayment.refunded_amount) / 100).toFixed(2))));
+      }
       await logAdminAction({
         adminUserId: req.admin.id, action: "payment_reconcile",
         oldValue: { status: rows[0].status }, newValue: { providerStatus: providerPayment.status, outcome: result.outcome },
         reason: String(req.body?.reason || req.query?.reason), metadata: { payment_id: req.params.id }, ipAddress: req.ip,
       });
 
-      res.json({ ok: true, providerStatus: providerPayment.status, outcome: result.outcome });
+      res.json({ ok: true, providerStatus: providerPayment.status, outcome: result.outcome, releasedHolds: result.releasedHolds || 0 });
     } catch (err) {
       console.error("[admin/billing] reconcile failed:", err);
       res.status(500).json({ error: "reconcile_failed", detail: String(err?.message || err) });

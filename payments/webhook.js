@@ -1,7 +1,7 @@
 import { withTransaction } from "../db/pool.js";
 import { isGenuineWebhook, HANDLED_WEBHOOK_EVENTS } from "./moyasar.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
-import { recordRefund, issueCreditNoteDocument } from "./refund.js";
+import { recordRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "./refund.js";
 import { activateOrExtendSubscription, markPastDueIfEntitled } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
 
@@ -328,7 +328,9 @@ async function handlePaymentRefunded(client, providerPayment, eventId) {
   const delta = Number((providerTotalRefunded - Number(payment.refunded_amount)).toFixed(2));
 
   if (delta <= 0) {
-    return { outcome: "refund_already_recorded", paymentId: payment.id };
+    // الإجمالي مسجَّل كاملاً — حجز معلّق قديم لا يمثّل مالاً إضافياً (R15-11).
+    const released = await releaseStaleRefundHolds(client, payment.id, providerTotalRefunded);
+    return { outcome: "refund_already_recorded", paymentId: payment.id, ...(released ? { releasedHolds: released } : {}) };
   }
 
   const result = await recordRefund(client, {
@@ -339,6 +341,7 @@ async function handlePaymentRefunded(client, providerPayment, eventId) {
     initiatedBy: "provider",
     providerRefundId: eventId || null,
   });
+  await releaseStaleRefundHolds(client, payment.id, providerTotalRefunded);
 
   return {
     outcome: result.kind === "full" ? "refunded_full" : "refunded_partial",

@@ -39,6 +39,7 @@ export class ApiError extends Error {
       already_fully_refunded: "هذه الدفعة مستردة بالكامل.",
       payment_not_captured: "الدفعة غير محصّلة — لا شيء يُسترد.",
       provider_refund_failed: "رفض المزوّد الاسترداد — لم يتغيّر شيء عندنا.",
+      provider_outcome_unknown: "لم يصل رد المزوّد — قد يكون الاسترداد نُفّذ. المبلغ محجوز لمنع التكرار؛ اضغط «مطابقة» على الدفعة بعد 10 دقائق قبل أي محاولة جديدة.",
       refund_amount_must_be_positive: "مبلغ الاسترداد يجب أن يكون أكبر من صفر.",
       refund_exceeds_captured_amount: "المبلغ أكبر من المحصَّل.",
       no_provider_payment_id: "لا رقم معاملة لدى المزوّد لهذه الدفعة — لا يمكن مطابقتها.",
