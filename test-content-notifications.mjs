@@ -183,6 +183,17 @@ await query(
 }
 
 /* ------------------------------------------------------------
+   4ب) النشر بلا سبب يُرفض في الخادم ولا يغيّر شيئاً
+   ------------------------------------------------------------ */
+{
+  const item = await contentRow("journey", JOURNEY);
+  const r1 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: true });
+  const r2 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: true, reason: "   " });
+  const after = await contentRow("journey", JOURNEY);
+  log("4ب. النشر بلا سبب (غائب أو مسافات) → 400 reason_required، والحالة كما هي", r1.status === 400 && r1.body?.error === "reason_required" && r2.status === 400 && after.launch_enabled === item.launch_enabled);
+}
+
+/* ------------------------------------------------------------
    5) النشر يظهر المحتوى للمستخدم
    ------------------------------------------------------------ */
 {

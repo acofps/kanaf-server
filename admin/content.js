@@ -179,6 +179,8 @@ adminContentRouter.post("/content/:id/review", requireAdminAuth, requirePermissi
 adminContentRouter.post("/content/:id/toggle-launch", requireAdminAuth, requirePermission("content:toggle_launch"), requireUuidParam("id"), async (req, res) => {
   const enabled = !!req.body?.enabled;
   const reason = String(req.body?.reason || "").trim();
+  /* السبب يُطلب في الخادم كبقية إجراءات اللوحة المسجّلة، لا في نافذة اللوحة وحدها. */
+  if (!reason) return res.status(400).json({ error: "reason_required" });
   try {
     const result = await withTransaction(async (client) => {
       const { rows: before } = await client.query(
