@@ -34,14 +34,25 @@ import { getBillingSettings } from "../billing/config.js";
 
 /** يحسب المتاح للاسترداد على دفعة، مع احتساب الحجوزات المعلّقة. */
 async function lockAndComputeAvailable(client, paymentId) {
+  /* KANAF-ORD-0001 R15-11 — القفل أولاً ثم جمع الحجوزات في عبارة مستقلة.
+     كان المجموع استعلاماً فرعياً داخل نفس عبارة FOR UPDATE: في READ COMMITTED
+     تأخذ العبارة لقطتها قبل انتظار القفل، فإن بدأ طلب ثانٍ قبل أن يثبّت الأول
+     حجزه، رأى بعد فك القفل مجموع حجوزات قديماً (0) فحجز مرة ثانية ونادى
+     المزوّد مرتين. العبارة الثانية تأخذ لقطة جديدة بعد القفل فترى الحجز. */
   const { rows } = await client.query(
     `SELECT p.id, p.user_id, p.invoice_id, p.subscription_id, p.amount,
-            p.refunded_amount, p.status, p.currency, p.provider, p.provider_payment_id,
-            COALESCE((SELECT SUM(r.amount) FROM refunds r
-                      WHERE r.payment_id = p.id AND r.status = 'pending'), 0) AS pending_amount
+            p.refunded_amount, p.status, p.currency, p.provider, p.provider_payment_id
      FROM payments p WHERE p.id = $1 FOR UPDATE`,
     [paymentId]
   );
+  if (rows[0]) {
+    const { rows: [h] } = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS pending_amount FROM refunds
+        WHERE payment_id = $1 AND status = 'pending'`,
+      [paymentId]
+    );
+    rows[0].pending_amount = h.pending_amount;
+  }
   const payment = rows[0];
   if (!payment) return null;
   const available = Number(

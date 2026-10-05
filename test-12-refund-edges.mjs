@@ -132,6 +132,22 @@ try {
   prov.delayMs = 0;
   ok("C1 two simultaneous full refunds → one provider call, one success, one 409", prov.calls.length === 1 && both.filter((x) => x.status === 200).length === 1 && both.filter((x) => x.status === 409).length === 1, JSON.stringify(both.map((x) => [x.status, x.body.error])));
 
+  /* C2 — نفس السباق بترتيب حتمي: معاملة تمسك قفل الدفعة وتضيف حجزاً، ثم
+     يبدأ طلب الاسترداد (فتؤخذ لقطة عبارته قبل التثبيت) وينتظر القفل، ثم
+     تُثبَّت المعاملة. يجب أن يرى الطلب الحجز بعد فك القفل. */
+  const g = await paidPayment("g");
+  prov.calls = [];
+  const holder = await pool.connect();
+  await holder.query("BEGIN");
+  await holder.query(`SELECT id FROM payments WHERE id = $1 FOR UPDATE`, [g.payId]);
+  await holder.query(`INSERT INTO refunds (user_id, payment_id, invoice_id, amount, currency, kind, provider, status, initiated_by)
+    SELECT user_id, id, invoice_id, amount, 'SAR', 'full', 'moyasar', 'pending', 'admin' FROM payments WHERE id = $1`, [g.payId]);
+  const pendingReq = refund(g.payId);
+  await new Promise((r) => setTimeout(r, 400));
+  await holder.query("COMMIT"); holder.release();
+  r = await pendingReq;
+  ok("C2 request that started before a concurrent hold committed still sees it → 409, no provider call", r.status === 409 && prov.calls.length === 0, `${r.status} ${r.body.error} calls=${prov.calls.length}`);
+
   /* 5) فشل الإشعار الدائن بعد نجاح المال */
   const e = await paidPayment("e");
   const su = new pg.Client({ connectionString: process.env.SUPERUSER_URL }); await su.connect();
