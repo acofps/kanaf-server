@@ -103,10 +103,14 @@ function PlanEditor({ plan, onClose, onSaved }) {
   const [durationDays, setDurationDays] = useState(plan.duration_days ?? 30);
   const [features, setFeatures] = useState((Array.isArray(plan.features) ? plan.features : []).join("\n"));
   const [displayOrder, setDisplayOrder] = useState(plan.display_order ?? 0);
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  /* KANAF-ORD-0001: الخادم يشترط سبباً مكتوباً لإنشاء الباقة وتعديلها
+     (reason_required) والنموذج لم يكن يرسله — فكل حفظ كان يفشل بـ400. */
   const save = async () => {
+    if (!reason.trim()) { setErr("سبب التغيير مطلوب — يُسجَّل في سجل التدقيق."); return; }
     setBusy(true); setErr("");
     const body = {
       name: name.trim(),
@@ -114,6 +118,7 @@ function PlanEditor({ plan, onClose, onSaved }) {
       durationDays: Number(durationDays),
       features: features.split("\n").map((s) => s.trim()).filter(Boolean),
       displayOrder: Number(displayOrder) || 0,
+      reason: reason.trim(),
     };
     try {
       if (isNew) await api.createPlan({ ...body, planKey: planKey.trim() });
@@ -145,6 +150,9 @@ function PlanEditor({ plan, onClose, onSaved }) {
         </div>
         <Field label="المزايا" hint="ميزة في كل سطر.">
           <Textarea rows={4} value={features} onChange={(e) => setFeatures(e.target.value)} />
+        </Field>
+        <Field label="سبب التغيير" hint="يُحفظ في سجل التدقيق باسمك. تغيير السعر يظهر في الفواتير القادمة فقط؛ الصادرة لا تتغير.">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <ErrorBar error={err} />
         <div className="flex gap-2">
