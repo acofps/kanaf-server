@@ -96,6 +96,10 @@ try {
   r = await call("PUT", "/api/me/safety-plan", { token: A.token, body: { warningSigns: "x".repeat(2001) } });
   ok("S6 over-long field → 400 field_too_long", r.status === 400 && r.body.error === "field_too_long", JSON.stringify(r.body));
 
+  /* حفظ بلا baseVersion فوق خطة قائمة (تحميل فشل عند الدخول) لا يستبدلها */
+  r = await call("PUT", "/api/me/safety-plan", { token: A.token, body: { warningSigns: "استبدال أعمى", copingStrategies: "", safePlace: "" } });
+  const afterBlind = await call("GET", "/api/me/safety-plan", { token: A.token });
+  ok("S9 a save without baseVersion over an existing plan is refused 409 and the plan is untouched", r.status === 409 && afterBlind.body.plan?.warningSigns === MARK, `${r.status} ${afterBlind.body.plan?.warningSigns}`);
   r = await call("PUT", "/api/me/safety-plan", { token: A.token, body: { warningSigns: MARK, copingStrategies: "أكلم صديق", safePlace: "", baseVersion: 1 } });
   ok("S7 save with current baseVersion → version 2", r.status === 200 && r.body.plan?.version === 2, JSON.stringify(r.body.plan));
 

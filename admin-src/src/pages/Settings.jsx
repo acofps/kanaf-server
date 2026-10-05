@@ -104,6 +104,7 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
 
   const save = async () => {
     if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
+    if (String(vatRate).trim() === "") { setErr("النسبة مطلوبة: 0.15 لخمسة عشر بالمئة."); return; }   // Number("") = 0
     const r = Number(vatRate);
     if (!Number.isFinite(r) || r < 0 || r >= 1) {
       setErr("النسبة تُكتب ككسر عشري: 0.15 لخمسة عشر بالمئة، لا 15."); return;

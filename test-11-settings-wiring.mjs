@@ -96,6 +96,14 @@ try {
   /* app_public_name — صادق: غير مربوط */
   r = await call("GET", "/admin/app-settings", { cookie });
   const row = r.body.settings?.find((x) => x.key === "app_public_name");
+  /* حقول مالية فارغة لا تُحفظ صفراً */
+  let v = await call("PUT", "/admin/billing/settings", { cookie, body: { vatRate: "", reason: "اختبار حقل فارغ" } });
+  const bs = await query(`SELECT vat_rate FROM billing_settings LIMIT 1`).catch(() => ({ rows: [] }));
+  ok("V1 empty VAT rate is refused 400 (Number(\"\") was saving 0%)", v.status === 400 && v.body.error === "vat_rate_required" && (bs.rows[0] ? Number(bs.rows[0].vat_rate) > 0 : true), JSON.stringify(v.body));
+  const pl = (await query(`SELECT id, price_sar FROM subscription_plans ORDER BY display_order LIMIT 1`)).rows[0];
+  v = await call("PATCH", `/admin/plans/${pl.id}`, { cookie, body: { priceSar: "", reason: "اختبار حقل فارغ" } });
+  const pl2 = (await query(`SELECT price_sar FROM subscription_plans WHERE id = $1`, [pl.id])).rows[0];
+  ok("V2 empty plan price is refused 400 and the price is unchanged", v.status === 400 && Number(pl2.price_sar) === Number(pl.price_sar), `${v.status} ${pl2.price_sar}`);
   ok("N1 app_public_name is still reported as not wired (no consumer)", row && row.wired === false, JSON.stringify(row).slice(0, 120));
 } catch (e) { R.push(["!! stopped: " + String(e.stack || e).slice(0, 300), false]); }
 

@@ -86,7 +86,10 @@ userAccountRouter.put("/safety-plan", requireVerifiedUser, async (req, res) => {
 
     const saved = await withTransaction(async (client) => {
       const { rows: cur } = await client.query(`SELECT version FROM user_safety_plans WHERE user_id = $1 FOR UPDATE`, [req.userId]);
-      if (cur[0] && baseVersion !== null && baseVersion !== cur[0].version) {
+      // حفظ بلا baseVersion مقبول فقط حين لا خطة بعد. كان يُقبل دائماً، فإن فشل
+      // تحميل الخطة عند الدخول (baseVersion = null) استبدل الحفظُ التالي خطةً
+      // محفوظة لم يرها المستخدم أصلاً (KANAF-ORD-0001 R15-01، تدقيق البطاقات).
+      if (cur[0] && (baseVersion === null || baseVersion !== cur[0].version)) {
         throw httpError(409, "safety_plan_changed_elsewhere", { currentVersion: cur[0].version });
       }
       const { rows } = await client.query(

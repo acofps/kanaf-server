@@ -1119,7 +1119,8 @@ adminRouter.post("/plans", requireAdminAuth, requirePermission("plans:edit"), as
   const reason = String(req.body?.reason || "").trim();
   try {
     const { planKey, name, priceSar, durationDays, features, displayOrder } = req.body || {};
-    if (!planKey || !name || priceSar === undefined || !durationDays) {
+    // priceSar فارغ = Number("") = 0 — كان يُنشئ باقة مجانية بلا قصد
+    if (!planKey || !name || priceSar === undefined || priceSar === null || String(priceSar).trim() === "" || !durationDays) {
       throw httpError(400, "planKey_name_priceSar_durationDays_required");
     }
     if (!reason) throw httpError(400, "reason_required");
@@ -1167,7 +1168,7 @@ adminRouter.patch(
     try {
       if (!reason) throw httpError(400, "reason_required");
       const { name, priceSar, durationDays, features, displayOrder } = req.body || {};
-      if (priceSar !== undefined && (!Number.isFinite(Number(priceSar)) || Number(priceSar) < 0)) {
+      if (priceSar !== undefined && (priceSar === null || String(priceSar).trim() === "" || !Number.isFinite(Number(priceSar)) || Number(priceSar) < 0)) {
         throw httpError(400, "invalid_price");
       }
 

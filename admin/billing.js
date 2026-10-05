@@ -830,6 +830,10 @@ billingRouter.put(
               invoiceNumberPrefix, creditNoteNumberPrefix } = req.body || {};
 
       if (vatRate !== undefined) {
+        // Number("") = 0 — حقل فارغ كان يحفظ ضريبة 0% لكل فاتورة قادمة (KANAF-ORD-0001، تدقيق البطاقات)
+        if (vatRate === null || (typeof vatRate === "string" && vatRate.trim() === "")) {
+          return res.status(400).json({ error: "vat_rate_required", message: "النسبة مطلوبة: 0.15 لخمسة عشر بالمئة." });
+        }
         const r = Number(vatRate);
         if (!Number.isFinite(r) || r < 0 || r >= 1) {
           return res.status(400).json({

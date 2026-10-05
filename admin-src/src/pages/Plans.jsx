@@ -111,6 +111,7 @@ function PlanEditor({ plan, onClose, onSaved }) {
      (reason_required) والنموذج لم يكن يرسله — فكل حفظ كان يفشل بـ400. */
   const save = async () => {
     if (!reason.trim()) { setErr("سبب التغيير مطلوب — يُسجَّل في سجل التدقيق."); return; }
+    if (String(priceSar).trim() === "") { setErr("السعر مطلوب."); return; }   // Number("") = 0 — باقة مجانية بلا قصد
     setBusy(true); setErr("");
     const body = {
       name: name.trim(),
