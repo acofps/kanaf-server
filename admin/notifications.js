@@ -159,6 +159,13 @@ adminNotificationsRouter.get(
 adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermission("notifications:create"), async (req, res) => {
   const { title, body, audience, audienceFilter, channels, scheduledAt, sendNow } = req.body || {};
 
+  /* الإرسال صلاحية مستقلة (KANAF-ORD-0002 B-08): sendNow يرسل فوراً، والجدولة ترسل
+     لاحقاً بلا تدخل بشري — كلاهما تنفيذ إرسال لا «إنشاء». يُفحص قبل أي كتابة فلا
+     تبقى حملة منشأة نصف تنفيذ. مسودة بلا إرسال ولا موعد تكفيها notifications:create. */
+  if ((sendNow === true || scheduledAt) && !req.admin.can("notifications:send")) {
+    return res.status(403).json({ error: "insufficient_permission", required: "notifications:send" });
+  }
+
   if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: "title_and_body_required" });
 
   const chans = Array.isArray(channels) && channels.length ? channels : ["in_app"];
