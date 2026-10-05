@@ -41,7 +41,7 @@ function readMounts() {
 function readInlineAppRoutes() {
   const src = fs.readFileSync(path.join(ROOT, "index.js"), "utf8");
   return [...src.matchAll(/^app\.(get|post|put|patch|delete)\(\s*"([^"]+)"\s*,([^\n]*)/gm)].map((m) => ({
-    method: m[1].toUpperCase(), path: m[2], source: "index.js",
+    method: m[1].toUpperCase(), path: m[2], localPath: m[2], source: "index.js",
     middleware: (m[3].match(/\b(require\w+|crisisFirewall|assistantGate|\w+Limiter)\b/g) || []),
     permissions: [], anyPermissions: [],
   }));
@@ -63,7 +63,7 @@ function walk(router, base, inherited, out, source) {
       const any = handles.flatMap((h) => h.kanafAnyPermissions || []);
       for (const method of Object.keys(layer.route.methods).filter((k) => layer.route.methods[k])) {
         out.push({
-          method: method.toUpperCase(), path: (base + layer.route.path).replace(/\/+/g, "/"), source,
+          method: method.toUpperCase(), path: (base + layer.route.path).replace(/\/+/g, "/"), localPath: layer.route.path, source,
           middleware: [...new Set([...routerLevel.map((h) => h.name).filter(Boolean), ...names])],
           permissions: [...new Set([...routerLevel.flatMap((h) => h.kanafPermissions || []), ...perms])],
           anyPermissions: [...new Set([...routerLevel.flatMap((h) => h.kanafAnyPermissions || []), ...any])],

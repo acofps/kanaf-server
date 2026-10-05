@@ -64,7 +64,9 @@ export const SETTINGS_REGISTRY = [
   {
     key: "vat_rate", label: "نسبة ضريبة القيمة المضافة",
     source: "billing_settings", editPerm: "billing_settings:edit", wired: true,
-    readBy: ["billing/config.js", "payments/webhook.js", "payments/refund.js", "invoicing/generate.js"],
+    // KANAF-ORD-0001 G2: القرّاء الفعليون (docs-check C6). webhook.js/refund.js
+    // يقرآن الإعداد المالي لكن لا يستعملان النسبة؛ splitVat يُستدعى في pdf.js.
+    readBy: ["billing/config.js", "invoicing/pdf.js"],
     note: "تُفكَّك مرة واحدة بـsplitVat، ونفس القيمة تدخل TLV الخاص بـQR ونص الوثيقة. الفواتير الصادرة لا تتأثر — نسبتها مجمّدة في invoice_state وقت إصدارها.",
   },
   {
@@ -94,7 +96,8 @@ export const SETTINGS_REGISTRY = [
   {
     key: "credit_note_number_prefix", label: "بادئة رقم الإشعار الدائن",
     source: "billing_settings", editPerm: "billing_settings:edit", wired: true,
-    readBy: ["payments/refund.js"],
+    // كان ["payments/refund.js"]؛ الترقيم الفعلي في generateAndStoreCreditNote (docs-check C6)
+    readBy: ["billing/config.js", "invoicing/generate.js"],
   },
 
   /* ---------- البيانات الضريبية ---------- */
