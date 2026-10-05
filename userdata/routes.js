@@ -360,6 +360,10 @@ userDataRouter.post("/journeys/:key/days/:day/complete", requireVerifiedUser, as
       );
       const e = rows[0];
       if (!e) throw Object.assign(new Error("not_enrolled"), { status: 404 });
+      /* إكمال يوم يخص رحلة جارية فقط (B-03): المنهاة لا تُكمَّل (ولا يُكتب «completed» فوق
+         «abandoned» عند آخر يوم)، والموقوفة مؤقتاً تُستأنف أولاً — التطبيق يستأنفها قبل فتح اليوم. */
+      if (e.status === "abandoned") throw Object.assign(new Error("journey_stopped"), { status: 409 });
+      if (e.status === "paused") throw Object.assign(new Error("invalid_transition"), { status: 409 });
       if (dayNumber > e.total_days) throw Object.assign(new Error("day_out_of_range"), { status: 400 });
 
       await client.query(

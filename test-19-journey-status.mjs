@@ -66,6 +66,20 @@ try {
   ok("S5 re-enrolling a stopped journey is refused (409 journey_stopped) and its saved state is not overwritten", r.status === 409 && r.body.error === "journey_stopped"
     && JSON.stringify(csBefore) === JSON.stringify(csAfter) && await serverStatus(A.id) === "abandoned", JSON.stringify(r.body));
 
+  /* إكمال يوم على رحلة غير جارية (امتحان المرجع ORD-0002، AQ05) */
+  const dayRows = async (uid) => +(await query(`SELECT count(*) n FROM user_journey_day_states d JOIN user_journey_enrollments e ON e.id = d.enrollment_id WHERE e.user_id = $1 AND e.journey_key = $2`, [uid, KEY])).rows[0].n;
+  const day = (u, n) => call("POST", `/api/me/journeys/${KEY}/days/${n}/complete`, null, u.token);
+  const rowsA = await dayRows(A.id);
+  r = await day(A, 1);
+  ok("D1 completing a day of an abandoned journey → 409 journey_stopped, no day written, still abandoned", r.status === 409 && r.body.error === "journey_stopped" && await dayRows(A.id) === rowsA && await serverStatus(A.id) === "abandoned", JSON.stringify(r.body));
+  const Cu = await mkUser("c");
+  await enroll(Cu); await st({ s: "paused", tok: Cu.token });
+  r = await day(Cu, 1);
+  ok("D2 completing a day of a paused journey → 409 invalid_transition, no day written, still paused", r.status === 409 && r.body.error === "invalid_transition" && await dayRows(Cu.id) === 0 && await serverStatus(Cu.id) === "paused", JSON.stringify(r.body));
+  await st({ s: "active", tok: Cu.token });
+  r = await day(Cu, 1);
+  ok("D3 control: after resuming, the same day completes (200, 1 day)", r.status === 200 && r.body.completedDays === 1 && await serverStatus(Cu.id) === "active", JSON.stringify(r.body));
+
   /* ضابط: إعادة تسجيل رحلة موقوفة مؤقتاً تبقى استئنافاً كما كانت */
   r = await enroll(Bu); await call("POST", `/api/me/journeys/${KEY}/status`, { status: "paused" }, Bu.token);
   r = await enroll(Bu);
