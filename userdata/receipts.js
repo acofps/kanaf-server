@@ -13,6 +13,7 @@ import { withTransaction } from "../db/pool.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const isClientRef = (v) => typeof v === "string" && UUID_RE.test(v);
+export const isUuid = isClientRef;
 
 export async function onceByClientRef(userId, clientRef, resource, insert, fetchExisting) {
   return withTransaction(async (client) => {

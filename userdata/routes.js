@@ -5,7 +5,7 @@ import { requireVerifiedUser } from "../auth/middleware.js";
 import { getUserSubscription } from "../billing/subscription.js";
 import { assertContentAvailable } from "../content/catalog.js";
 import { saveSubscription, removeSubscription, getPublicKey } from "../notifications/push.js";
-import { isClientRef, onceByClientRef } from "./receipts.js";
+import { isClientRef, isUuid, onceByClientRef } from "./receipts.js";
 
 export const userDataRouter = express.Router();
 
@@ -438,11 +438,11 @@ userDataRouter.post("/notebooks", requireVerifiedUser, async (req, res) => {
       async (c) => (await c.query(
         `INSERT INTO user_notebook_entries (user_id, template_key, template_version)
          VALUES ($1, $2, $3)
-         RETURNING id, template_key, status, revision, started_at`,
+         RETURNING id, template_key, status, revision, started_at, updated_at`,
         [req.userId, templateKey, templateVersion]
       )).rows[0],
       async (c, id) => (await c.query(
-        `SELECT id, template_key, status, revision, started_at FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
+        `SELECT id, template_key, status, revision, started_at, updated_at FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
         [id, req.userId])).rows[0]);
     /* الدفتر قد يُحذف بعد إنشائه؛ إعادة نفس المفتاح بعدها لا تعيد إنشاءه. */
     if (!out.row) return res.status(410).json({ error: "already_deleted" });
@@ -451,7 +451,17 @@ userDataRouter.post("/notebooks", requireVerifiedUser, async (req, res) => {
 });
 
 userDataRouter.patch("/notebooks/:id", requireVerifiedUser, async (req, res) => {
-  const { answers, lastPromptKey, status, helpfulness } = req.body || {};
+  const { answers, lastPromptKey, status, helpfulness, baseUpdatedAt } = req.body || {};
+  /* معرّف ليس UUID كان يصل Postgres فيرد 500؛ هو دفتر غير موجود لهذا المستخدم. */
+  if (!isUuid(req.params.id)) return res.status(404).json({ error: "not_found" });
+  /* baseUpdatedAt اختياري (KANAF-ORD-0002 B-02): آخر updated_at رآه العميل. إن تغيّر
+     الدفتر بعده (تبويب أو جهاز آخر) يُرفض الحفظ بـ409 بدل الكتابة فوق الأحدث.
+     المقارنة بدقة المللي ثانية لأن JSON لا يحمل ما دونها. */
+  let base = null;
+  if (baseUpdatedAt !== undefined && baseUpdatedAt !== null) {
+    base = new Date(baseUpdatedAt);
+    if (Number.isNaN(base.getTime())) return res.status(400).json({ error: "invalid_base_updated_at" });
+  }
   if (status !== undefined && !["draft", "completed"].includes(status)) {
     return res.status(400).json({ error: "invalid_status" });
   }
@@ -477,6 +487,7 @@ userDataRouter.patch("/notebooks/:id", requireVerifiedUser, async (req, res) => 
            completed_at   = CASE WHEN $6 = 'completed' THEN COALESCE(completed_at, now()) ELSE completed_at END,
            updated_at     = now()
        WHERE id = $1 AND user_id = $2
+         AND ($7::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $7::timestamptz))
        RETURNING id, template_key, status, revision, updated_at, completed_at`,
       [
         req.params.id, req.userId,
@@ -484,9 +495,18 @@ userDataRouter.patch("/notebooks/:id", requireVerifiedUser, async (req, res) => 
         lastPromptKey ?? null,
         helpfulness ?? null,
         status ?? null,
+        base ? base.toISOString() : null,
       ]
     );
-    if (!rows[0]) return res.status(404).json({ error: "not_found" });
+    if (!rows[0]) {
+      if (base) {
+        const { rows: cur } = await query(
+          `SELECT status, revision, updated_at FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
+          [req.params.id, req.userId]);
+        if (cur[0]) return res.status(409).json({ error: "notebook_conflict", current: cur[0] });
+      }
+      return res.status(404).json({ error: "not_found" });
+    }
     res.json(rows[0]);
   } catch (err) { fail(res, err, "notebooks/update"); }
 });
@@ -505,6 +525,7 @@ userDataRouter.get("/notebooks", requireVerifiedUser, async (req, res) => {
 });
 
 userDataRouter.delete("/notebooks/:id", requireVerifiedUser, async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ error: "not_found" });
   try {
     const { rowCount } = await query(
       `DELETE FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
