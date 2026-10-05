@@ -1559,11 +1559,26 @@ adminRouter.post(
     try {
       const { status } = req.body || {};
       if (!["unread", "read", "replied"].includes(status)) return res.status(400).json({ error: "invalid_status" });
-      const { rows } = await query(
-        `UPDATE contact_messages SET status = $1 WHERE id = $2 RETURNING id, status`, [status, req.params.id]
-      );
-      if (!rows[0]) return res.status(404).json({ error: "not_found" });
-      res.json(rows[0]);
+      /* سجل الإجراءات (KANAF-ORD-0002 B-10): الفاعل والحالة قبل/بعد فقط — لا نص الرسالة
+         ولا اسم المرسل ولا بريده. الحالة القديمة تُقرأ تحت قفل الصف في نفس المعاملة. */
+      const out = await withTransaction(async (client) => {
+        const { rows: b } = await client.query(`SELECT status FROM contact_messages WHERE id = $1 FOR UPDATE`, [req.params.id]);
+        if (!b[0]) return null;
+        const { rows } = await client.query(
+          `UPDATE contact_messages SET status = $1 WHERE id = $2 RETURNING id, status`, [status, req.params.id]
+        );
+        return { before: b[0].status, row: rows[0] };
+      });
+      if (!out) return res.status(404).json({ error: "not_found" });
+      if (out.before !== status) {
+        await logAdminAction({
+          adminUserId: req.admin.id, action: "message_status_changed",
+          entity: "contact_message", entityId: req.params.id,
+          oldValue: { status: out.before }, newValue: { status },
+          reason: "تغيير حالة رسالة تواصل", ipAddress: req.ip,
+        });
+      }
+      res.json(out.row);
     } catch (err) { fail(res, err, "admin/messages:status", req); }
   }
 );

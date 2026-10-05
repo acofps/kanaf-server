@@ -58,6 +58,17 @@ const ACTION_LABEL = {
   break_glass_requested: "طلب وصول طارئ",
   break_glass_approved: "اعتماد وصول طارئ",
   data_exported: "تصدير بيانات",
+  // KANAF-ORD-0002 B-10: أفعال تُسجَّل في الخادم وكانت تظهر بمفتاحها الإنجليزي
+  content_review: "مراجعة سريرية لمحتوى",
+  content_publish: "تشغيل محتوى",
+  content_unpublish: "إيقاف محتوى",
+  content_schedule: "جدولة نشر محتوى",
+  content_bulk_publish: "نشر جماعي للمحتوى",
+  notification_create: "إنشاء حملة إشعارات",
+  notification_schedule: "جدولة حملة إشعارات",
+  notification_send: "إرسال حملة إشعارات",
+  notification_cancel: "إلغاء حملة إشعارات",
+  message_status_changed: "تغيير حالة رسالة تواصل",
 };
 
 const ENTITY_LABEL = {
@@ -65,6 +76,7 @@ const ENTITY_LABEL = {
   invoice: "فاتورة", subscription: "اشتراك", campaign: "حملة", content: "محتوى",
   tax_settings: "بيانات ضريبية", billing_settings: "إعداد مالي",
   app_setting: "إعداد تشغيل", export: "تصدير", break_glass: "وصول طارئ",
+  contact_message: "رسالة تواصل",
 };
 
 /* الأفعال التي تستحق لوناً: نقل مال، أو تغيير من يقدر على ماذا. */
