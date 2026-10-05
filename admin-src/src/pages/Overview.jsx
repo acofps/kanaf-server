@@ -13,6 +13,13 @@ import { Card, PageTitle, Spinner, ErrorBar, Empty, useAsync } from "../ui.jsx";
    ============================================================ */
 
 const SOURCE_LABEL = {
+  /* المصادر التي يخزّنها /api/crisis-signal فعلاً (CRISIS_SOURCES في index.js) — كانت تظهر
+     بمفاتيحها الإنجليزية لأن القائمة هنا بأسماء أخرى (KANAF-ORD-0002). الأسماء القديمة باقية لأي صف قديم. */
+  phq9_item9: "مقياس PHQ-9 (البند 9)",
+  chat_keyword: "عبارة في سند",
+  journal_keyword: "عبارة في اليوميات",
+  manual_button: "زر «أحتاج مساعدة عاجلة»",
+  screening_band: "نتيجة مقياس",
   chat: "محادثة",
   screening: "مقياس",
   daily_log: "تدوين يومي",
