@@ -10,7 +10,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
     "@fontsource/ibm-plex-sans-arabic": "^5.3.0",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
