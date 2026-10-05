@@ -239,9 +239,19 @@ export async function sweepDailyReminders({ log = () => {} } = {}) {
 
     return { swept: due.length, inboxAndPush, inboxOnly, alreadySent, failed, batchCapped: due.length === REMINDER_BATCH_LIMIT };
   } finally {
+    /* KANAF-ORD-0001 R15-14: كان فشل الإطلاق يُبتلع ثم يعود الاتصال إلى
+       المجمّع وهو ما زال يحمل قفل الجلسة — فيبقى مسح التذكير «قيد
+       التشغيل» لكل اتصال آخر حتى يُغلق ذلك الاتصال. الآن مثل قفلي
+       الحملات: يُتلف الاتصال فتطلق Postgres القفل مع انتهاء الجلسة. */
+    let unlockFailed = false;
     if (locked) {
-      await client.query(`SELECT pg_advisory_unlock(hashtext('kanaf_daily_reminder_sweep'))`).catch(() => {});
+      try {
+        await client.query(`SELECT pg_advisory_unlock(hashtext('kanaf_daily_reminder_sweep'))`);
+      } catch (err) {
+        unlockFailed = true;
+        console.error("[reminders] تعذّر إطلاق قفل المسح — سيُتلف الاتصال:", err.message);
+      }
     }
-    client.release();
+    client.release(unlockFailed);
   }
 }

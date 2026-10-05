@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import crypto from "node:crypto";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
@@ -30,6 +31,7 @@ import { sweepMiddleware } from "./notifications/scheduler.js";
 import { requireVerifiedUser } from "./auth/middleware.js";
 import { userAccountRouter } from "./userdata/account.js";
 import { assistantGate } from "./assistant/guard.js";
+import { internalRouter } from "./ops/internal.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -892,6 +894,9 @@ app.get("/api/support-info", async (req, res) => {
 });
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+/* مشغّل المجدول الخارجي المحمي + الجاهزية — KANAF-ORD-0001 R15-14/R15-15/X10.
+   معطّل ما لم يُضبط SWEEP_TRIGGER_TOKEN (انظر ops/internal.js). */
+app.use("/api/internal", internalRouter);
 
 /* ---------------------------------------------------------
    Unsubscribe from broadcast emails — the real gap a strict review
@@ -964,13 +969,30 @@ app.use("/admin", adminRouter);
    used as a backdoor. Safe to leave the code in place permanently;
    once one admin exists, every call is rejected regardless of token.
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   مقارنة رمز الإعداد — KANAF-ORD-0001 X06
+   • زمن ثابت (timingSafeEqual) بدل !== التي تتوقف عند أول حرف مختلف.
+   • يُقبل من ترويسة X-Setup-Token أولاً؛ الرمز في عنوان GET
+     (?token=) يُكتب في سجلات الوصول لدى الاستضافة والوكلاء. يبقى
+     مقبولاً للتوافق مع الطريقة الموثقة سابقاً، ويُفضَّل الترويسة.
+   • SETUP_TOKEN فارغ = المسارات معطّلة (كما كان). بعد الاستعمال
+     يُفرَّغ من Render — دورة الإبطال موثقة في المرجع.
+--------------------------------------------------------- */
+function setupTokenMatches(req, bodyOrQueryToken) {
+  const expected = process.env.SETUP_TOKEN;
+  if (!expected) return false;
+  const given = String(req.headers["x-setup-token"] || bodyOrQueryToken || "");
+  const a = crypto.createHash("sha256").update(given).digest();
+  const b = crypto.createHash("sha256").update(expected).digest();
+  return given.length > 0 && crypto.timingSafeEqual(a, b);
+}
 app.post("/api/setup/create-first-admin", async (req, res) => {
   try {
     const setupToken = process.env.SETUP_TOKEN;
     if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
 
     const { token, name, email, password } = req.body || {};
-    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    if (!setupTokenMatches(req, token)) return res.status(403).json({ error: "invalid_token" });
 
     const { rows: existing } = await query(`SELECT count(*)::int AS n FROM admin_users`);
     if (existing[0].n > 0) return res.status(409).json({ error: "admin_already_exists" });
@@ -1009,7 +1031,7 @@ app.get("/api/setup/migration-status", async (req, res) => {
   try {
     const setupToken = process.env.SETUP_TOKEN;
     if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
-    if (req.query.token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    if (!setupTokenMatches(req, req.query.token)) return res.status(403).json({ error: "invalid_token" });
 
     res.json({ migrations: await migrationStatus() });
   } catch (err) {
@@ -1024,7 +1046,7 @@ app.post("/api/setup/run-migrations", async (req, res) => {
     if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
 
     const { token } = req.body || {};
-    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    if (!setupTokenMatches(req, token)) return res.status(403).json({ error: "invalid_token" });
 
     const results = await runMigrations();
     const failed = results.find((r) => r.status === "failed");
