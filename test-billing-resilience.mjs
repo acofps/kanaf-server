@@ -12,6 +12,7 @@
  * مستقلة بعدها. فشله يترك فاتورة مدفوعة بلا رقم ضريبي — قابلة
  * للإصلاح بإعادة التشغيل.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
@@ -59,10 +60,10 @@ async function req(m, p, b, t) {
 
 try {
   const ADMIN_ID = crypto.randomUUID();
-  await query(`TRUNCATE refunds, webhook_events, payments, invoice_state, subscription_state,
-               credit_notes, invoices, subscriptions, admin_action_log, admin_access_log,
-               user_sessions, user_auth_state, email_verification_codes, users, admin_users
-               RESTART IDENTITY CASCADE`);
+  /* كان هنا TRUNCATE ... users, admin_users ... CASCADE. صار الشرط قاعدة
+     مخصّصة نظيفة ينشئها run-tests.mjs، والحارس يتحقق من SUPERUSER_URL
+     أنه على نفس الخادم المعزول قبل أي REVOKE. KANAF-ORD-0001 U09-2 */
+  requireDedicatedDatabase(import.meta.url);
   await query(`INSERT INTO subscription_plans (plan_key,name,price_sar,duration_days,display_order)
                VALUES ('monthly','الباقة الشهرية',29.00,30,1) ON CONFLICT (plan_key) DO NOTHING`);
   await query(`INSERT INTO billing_settings (singleton) VALUES (true) ON CONFLICT (singleton) DO NOTHING`);

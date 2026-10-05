@@ -11,6 +11,9 @@
  * ⚠️ يكتب صفوفاً حقيقية ثم ينظّفها. لا تشغّله على قاعدة إنتاج فيها
  * بيانات مستخدمين تهمّك قبل قراءة قسم التنظيف في آخر الملف.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
+// نشر جماعي all:true وتنظيف يعيد كل content_items — قاعدة مخصّصة فقط.
+requireDedicatedDatabase(import.meta.url);
 import express from "express";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";

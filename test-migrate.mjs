@@ -1,3 +1,6 @@
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
+// يطبّق الترحيلات (DDL) ويفترض قاعدة بلا ترحيلات — قالب المخطط الأصلي فقط.
+requireDedicatedDatabase(import.meta.url);
 import { runMigrations, migrationStatus } from "./db/migrate.js";
 import { query } from "./db/pool.js";
 

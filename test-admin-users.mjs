@@ -6,6 +6,7 @@
  * that ship. Admin authentication is stubbed at the cookie layer only;
  * requireRole and every SQL statement run unmodified.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";

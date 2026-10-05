@@ -15,6 +15,7 @@
  *   NODE_ENV=development AUTH_RATE_LIMIT_MAX=500 \
  *   node test-billing.mjs
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
@@ -118,9 +119,18 @@ function adminCookie() {
   return `kanaf_admin_access=${token}`;
 }
 
+/* الدور يُقرأ من القاعدة في كل طلب منذ المرحلة 5 (requireAdminAuth)،
+   لا من حمولة الرمز — فتغيير CURRENT_ADMIN.role يجب أن يصل إلى صف
+   الحساب، وإلا ظل الطلب يمر بدور owner المخزّن وفشل J1/J3 خطأً.
+   (نفس نمط syncAdminRow في test-admin-users.mjs؛ محصور بمعرّف حساب
+   الاختبار وحده.) KANAF-ORD-0001 R15-05 */
+async function syncAdminRole() {
+  if (CURRENT_ADMIN) await query(`UPDATE admin_users SET role = $2 WHERE id = $1`, [CURRENT_ADMIN.id, CURRENT_ADMIN.role]);
+}
+
 async function req(method, path, body, token) {
   const headers = { "Content-Type": "application/json" };
-  if (path.startsWith("/admin")) { const c = adminCookie(); if (c) headers.Cookie = c; }
+  if (path.startsWith("/admin")) { await syncAdminRole(); const c = adminCookie(); if (c) headers.Cookie = c; }
   if (token) headers.Authorization = `Bearer ${token}`;
   const r = await realFetch(B + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const ct = r.headers.get("content-type") || "";
@@ -163,15 +173,13 @@ const sendWebhook = (body) => post("/api/payments/webhook", body);
 async function run() {
   const ADMIN_ID = crypto.randomUUID();
 
-  // تنظيف كامل — الاختبار يفترض قاعدة نظيفة.
-  await query(`TRUNCATE refunds, webhook_events, payments, invoice_state, subscription_state,
-               credit_notes, invoices, subscriptions, admin_action_log, admin_access_log,
-               user_sessions, user_auth_state, email_verification_codes, users, admin_users
-               RESTART IDENTITY CASCADE`);
-  await query(`ALTER SEQUENCE kanaf_invoice_number_seq RESTART WITH 1`);
-  await query(`ALTER SEQUENCE kanaf_credit_note_number_seq RESTART WITH 1`);
-  // subscription_plans و tax_settings يشيران إلى admin_users، فيمسحهما
-  // TRUNCATE ... CASCADE معه. نعيد بذرهما بنفس قيم schema.sql.
+  /* الاختبار يفترض قاعدة نظيفة (أعداد مطلقة وترقيم يبدأ من 000001).
+     كان هنا TRUNCATE ... users, admin_users ... CASCADE و
+     ALTER SEQUENCE kanaf_invoice_number_seq RESTART WITH 1 — على قاعدة
+     حية يمحوان كل المستخدمين ويعيدان ترقيم الفواتير الضريبية.
+     صار الشرط قاعدة مخصّصة لهذا الملف ينشئها run-tests.mjs من القالب
+     (نظيفة بالإنشاء)، والحارس يرفض التشغيل على غيرها. KANAF-ORD-0001 U09-2 */
+  requireDedicatedDatabase(import.meta.url);
   await query(
     `INSERT INTO subscription_plans (plan_key, name, price_sar, duration_days, features, display_order) VALUES
        ('monthly', 'الباقة الشهرية', 29.00, 30, ARRAY['كل أدوات كنف الأربع'], 1),

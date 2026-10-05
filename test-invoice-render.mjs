@@ -19,6 +19,7 @@
  * يحتاج pdftotext و pdfinfo (حزمة poppler-utils) لفحوص النص وعدد
  * الصفحات؛ إن غابا تُتخطّى تلك الفحوص صراحةً ولا تُعدّ ناجحة.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import fs from "fs";
 import os from "os";
 import path from "path";

@@ -1,3 +1,6 @@
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
+// يعدّ جدول users كاملاً (يفترض صفاً واحداً) — قاعدة مخصّصة فقط.
+requireDedicatedDatabase(import.meta.url);
 import express from "express";
 import { authRouter } from "./auth/routes.js";
 import { query } from "./db/pool.js";
