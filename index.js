@@ -27,7 +27,8 @@ import { adminAccountsRouter } from "./admin/accounts.js";
 import { adminExportsRouter } from "./admin/exports.js";
 import { adminSettingsRouter, getAppSettings } from "./admin/settings.js";
 import { sweepMiddleware } from "./notifications/scheduler.js";
-import { requireUserAuth } from "./auth/middleware.js";
+import { requireVerifiedUser } from "./auth/middleware.js";
+import { userAccountRouter } from "./userdata/account.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -394,7 +395,11 @@ function crisisFirewall(req, res, next) {
 /* ---------------------------------------------------------
    POST /api/chat  { messages: [{role, content}] }
 --------------------------------------------------------- */
-app.post("/api/chat", crisisFirewall, requireUserAuth, async (req, res) => {
+/* requireVerifiedUser لا requireUserAuth: المسار يصرف مالاً عند المزوّد،
+   والتعليق على requireVerifiedUser نفسه يشترطه لما يصرف مالاً. بدونه
+   يظل حساب معلّق أو طلب حذفه يستهلك النموذج حتى ينتهي رمز وصوله
+   (15 دقيقة). جدار الأمان قبله كما كان — بلا مصادقة. KANAF-ORD-0001 R15-02/X08 */
+app.post("/api/chat", crisisFirewall, requireVerifiedUser, async (req, res) => {
   try {
     const { messages } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -540,7 +545,7 @@ function normalizePlan(obj) {
   return { summary, focus_areas: focusAreas, specialist_note: specialistNote };
 }
 
-app.post("/api/plan", crisisFirewall, requireUserAuth, async (req, res) => {
+app.post("/api/plan", crisisFirewall, requireVerifiedUser, async (req, res) => {
   const dataNote = req.body?.dataNote;
   if (typeof dataNote !== "string" || !dataNote.trim()) {
     return res.status(400).json({ error: "dataNote is required" });
@@ -755,6 +760,8 @@ app.post("/api/crisis-signal", async (req, res) => {
 app.use("/api/content", contentRouter);
 app.use("/api", pushPublicKeyRouter);
 app.use("/api/me", userDataRouter);
+// خطة الأمان ودائرة الدعم وطلب الحذف والتصدير — KANAF-ORD-0001 R15-01/02/03
+app.use("/api/me", userAccountRouter);
 
 /* ---------------------------------------------------------
    GET /api/support-info — البيانات المعلنة التي يعرضها التطبيق.
