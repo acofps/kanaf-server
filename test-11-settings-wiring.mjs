@@ -65,6 +65,14 @@ try {
   ok("F4 the campaign e-mail has no footer but still carries the unsubscribe link", !!mail3 && !mail3.includes(FOOT) && /api\/unsubscribe\?token=/.test(mail3.replace(/=\r?\n/g, "")), mail3 ? mail3.slice(0, 80) : "no mail");
   r = await put("app_public_name", "");
   ok("F5 other display settings still refuse an empty value (400 value_cannot_be_empty)", r.status === 400 && r.body.error === "value_cannot_be_empty");
+  /* تحصين: إعداد نصي بلا مدقق لا يقبل null ولا رقماً ولا كائناً */
+  const before = (await query(`SELECT value FROM app_settings WHERE key = 'support_hours'`)).rows[0]?.value;
+  const bad = await Promise.all([null, 42, { x: 1 }].map((v) => put("support_hours", v)));
+  ok("F6 a text setting without a validator refuses null / number / object (400 value_must_be_string), value unchanged",
+    bad.every((x) => x.status === 400 && x.body.error === "value_must_be_string")
+    && JSON.stringify((await query(`SELECT value FROM app_settings WHERE key = 'support_hours'`)).rows[0]?.value) === JSON.stringify(before), JSON.stringify(bad.map((x) => x.status)));
+  r = await put("marketing_email_footer", null);
+  ok("F7 the footer still accepts null (cleared)", r.status === 200);
 
   /* daily_reminder_time */
   r = await put("daily_reminder_time", "07:30");
