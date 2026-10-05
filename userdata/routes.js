@@ -587,6 +587,13 @@ userDataRouter.patch("/preferences", requireVerifiedUser, async (req, res) => {
   }
 
   try {
+    /* الوقت الافتراضي لمن يفعّل التذكير أول مرة بلا وقت — من
+       app_settings.daily_reminder_time (KANAF-ORD-0001 R15-19). يُستعمل
+       عند **إنشاء** صف الجدولة فقط: من له وقت محفوظ لا يتغيّر وقته
+       بتغيير الإعداد. قيمة غير صالحة أو غائبة = 20:00 كما كان. */
+    const { rows: drt } = await query(`SELECT value FROM app_settings WHERE key = 'daily_reminder_time'`).catch(() => ({ rows: [] }));
+    const defaultTime = typeof drt[0]?.value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(drt[0].value) ? drt[0].value : "20:00";
+
     const result = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `UPDATE users
@@ -608,13 +615,13 @@ userDataRouter.patch("/preferences", requireVerifiedUser, async (req, res) => {
       if (needsSchedule) {
         const { rows: sched } = await client.query(
           `INSERT INTO user_reminder_prefs (user_id, local_time, timezone, updated_at)
-           VALUES ($1, COALESCE($2::time, '20:00'::time), COALESCE($3, 'Asia/Riyadh'), now())
+           VALUES ($1, COALESCE($2::time, $4::time), COALESCE($3, 'Asia/Riyadh'), now())
            ON CONFLICT (user_id) DO UPDATE SET
              local_time = COALESCE($2::time, user_reminder_prefs.local_time),
              timezone   = COALESCE($3, user_reminder_prefs.timezone),
              updated_at = now()
            RETURNING local_time, timezone`,
-          [req.userId, time, tz]
+          [req.userId, time, tz, defaultTime]
         );
         schedule = sched[0];
       } else {

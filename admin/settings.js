@@ -5,6 +5,7 @@ import {
   logAdminAction, fail, httpError,
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
+import { refreshAdminSessionMinutes } from "./auth.js";
 
 export const adminSettingsRouter = express.Router();
 
@@ -146,14 +147,14 @@ export const SETTINGS_REGISTRY = [
   {
     key: "app_public_name", label: "الاسم التجاري المعروض",
     source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: ["index.js (/api/support-info)"],
-    note: "نصوص الرسائل الحالية تكتب «كنف» حرفياً. توحيدها على هذا الإعداد بند مفتوح.",
+    readBy: ["index.js (/api/support-info) — يُرسَل ولا يقرؤه التطبيق"],
+    note: "KANAF-ORD-0001 R15-19: غير مربوط عمداً. التطبيق لا يقرأ appName، و«كنف» مكتوبة حرفياً في نصوص التطبيق والرسائل والفواتير. ربطه = قرار منتج بتغيير الاسم المعروض في كل تلك المواضع (لا يمسّ الاسم النظامي للبائع ولا معرّفات الترحيلات). حتى ذلك: تعديله لا يغيّر شيئاً.",
   },
   {
     key: "marketing_email_footer", label: "تذييل رسائل البث",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: [],
-    note: "notifications/service.js يبني تذييله حرفياً اليوم. ربطه بهذا الإعداد بند مفتوح.",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/service.js (deliverEmail)"],
+    note: "KANAF-ORD-0001 R15-19: يُلحق بنص رسائل البث البريدية (النصية وHTML مهرَّباً) فوق رابط إلغاء الاشتراك. القيمة الفارغة = بلا تذييل. لا يمسّ رسائل التحقق والاستعادة.",
   },
   /* ---------- إعدادات المرحلة 6 ----------
 
@@ -200,9 +201,9 @@ export const SETTINGS_REGISTRY = [
   },
   {
     key: "daily_reminder_time", label: "الوقت الافتراضي لتذكير التسجيل اليومي",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: ["index.js (/api/support-info)"],
-    note: "🔴 لا قارئ له. كُتب هنا أنه «الافتراضي لمن لم يختر وقتاً» — وليس كذلك: الافتراضي مكتوب حرفياً '20:00'::time في userdata/routes.js عند إنشاء صف user_reminder_prefs، والتطبيق يعرض profile.reminder.localTime مع بديل '20:00' ثابت في الكود، ومسح التذكيرات يقرأ user_reminder_prefs وحده. فتغيير هذه القيمة اليوم لا يغيّر شيئاً لأي مستخدم. اكتُشف في مراجعة 10 أغسطس 2026 ومقيَّد بنداً مفتوحاً في تقرير المرحلة 6. ربطه ثلاثة أسطر: يُقرأ الإعداد بدل الثابت في الموضعين.",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["userdata/routes.js (PATCH /api/me/preferences)"],
+    note: "KANAF-ORD-0001 R15-19: الوقت الافتراضي لمن يفعّل التذكير **أول مرة** بلا وقت محدد. لا يغيّر وقت أي مستخدم له صف جدولة محفوظ (لا تُلغى تفضيلات قائمة). التطبيق لا يعرض هذه القيمة؛ يعرض وقت المستخدم المحفوظ.",
   },
 
   {
@@ -213,10 +214,10 @@ export const SETTINGS_REGISTRY = [
   },
 
   {
-    key: "admin_session_minutes", label: "عمر جلسة الإدارة (عرض فقط)",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: [],
-    note: "⚠️ للعرض وحده ولا يمكن ربطه: القيمة السارية من متغيّر البيئة ADMIN_JWT_EXPIRES_IN، والرمز يُوقَّع بمدته عند الإصدار. تعديله هنا لا يفعل شيئاً — وهذا مكتوب في الشاشة أيضاً.",
+    key: "admin_session_minutes", label: "عمر جلسة الإدارة (بالدقائق)",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["admin/auth.js (issueAccessToken + كوكي الوصول)"],
+    note: "KANAF-ORD-0001 R15-19: مدة رمز الوصول الإداري وكوكيه عند كل دخول أو تجديد، من 5 إلى 60 دقيقة. الرموز القائمة تبقى بمدتها حتى تجديدها. رمز التجديد لا يتأثر. قيمة خارج الحد مرفوضة؛ تعذّر القراءة = ADMIN_JWT_EXPIRES_IN.",
   },
 ];
 
@@ -238,6 +239,9 @@ const REGISTRY_BY_KEY = Object.fromEntries(SETTINGS_REGISTRY.map((s) => [s.key, 
    طوله ويُكتب.
    ------------------------------------------------------------ */
 const APP_SETTING_VALIDATORS = {
+  admin_session_minutes: (v) =>
+    Number.isInteger(v) && v >= 5 && v <= 60 ? { value: v } : { error: "session_minutes_must_be_5_to_60" },
+
   assistant_access_policy: (v) =>
     v === "all_verified" || v === "plus_only" ? { value: v } : { error: "invalid_assistant_policy" },
 
@@ -454,6 +458,7 @@ adminSettingsRouter.put(
         [key, JSON.stringify(value), req.admin.id]
       );
 
+      if (key === "admin_session_minutes") await refreshAdminSessionMinutes();
       await logAdminAction({
         adminUserId: req.admin.id, action: "app_setting_updated",
         entity: "app_setting", entityId: key,

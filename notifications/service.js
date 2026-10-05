@@ -335,6 +335,18 @@ async function deliverInApp(delivery, campaign) {
   return { status: "delivered", providerMessageId: rows[0]?.id || null };
 }
 
+/* تذييل رسائل البث من app_settings.marketing_email_footer — KANAF-ORD-0001 R15-19.
+   كان الإعداد يظهر في اللوحة «لا يؤثر بعد» والتذييل غائباً. يُقرأ عند كل
+   رسالة (جدول صغير بمفتاح أساسي)؛ القيمة الفارغة أو غياب الصف = بلا تذييل.
+   النص يُهرَّب في HTML كبقية محتوى الحملة. */
+async function marketingFooter() {
+  try {
+    const { rows } = await query(`SELECT value FROM app_settings WHERE key = 'marketing_email_footer'`);
+    const v = rows[0]?.value;
+    return typeof v === "string" && v.trim() ? v.trim().slice(0, 500) : "";
+  } catch { return ""; }
+}
+
 async function deliverEmail(delivery, user, campaign) {
   if (user.marketing_opt_out) {
     return { status: "skipped", errorCode: "marketing_opt_out", errorDetail: "المستخدم ألغى اشتراكه في الرسائل التسويقية" };
@@ -345,8 +357,9 @@ async function deliverEmail(delivery, user, campaign) {
 
   // sendEmail يرمي في الإنتاج حين يغيب إعداد SMTP — وهذا مقصود:
   // الخطأ يظهر هنا كـfailed حقيقي بسبب واضح، بدل نجاح كاذب.
-  const result = await sendEmail(user.email, campaign.title, `${campaign.body}\n\nلإلغاء الاشتراك: ${unsubscribeUrl}`, {
-    html: wrapAsHtml(campaign.title, campaign.body, unsubscribeUrl),
+  const footer = await marketingFooter();
+  const result = await sendEmail(user.email, campaign.title, `${campaign.body}${footer ? `\n\n${footer}` : ""}\n\nلإلغاء الاشتراك: ${unsubscribeUrl}`, {
+    html: wrapAsHtml(campaign.title, campaign.body, unsubscribeUrl, footer),
   });
 
   /* ⚠️ خارج NODE_ENV=production لا يرمي sendEmail — يطبع سطراً في
@@ -417,7 +430,7 @@ function escapeHtml(text) {
   return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function wrapAsHtml(subject, plainTextMessage, unsubscribeUrl) {
+function wrapAsHtml(subject, plainTextMessage, unsubscribeUrl, footer = "") {
   const escaped = escapeHtml(plainTextMessage).replace(/\n/g, "<br>");
   return `<!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -426,6 +439,7 @@ function wrapAsHtml(subject, plainTextMessage, unsubscribeUrl) {
     <h2 style="color: #0D5C6B; margin-top: 0;">${escapeHtml(subject)}</h2>
     <p style="color: #333; line-height: 1.8; font-size: 14px;">${escaped}</p>
   </div>
+  ${footer ? `<p style="text-align: center; font-size: 11px; color: #777; margin-top: 16px;">${escapeHtml(footer)}</p>` : ""}
   <p style="text-align: center; font-size: 11px; color: #999; margin-top: 16px;">
     <a href="${unsubscribeUrl}" style="color: #999;">إلغاء الاشتراك من هذي الرسائل</a>
   </p>

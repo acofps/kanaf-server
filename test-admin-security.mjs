@@ -559,8 +559,13 @@ async function run() {
         && list.body.settings.every((s) => typeof s.wired === "boolean"),
       `مسجَّل=${registeredAppKeys.length} معروض=${listedKeys.length} · ${list.body.settings?.map((s) => `${s.key}:${s.wired}`).join(" ")}`);
 
-    log("8-ز. admin_session_minutes معلَّم بأنه لا يؤثر (قيمته السارية من متغيّر بيئة)",
-      list.body.settings.find((s) => s.key === "admin_session_minutes")?.wired === false);
+    /* KANAF-ORD-0001 R15-19: كان هذا الفحص يثبت الحال القديمة الصادقة
+       (لا يؤثر). صار الإعداد مربوطاً فعلاً بمدة رمز الوصول وكوكيه، وأثره
+       مقيس عند مستهلكه في test-11-settings-wiring.mjs (A1–A3). فالفحص
+       هنا يثبت أن العلامة تقول الحقيقة الجديدة وأن القارئ المعلن موجود. */
+    const asm = list.body.settings.find((s) => s.key === "admin_session_minutes");
+    log("8-ز. admin_session_minutes معلَّم مربوطاً، وقارئه admin/auth.js يقرؤه فعلاً",
+      asm?.wired === true && /admin_session_minutes/.test(readFileSync("./admin/auth.js", "utf8")));
   }
 
   /* ============================================================

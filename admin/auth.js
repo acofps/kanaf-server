@@ -86,11 +86,37 @@ export async function verifyAdminCredentials(email, plaintextPassword) {
   return safeAdmin;
 }
 
+/* ============================================================
+   عمر رمز الوصول الإداري — app_settings.admin_session_minutes
+   KANAF-ORD-0001 R15-19
+
+   كان الإعداد «للعرض فقط» والقيمة السارية من ADMIN_JWT_EXPIRES_IN.
+   صار مربوطاً فعلاً: يحدّد مدة رمز الوصول **ومدة كوكيه** معاً عند كل
+   إصدار (دخول أو تجديد)، بين 5 و60 دقيقة. الرموز القائمة تبقى بمدتها
+   حتى تجديدها التالي (لا إبطال رجعي). القيمة في الذاكرة تُحدَّث كل
+   دقيقة وفور حفظ الإعداد من اللوحة؛ تعذّر القراءة = متغيّر البيئة.
+   رمز التجديد (ADMIN_REFRESH_EXPIRES_IN) لا يتأثر.
+   ============================================================ */
+const SESSION_MIN = 5, SESSION_MAX = 60;
+let sessionMinutesOverride = null;
+export async function refreshAdminSessionMinutes() {
+  try {
+    const { rows } = await query(`SELECT value FROM app_settings WHERE key = 'admin_session_minutes'`);
+    const v = Number(rows[0]?.value);
+    sessionMinutesOverride = Number.isInteger(v) && v >= SESSION_MIN && v <= SESSION_MAX ? v : null;
+  } catch { /* يبقى آخر قيمة معروفة */ }
+  return sessionMinutesOverride;
+}
+refreshAdminSessionMinutes();
+const sessionTimer = setInterval(refreshAdminSessionMinutes, 60_000);
+if (typeof sessionTimer.unref === "function") sessionTimer.unref();
+function accessTtl() { return sessionMinutesOverride ? `${sessionMinutesOverride}m` : ACCESS_EXPIRES_IN; }
+
 export function issueAccessToken(admin) {
   return jwt.sign(
     { sub: admin.id, role: admin.role, type: "access" },
     JWT_SECRET,
-    { expiresIn: ACCESS_EXPIRES_IN }
+    { expiresIn: accessTtl() }
   );
 }
 
@@ -143,7 +169,7 @@ export function setAuthCookies(res, { accessToken, refreshToken }) {
   if (accessToken) {
     res.cookie("kanaf_admin_access", accessToken, {
       ...BASE_COOKIE_OPTS,
-      maxAge: durationToMs(ACCESS_EXPIRES_IN),
+      maxAge: durationToMs(accessTtl()),
       path: "/admin",
     });
   }
