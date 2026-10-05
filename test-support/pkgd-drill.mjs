@@ -108,12 +108,15 @@ try {
     win.safety_plan_get = (await call(nu.B, "GET", "/api/me/safety-plan", { token: winToken })).status;
     win.screening_with_clientRef = (await call(nu.B, "POST", "/api/me/screenings", { token: winToken, body: { kind: "gad7", total: 3, bandLabel: "طفيف", answers: {}, clientRef: crypto.randomUUID() } })).status;
     win.screening_without_clientRef = (await call(nu.B, "POST", "/api/me/screenings", { token: winToken, body: { kind: "gad7", total: 3, bandLabel: "طفيف", answers: {} } })).status;
-    win.assistant_policy = (await call(nu.B, "POST", "/api/chat", { token: winToken, body: { messages: [{ role: "user", content: "مرحبا" }] } })).status;
+    /* لا نموذج في التمرين (ANTHROPIC_API_KEY فارغ)، فنداء محادثة حقيقي يرد 500 على أي مخطط. رسائل فارغة
+       تُرفض بـ400 بعد المصادقة وبوابة السياسة: 400 هنا يعني أن سند لا يعتمد على الترحيل 012 (الافتراضي all_verified). */
+    win.assistant_gate_without_012 = (await call(nu.B, "POST", "/api/chat", { token: winToken, body: { messages: [] } })).status;
   }
   r = await call(nu.B, "POST", "/admin/auth/login", { body: { email: ADMIN_EMAIL, password: ADMIN_PW } });
   win.admin_login = r.status;
   note("W1", "new code on the OLD schema before migrating (status per route)", win);
   ok("W2", "the server itself stays up in the window (health 200) so the migration endpoint is reachable", (await fetch(nu.B + "/api/health")).ok);
+  ok("W3", "Sanad/plan do not depend on migration 012: in the window /api/chat passes auth and the access gate (400 on an empty message list, not 500)", win.assistant_gate_without_012 === 400, String(win.assistant_gate_without_012));
 
   /* ---------- 3) الترحيل عبر الخادم الجديد ---------- */
   const [m1, m2] = await Promise.all([1, 2].map(() => call(nu.B, "POST", "/api/setup/run-migrations", { headers: { "X-Setup-Token": SECRETS.SETUP_TOKEN } })));
