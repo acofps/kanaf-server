@@ -37,6 +37,9 @@ for (const k of ["user", "user2"]) {
                VALUES ($1, $2, $3, true, now(), now()) ON CONFLICT DO NOTHING`,
     [k === "user" ? "مستخدم اختبار" : "مستخدم ثانٍ", seed[k].email, await bcrypt.hash(seed[k].password, 12)]);
 }
-fs.writeFileSync(path.join(HERE, ".local", "seed.json"), JSON.stringify(seed, null, 2), { mode: 0o600 });
+/* KANAF_SEED_OUT: مسار خاص بتشغيل واحد (مشغّل E2E يمرره لكل تشغيل) — فلا يكتب تشغيلان متزامنان الملف نفسه. */
+const SEED_OUT = process.env.KANAF_SEED_OUT || path.join(HERE, ".local", "seed.json");
+fs.mkdirSync(path.dirname(SEED_OUT), { recursive: true });
+fs.writeFileSync(SEED_OUT, JSON.stringify(seed, null, 2), { mode: 0o600 });
 console.log("seeded", Object.fromEntries(Object.entries(seed).map(([k, v]) => [k, v.email])));
 await pool.end();
