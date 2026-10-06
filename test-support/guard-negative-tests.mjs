@@ -65,17 +65,19 @@ const CASES = [
   ["N3 دور غير مسموح: superuser فعلي على الكناري ذي العلامة الصحيحة", { TEST_DATABASE_URL: url(CANARY, { su: true }), KANAF_TEST_MARKER: cfg.marker }],
   ["N3b دور غير مسموح بالاسم (kanaf_adel)", { TEST_DATABASE_URL: url(CANARY, { role: "kanaf_adel", password: "x" }), KANAF_TEST_MARKER: cfg.marker }],
   ["N3c SUPERUSER_URL يشير إلى خادم آخر", { TEST_DATABASE_URL: url(CANARY), KANAF_TEST_MARKER: cfg.marker, SUPERUSER_URL: "postgresql://postgres:x@db.kanaf.me:5432/kanaf" }],
+  ["N3d SUPERUSER_URL العنقودي (قاعدة postgres بلا علامة) مصدَّر أثناء الاختبار — يُرفض والسبب يسمّيه", { TEST_DATABASE_URL: url(CANARY), KANAF_TEST_MARKER: cfg.marker, SUPERUSER_URL: url("postgres", { su: true }) }, "SUPERUSER_URL يشير إلى قاعدة «postgres» بلا علامة اختبار"],
   ["N4 الهدف سليم لكنه ليس قاعدة مخصّصة لهذا الملف (purpose مختلف)", { TEST_DATABASE_URL: url(CANARY), KANAF_TEST_MARKER: cfg.marker }],
   ["N5 مفتاح دفع حي", { TEST_DATABASE_URL: url(CANARY), KANAF_TEST_MARKER: cfg.marker, PAYMENT_SECRET_KEY: "sk_live_fake" }],
 ];
 
 const before = await fingerprint();
 const results = [];
-for (const [label, env] of CASES) {
+for (const [label, env, wantReason] of CASES) {
   const r = spawnSync(process.execPath, [VICTIM], { cwd: ROOT, env: { ...base, ...env }, encoding: "utf8", timeout: 60000 });
   const after = await fingerprint();
   const reason = (r.stderr.match(/REFUSED: (.*)/) || [])[1] || "";
-  const ok = r.status === 97 && after === before;
+  /* حالة تحدد سبباً متوقعاً: الرفض وحده لا يكفي، يجب أن يسمّي الرسالة السبب الحقيقي (ORD-0003 ACC-06) */
+  const ok = r.status === 97 && after === before && (!wantReason || reason.includes(wantReason));
   results.push({ label, ok, exit: r.status, unchanged: after === before, reason });
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}\n      exit=${r.status} canary_unchanged=${after === before} reason=${reason}`);
 }

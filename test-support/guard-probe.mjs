@@ -16,6 +16,7 @@ try {
            (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS is_super,
            to_regclass('public.kanaf_test_env_marker') IS NOT NULL AS has_marker`);
   const id = rows[0];
+  if (!id.has_marker && expectSuper) throw new Error(`SUPERUSER_URL يشير إلى قاعدة «${id.database}» بلا علامة اختبار. يُقبل SUPERUSER_URL فقط إن أشار إلى قاعدة الاختبار المعلنة نفسها (run-tests يضبطه لكل ملف يحتاجه)؛ عنوان العنقود للإعداد وحده (setup-isolated-db) — لا تصدّره عند تشغيل الاختبارات أو up.sh أو البذر`);
   if (!id.has_marker) throw new Error("لا يوجد جدول kanaf_test_env_marker — ليست قاعدة اختبار معلنة");
   const m = await client.query(`SELECT nonce, purpose FROM kanaf_test_env_marker LIMIT 1`);
   if (!m.rows[0] || m.rows[0].nonce !== marker) throw new Error("nonce العلامة لا يطابق KANAF_TEST_MARKER");

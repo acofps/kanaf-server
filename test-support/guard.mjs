@@ -111,7 +111,7 @@ process.env.PAYMENT_WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET || "guar
 process.env.DB_SSL = "false";
 
 /* ---------- 4) و 5) الهوية الفعلية بقراءة فقط (متزامن) ---------- */
-function probe(url, expectSuper) {
+function probe(url, expectSuper, label) {
   try {
     const out = execFileSync(process.execPath, [path.join(HERE, "guard-probe.mjs")], {
       env: { PATH: process.env.PATH, PROBE_URL: url, PROBE_MARKER: MARKER, PROBE_EXPECT_SUPER: expectSuper ? "1" : "0" },
@@ -119,13 +119,15 @@ function probe(url, expectSuper) {
     });
     return JSON.parse(out.trim().split("\n").pop());
   } catch (e) {
-    die(`فحص الهوية فشل: ${(e.stderr || e.message || "").toString().trim().split("\n").pop()}`);
+    die(`فحص الهوية فشل (${label}): ${(e.stderr || e.message || "").toString().trim().split("\n").pop()}`);
   }
 }
-const id = probe(TEST_URL, false);
+const id = probe(TEST_URL, false, "TEST_DATABASE_URL");
 if (id.database !== target.database) die("القاعدة المتصل بها لا تطابق العنوان");
 if (id.purpose) process.env.KANAF_TEST_DB_PURPOSE = id.purpose;
-if (superTarget) probe(process.env.SUPERUSER_URL, true);
+/* SUPERUSER_URL يُقبل فقط إن أشار إلى قاعدة اختبار معلنة (run-tests يضبطه هكذا لكل ملف يحتاجه).
+   عنوان العنقود (…/postgres) للإعداد وحده (setup-isolated-db) — تصديره عند تشغيل اختبار يُرفض هنا. */
+if (superTarget) probe(process.env.SUPERUSER_URL, true, "SUPERUSER_URL");
 
 /* pool.js يقرأ DATABASE_URL — نثبّته على الهدف المتحقَّق منه. */
 process.env.DATABASE_URL = TEST_URL;
