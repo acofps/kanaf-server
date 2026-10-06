@@ -140,6 +140,9 @@ try {
   await expectHeld("A1 DIAGNOSIS a genuine payment_paid for 1 halala on a 29 SAR invoice", inv, pay(inv, { amount: 1 }), "amount_mismatch");
   await expectHeld("A2 amount 2899 (one halala short)", inv, pay(inv, { amount: 2899 }), "amount_mismatch");
   await expectHeld("A3 amount 29 (riyals sent where halalas are required)", inv, pay(inv, { amount: 29 }), "amount_mismatch");
+  await expectHeld("A3b amount 3000 (more than the invoice)", inv, pay(inv, { amount: 3000 }), "amount_mismatch");
+  await expectHeld("A3c amount -2900 (negative)", inv, pay(inv, { amount: -2900 }), "amount_invalid");
+  await expectHeld("A3d amount 0", inv, pay(inv, { amount: 0 }), "amount_invalid");
   await expectHeld("A4 amount 2900.5 (not an integer)", inv, pay(inv, { amount: 2900.5 }), "amount_invalid");
   await expectHeld("A5 amount \"2900\" (string)", inv, pay(inv, { amount: "2900" }), "amount_invalid");
   await expectHeld("A6 amount missing", inv, pay(inv, { amount: undefined }), "amount_missing");
@@ -183,6 +186,33 @@ try {
       w2.status === 200 && s2.subs === 1 && s2.pays === 1 && s2.open.some((h) => h.reason === "second_payment_for_paid_invoice"), `${JSON.stringify(w2.body)} ${brief(s2)}`);
   })();
 
+  /* إعادة استعمال دفعة قائمة لفاتورة أخرى/مالك آخر (الحالة الاصطناعية 5 في الأمر) */
+  {
+    const iB = await newInvoice(); const iA = await newInvoice();
+    const f = pay(iB, { status: "failed" }); iB.pids = [f.id]; iA.pids = [f.id];
+    await hook("payment_failed", f);
+    const moved = { ...f, status: "paid", invoice_id: iA.prov, metadata: { kanaf_invoice_id: iA.id } };
+    const w0 = await hook("payment_paid", moved); const sA = await st(iA);
+    const { rows: [pr] } = await query(`SELECT invoice_id, user_id, status FROM payments WHERE provider_payment_id = $1`, [f.id]);
+    ok("A17b an existing (failed) payment of invoice B arriving as «paid» for invoice A of another user → held (identity conflict: the payment id already points at B); the payment stays on B, A not activated",
+      w0.status === 200 && notActivated(sA) && pr.invoice_id === iB.id && pr.user_id === iB.user.id && pr.status === "failed" && sA.open.some((h) => ["payment_invoice_conflict", "invoice_identity_conflict"].includes(h.reason)), `${JSON.stringify(w0.body)} ${JSON.stringify(pr)} ${brief(sA)}`);
+    const paidX = pay(iA); iA.pids.push(paidX.id); await hook("payment_paid", paidX);
+    const iC = await newInvoice(); iC.pids = [paidX.id];
+    const w1 = await hook("payment_paid", { ...paidX, invoice_id: iC.prov, metadata: { kanaf_invoice_id: iC.id } });
+    const sC = await st(iC);
+    ok("A17c a paid payment of user A reused for user C's invoice → held, C not activated, A's payment unchanged", w1.status === 200 && notActivated(sC) && (await st(iA)).subs === 1, `${JSON.stringify(w1.body)} ${brief(sC)}`);
+  }
+  /* فشل ثم نجاح صحيح، ثم حدث فشل متأخر */
+  {
+    const i9 = await newInvoice(); const f = pay(i9, { status: "failed" }); i9.pids = [f.id];
+    await hook("payment_failed", f);
+    const okp = await hook("payment_paid", { ...f, status: "paid" });
+    const s9 = await st(i9);
+    ok("A24 payment_failed then a correct payment_paid for the same payment → activated once", okp.status === 200 && s9.inv === "paid" && s9.subs === 1 && s9.pays === 1, `${JSON.stringify(okp.body)} ${brief(s9)}`);
+    const late = await hook("payment_failed", { ...f, status: "failed", message: "late" });
+    const s9b = await st(i9); const { rows: [p9] } = await query(`SELECT status FROM payments WHERE provider_payment_id = $1`, [f.id]);
+    ok("A25 a late payment_failed after success changes nothing (payment paid, subscription kept)", late.status === 200 && s9b.inv === "paid" && s9b.subs === 1 && p9.status === "paid", `${JSON.stringify(late.body)} ${p9.status}`);
+  }
   /* لقطة المتوقع: تغيير سعر الباقة وعملة الإعدادات بعد إنشاء الفاتورة لا يغيّر ما يُطابَق عليه */
   {
     const i2 = await newInvoice();
@@ -282,6 +312,61 @@ try {
     const ih = (integ.body.checks || []).find((c) => c.key === "open_payment_event_holds");
     const { rows: [oc] } = await query(`SELECT count(*)::int n FROM payment_event_holds WHERE status='open'`).catch(() => ({ rows: [{ n: -1 }] }));
     ok("C11 the integrity report counts open holds", ih && ih.count === oc.n && oc.n > 0, JSON.stringify({ ih: ih?.count, open: oc.n }));
+  }
+
+  /* كل حالة مرفوضة عبر المنافذ الثلاثة: webhook (أعلاه) ثم replay للحدث المخزّن ثم reconcile بالحمولة نفسها من المزوّد */
+  {
+    const CASES = [
+      ["amount_mismatch", { amount: 2800 }], ["amount_mismatch", { amount: 3000 }], ["amount_invalid", { amount: 2900.5 }],
+      ["currency_mismatch", { currency: "USD" }], ["currency_invalid", { currency: "sar" }],
+    ];
+    const res = [];
+    for (const [reason, over] of CASES) {
+      const ix = await newInvoice(); const f = pay(ix, { status: "failed" }); ix.pids = [f.id];
+      await hook("payment_failed", f);                                    // صف payments لازم لـreconcile
+      const bad = { ...f, status: "paid", ...over };
+      const w = await hook("payment_paid", bad);
+      const ev = await lastEvent(f.id);
+      const rp = await req("POST", `/admin/billing/webhook-events/${ev.id}/replay`, { reason: "إعادة حالة مرفوضة" });
+      const { rows: [prow] } = await query(`SELECT id FROM payments WHERE provider_payment_id = $1`, [f.id]);
+      prov.payments.set(f.id, bad);
+      const rc = await req("POST", `/admin/billing/payments/${prow.id}/reconcile`, { reason: "مطابقة حالة مرفوضة" });
+      const sx = await st(ix);
+      res.push({ reason, webhook: w.body.outcome, replay: rp.body.holdReason, reconcile: rc.body.holdReason, activated: !(sx.inv !== "paid" && sx.subs === 0) });
+    }
+    ok("C12 every rejected case stays rejected through webhook, replay and reconcile (same reason, no activation)",
+      res.every((r) => r.webhook === `held:${r.reason}` && r.replay === r.reason && r.reconcile === r.reason && !r.activated), JSON.stringify(res));
+  }
+  /* تزامن المنافذ: webhook صحيح + reconcile صحيح + replay لحدث غير مطابق للدفعة نفسها، في اللحظة نفسها */
+  {
+    const iz = await newInvoice(); const f = pay(iz, { status: "failed" }); iz.pids = [f.id];
+    await hook("payment_failed", f);
+    await hook("payment_paid", { ...f, status: "paid", amount: 100 });
+    const badEv = await lastEvent(f.id);
+    const { rows: [prow] } = await query(`SELECT id FROM payments WHERE provider_payment_id = $1`, [f.id]);
+    prov.payments.set(f.id, { ...f, status: "paid" });
+    const [a, b2, c] = await Promise.all([
+      hook("payment_paid", { ...f, status: "paid" }),
+      req("POST", `/admin/billing/payments/${prow.id}/reconcile`, { reason: "تزامن" }),
+      req("POST", `/admin/billing/webhook-events/${badEv.id}/replay`, { reason: "تزامن" }),
+    ]);
+    const sz = await st(iz);
+    const { rows: [pc] } = await query(`SELECT count(*)::int n FROM payments WHERE provider_payment_id = $1 AND status = 'paid'`, [f.id]);
+    ok("C13 webhook + reconcile + replay on the same payment at once → one paid payment, one subscription, no open hold left for it",
+      [a.status, b2.status, c.status].every((x) => x === 200) && sz.inv === "paid" && sz.subs === 1 && pc.n === 1 && sz.open.filter((h) => h.provider_payment_id === f.id).length === 0,
+      `${a.body.outcome} | ${b2.body.outcome} | ${c.body.outcome} ${brief(sz)}`);
+  }
+  {
+    const anyEv = (await query(`SELECT id FROM webhook_events ORDER BY received_at LIMIT 1`)).rows[0];
+    const perms2 = {
+      accountantReplay: (await asAdmin("accountant", "POST", `/admin/billing/webhook-events/${anyEv.id}/replay`, { reason: "بلا صلاحية" })).status,
+      supportReplay: (await asAdmin("support", "POST", `/admin/billing/webhook-events/${anyEv.id}/replay`, { reason: "بلا صلاحية" })).status,
+      accountantPayload: (await asAdmin("accountant", "GET", `/admin/billing/webhook-events/${anyEv.id}`)).status,
+      adminPayload: (await asAdmin("admin", "GET", `/admin/billing/webhook-events/${anyEv.id}`)).status,
+      accountantReconcile: (await asAdmin("accountant", "POST", `/admin/billing/payments/${(await query(`SELECT id FROM payments LIMIT 1`)).rows[0].id}/reconcile`, { reason: "بلا صلاحية" })).status,
+    };
+    ok("C14 Direct API: roles without the permission cannot replay (accountant, support 403), reconcile (403) or read the raw payload (accountant, admin 403 — owner only)",
+      perms2.accountantReplay === 403 && perms2.supportReplay === 403 && perms2.accountantPayload === 403 && perms2.adminPayload === 403 && perms2.accountantReconcile === 403, JSON.stringify(perms2));
   }
 
   /* ================= B — تحقق المزوّد (خلف مفتاح) ================= */
