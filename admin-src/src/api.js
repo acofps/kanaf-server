@@ -193,6 +193,9 @@ export const api = {
   webhookEvent: (id) => req(`/billing/webhook-events/${id}`),
   replayWebhookEvent: (id, reason) => req(`/billing/webhook-events/${id}/replay`, { method: "POST", body: { reason } }),
   billingIntegrity: () => req("/billing/integrity"),
+  paymentHolds: (status) => req("/billing/payment-holds", { params: { status } }),
+  recheckPaymentHold: (id, reason) => req(`/billing/payment-holds/${id}/recheck`, { method: "POST", body: { reason } }),
+  dismissPaymentHold: (id, reason) => req(`/billing/payment-holds/${id}/dismiss`, { method: "POST", body: { reason } }),
   userBilling: (id) => req(`/billing/users/${id}/billing`),
 
   /* ---------- الإعدادات ---------- */

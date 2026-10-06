@@ -30,6 +30,7 @@ const TABS = [
   { key: "payments", label: "المدفوعات", perm: "payments:view" },
   { key: "refunds", label: "الاستردادات", perm: "refunds:view" },
   { key: "events", label: "أحداث الدفع", perm: "webhooks:view" },
+  { key: "holds", label: "أحداث الدفع المحجوزة", perm: "payments:view" },
   { key: "integrity", label: "تكامل البيانات", perm: "reports:view_integrity" },
 ];
 
@@ -60,6 +61,7 @@ export default function Billing({ me, toast }) {
       {tab === "payments" && <Payments me={me} toast={toast} />}
       {tab === "refunds" && <Refunds />}
       {tab === "events" && <Events me={me} toast={toast} />}
+      {tab === "holds" && <Holds me={me} toast={toast} />}
       {tab === "integrity" && <Integrity />}
     </div>
   );
@@ -341,6 +343,75 @@ function Events({ me, toast }) {
       )}
       <Pager page={page} totalPages={state.data?.totalPages} total={state.data?.total} onPage={setPage} />
       <PayloadModal id={view} onClose={() => setView(null)} />
+      <ReasonPrompt open={!!reason} title={reason?.title || ""} description={reason?.description}
+        confirmLabel={reason?.confirmLabel} onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)} />
+    </Card>
+  );
+}
+
+/* أحداث الدفع المحجوزة — ORD-0003 N-02.
+   حدث «مدفوع» لا يطابق الفاتورة (مبلغ/عملة/هوية/حالة) أو تعذّر التحقق منه لا يفعّل اشتراكاً
+   ولا يصدر وثيقة؛ يُحجز هنا بسببه وبالمتوقع والوارد. الإجراءان الوحيدان: «إعادة الفحص» (يمر بنفس
+   المحقق — لا يتجاوزه) و«إغلاق بلا أثر مالي». لا زر «اعتبرها مدفوعة»: القبول لا يكون إلا بدليل يطابق. */
+const HOLD_STATUS = { open: "مفتوح", resolved: "حُلّ بالتحقق", dismissed: "أُغلق بلا أثر مالي" };
+const HOLD_SOURCE = { webhook: "حدث المزوّد", replay: "إعادة معالجة", reconcile: "مطابقة", recheck: "إعادة فحص" };
+const fmtMoneyObj = (o) => {
+  if (!o) return "—";
+  /* المبالغ عند المزوّد وفي التوقع بالهللة؛ تُعرض كما هي مع تحويلها للريال للقراءة فقط. */
+  const amt = typeof o.amount === "number" ? `${o.amount} هللة (${(o.amount / 100).toFixed(2)})` : o.amount != null ? String(o.amount) : null;
+  return [amt, o.currency, o.status].filter(Boolean).join(" · ") || "—";
+};
+
+function Holds({ me, toast }) {
+  const [status, setStatus] = useState("open");
+  const state = useAsync(() => api.paymentHolds(status), [status]);
+  const [reason, setReason] = useState(null);
+  const rows = state.data?.holds || [];
+  const canAct = can(me, "payments:reconcile");
+  return (
+    <Card>
+      <div className="flex gap-2 mb-3 items-center flex-wrap">
+        <Select value={status} onChange={(e) => setStatus(e.target.value)} data-testid="holds-status">
+          {Object.entries(HOLD_STATUS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          <option value="all">الكل</option>
+        </Select>
+        <span className="text-[11px]" style={{ color: C.textFaint }}>حدث دفع لم يطابق فاتورته أو لم يُتحقق منه: لا تفعيل ولا وثيقة حتى يطابق الدليل.</span>
+      </div>
+      <ErrorBar error={state.error} />
+      {state.loading ? <div className="py-8 flex justify-center"><Spinner /></div> : rows.length === 0 ? <Empty>لا أحداث محجوزة بهذه الحالة.</Empty> : (
+        <Table head={["السبب", "المصدر", "الحدث", "المتوقع", "الوارد", "الحالة", "التكرار", "أول ظهور", ""]}>
+          {rows.map((h) => (
+            <tr key={h.id} data-testid="hold-row" data-reason={h.reason}>
+              <Td><Badge color={h.kind === "mismatch" ? "crisis" : "amber"}>{h.reasonLabel}</Badge>{h.nextStep && <div className="text-[10px] mt-1" style={{ color: C.textFaint }}>{h.nextStep}</div>}</Td>
+              <Td>{HOLD_SOURCE[h.source] || h.source}</Td>
+              <Td dir="ltr">{h.eventType}{h.providerPaymentId && <div className="text-[10px]" style={{ color: C.textFaint }}>{h.providerPaymentId}</div>}</Td>
+              <Td dir="ltr">{fmtMoneyObj(h.expected)}</Td>
+              <Td dir="ltr">{fmtMoneyObj(h.received)}</Td>
+              <Td>{HOLD_STATUS[h.status] || h.status}</Td>
+              <Td>{h.seenCount}</Td>
+              <Td>{fmtDateTime(h.createdAt)}</Td>
+              <Td>
+                {canAct && h.status === "open" && (
+                  <div className="flex gap-1.5 justify-end">
+                    <Button size="sm" variant="ghost" onClick={() => setReason({
+                      title: "إعادة فحص حدث دفع محجوز",
+                      description: "يمرّر الحدث مرة أخرى على المحقق نفسه (ومن المزوّد إن كان التحقق منه مفعّلاً). إن طابق الآن يُطبَّق كأي حدث سليم؛ وإن لم يطابق يبقى محجوزاً. لا يخصم ولا يسترد ولا يتجاوز التحقق.",
+                      confirmLabel: "إعادة الفحص",
+                      run: async (r) => { const res = await api.recheckPaymentHold(h.id, r); toast(res.held ? `ما زال محجوزاً: ${res.holdReason}` : `طابق: ${res.outcome}`); state.reload(); },
+                    })}><RefreshCw size={12} /> إعادة الفحص</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setReason({
+                      title: "إغلاق الحدث المحجوز بلا أثر مالي",
+                      description: "يغلق السجل فقط (مثلاً: حدث مزيّف أو مكرر ثبت ذلك لدى المزوّد). لا يفعّل اشتراكاً ولا يصدر وثيقة ولا يسترد. إن كان مال قد حُصِّل فعلاً فالاسترداد يتم من المزوّد بإجراء منفصل.",
+                      confirmLabel: "إغلاق",
+                      run: async (r) => { await api.dismissPaymentHold(h.id, r); toast("أُغلق بلا أثر مالي"); state.reload(); },
+                    })}>إغلاق</Button>
+                  </div>
+                )}
+              </Td>
+            </tr>
+          ))}
+        </Table>
+      )}
       <ReasonPrompt open={!!reason} title={reason?.title || ""} description={reason?.description}
         confirmLabel={reason?.confirmLabel} onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)} />
     </Card>
