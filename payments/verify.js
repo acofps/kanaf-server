@@ -149,18 +149,40 @@ export async function verifyPaymentEvent(client, { eventType, data, currency, pr
   return { ok: true, invoice, existingPayment, expected: exp, received };
 }
 
+/**
+ * إجمالي المسترد كما يرسله المزوّد في كائن الدفعة — مصدر واحد لكل القارئين (KANAF-ORD-0004 COR-02):
+ * حدث payment_refunded، ومفتاح منع تكرار الحدث، ورد الاسترداد الإداري (refund.js)، والمطابقة.
+ *   - الحقل الموثق لدى المزوّد: `refunded` (عدد صحيح بالهللة، ≤ مبلغ الدفعة) — وثائق ميسّر العامة كما
+ *     قرأها المستشار بخلاصة (ORD-0004 أ-5)؛ التأكيد على حمولة حية يتبع D-05.
+ *   - `refunded_amount`: الاسم الذي قرأه هذا الكود منذ baseline بلا مصدر موثق في المستودع. يُقبل اسماً
+ *     بديلاً **وحده** (لا يُكسر تكامل قائم لو كان المزوّد يرسله فعلاً)، ويُتحقق منه بالقواعد نفسها.
+ *   - الحقلان معاً بقيمتين مختلفتين ← تعارض (لا اختيار صامت). الحقلان غائبان ← غياب (لا قيمة مفقودة
+ *     تتحول إلى مبلغ). القيمة غير عدد صحيح غير سالب ← غير صالحة.
+ * يعيد { ok:true, halalas, field } أو { ok:false, reason, fields }.
+ */
+export function providerRefundedTotal(data) {
+  const has = (v) => v !== undefined && v !== null;
+  const a = data?.refunded, b = data?.refunded_amount;
+  const fields = { refunded: has(a) ? a : null, refunded_amount: has(b) ? b : null };
+  if (!has(a) && !has(b)) return { ok: false, reason: "refund_amount_missing", fields };
+  if (has(a) && has(b) && a !== b) return { ok: false, reason: "refund_total_conflict", fields };
+  const v = has(a) ? a : b;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 0) return { ok: false, reason: "refund_amount_invalid", fields };
+  return { ok: true, halalas: v, field: has(a) ? "refunded" : "refunded_amount", fields };
+}
+
 /** حدث الاسترداد: المبلغ الإجمالي المسترد والعملة مقابل صف الدفعة القائم. */
 export function verifyRefundEvent(payment, data) {
   const received = receivedSummary(data);
-  received.refunded_amount = data?.refunded_amount ?? null;
-  if (data?.refunded_amount === undefined || data?.refunded_amount === null) return hold("refund_amount_missing", { received });
+  const t = providerRefundedTotal(data);
+  Object.assign(received, t.fields);
+  if (!t.ok) return hold(t.reason, { received });
   const cap = sarToHalalas(payment.amount);
-  const v = data.refunded_amount;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > cap) return hold("refund_amount_invalid", { received, expected: { max_refund: cap } });
+  if (t.halalas > cap) return hold("refund_amount_invalid", { received, expected: { max_refund: cap } });
   if (data.currency !== undefined && data.currency !== null && payment.currency && data.currency !== payment.currency) {
     return hold("refund_currency_mismatch", { received, expected: { currency: payment.currency } });
   }
-  return { ok: true, received };
+  return { ok: true, received, totalHalalas: t.halalas };
 }
 
 /** يسجّل حدثاً معلّقاً (صف واحد مفتوح لكل دفعة/نوع/سبب؛ التكرار يزيد العدّاد). */
@@ -180,11 +202,13 @@ export async function recordHold(client, { kind = "mismatch", reason, source, ev
 }
 
 /** إغلاق المعلّقات المفتوحة لدفعة بعد قبولها عبر أي منفذ. */
-export async function resolveHoldsFor(client, providerPaymentId, resolution) {
+export async function resolveHoldsFor(client, providerPaymentId, resolution, eventType = null) {
   if (!providerPaymentId) return 0;
+  /* eventType: لحدث الاسترداد تُحل حجوزات payment_refunded وحدها (COR-02) — قبول استرداد لا يقبل حدث دفع محجوزاً */
   const { rowCount } = await client.query(
     `UPDATE payment_event_holds SET status = 'resolved', resolution = $2::jsonb, resolved_at = now(), updated_at = now()
-      WHERE provider_payment_id = $1 AND status = 'open'`, [providerPaymentId, JSON.stringify(resolution)]);
+      WHERE provider_payment_id = $1 AND status = 'open' AND ($3::text IS NULL OR event_type = $3)`,
+    [providerPaymentId, JSON.stringify(resolution), eventType]);
   return rowCount;
 }
 

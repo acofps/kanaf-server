@@ -1,6 +1,6 @@
 import { withTransaction } from "../db/pool.js";
 import { isGenuineWebhook, HANDLED_WEBHOOK_EVENTS, fetchPayment } from "./moyasar.js";
-import { verifyPaymentEvent, verifyRefundEvent, recordHold, resolveHoldsFor, providerVerifyEnabled, fetchProviderPayment, receivedSummary } from "./verify.js";
+import { verifyPaymentEvent, verifyRefundEvent, providerRefundedTotal, recordHold, resolveHoldsFor, providerVerifyEnabled, fetchProviderPayment, receivedSummary } from "./verify.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { withDocumentSlot } from "../invoicing/slot.js";
 import { recordRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "./refund.js";
@@ -74,7 +74,9 @@ function buildDedupKey(body) {
   const type = body?.type || "unknown";
   const objectId = body?.data?.id || "unknown";
   const objectStatus = body?.data?.status || "";
-  const refunded = body?.data?.refunded_amount ?? "";
+  // إجمالي المسترد من المصدر الموحد (refunded الموثق أو refunded_amount البديل) — COR-02
+  const rt = providerRefundedTotal(body?.data);
+  const refunded = rt.ok ? rt.halalas : (body?.data?.refunded ?? body?.data?.refunded_amount ?? "");
   return `${provider}:${type}:${objectId}:${objectStatus}:${refunded}`;
 }
 
@@ -315,15 +317,16 @@ async function handlePaymentRefunded(client, providerPayment, eventId, ctx = {})
   // الطرح هو ما يجعل هذا المسار صحيحاً مع الاسترداد الجزئي المتعدد
   // وآمناً تماماً أمام التسليم المكرر في آن واحد: الحدث المكرر
   // يعطي فرقاً صفراً فلا يفعل شيئاً.
-  const providerTotalRefunded = providerPayment.refunded_amount !== undefined
-    ? halalasToSar(providerPayment.refunded_amount)
-    : Number(payment.amount);
+  const providerTotalRefunded = halalasToSar(rv.totalHalalas);
   const delta = Number((providerTotalRefunded - Number(payment.refunded_amount)).toFixed(2));
 
+  /* حدث استرداد سليم يحل حجوزات الاسترداد المفتوحة لهذه الدفعة (ومنها ما حُجز قبل COR-02 لأن الحقل
+     الموثق refunded لم يكن يُقرأ) — يحدث في كل منفذ: webhook، replay، reconcile، recheck. */
+  const refundHoldsResolved = await resolveHoldsFor(client, providerPayment.id, { by: ctx.source || "webhook", outcome: "refund_verified" }, "payment_refunded");
   if (delta <= 0) {
     // الإجمالي مسجَّل كاملاً — حجز معلّق قديم لا يمثّل مالاً إضافياً (R15-11).
     const released = await releaseStaleRefundHolds(client, payment.id, providerTotalRefunded);
-    return { outcome: "refund_already_recorded", paymentId: payment.id, ...(released ? { releasedHolds: released } : {}) };
+    return { outcome: "refund_already_recorded", paymentId: payment.id, ...(released ? { releasedHolds: released } : {}), ...(refundHoldsResolved ? { refundHoldsResolved } : {}) };
   }
 
   const result = await recordRefund(client, {
@@ -341,6 +344,7 @@ async function handlePaymentRefunded(client, providerPayment, eventId, ctx = {})
     paymentId: payment.id,
     creditNoteNumber: result.creditNoteNumber || null,
     refundedTotal: providerTotalRefunded,
+    ...(refundHoldsResolved ? { refundHoldsResolved } : {}),
     // يُصدره المُنادي بعد تثبيت المعاملة، لا داخلها.
     refundId: result.refundId || null,
     needsCreditNote: Boolean(result.needsCreditNote),

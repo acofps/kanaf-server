@@ -12,7 +12,7 @@ import {
 } from "./filters.js";
 import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "../payments/refund.js";
 import { settlePaymentEvent } from "../payments/webhook.js";
-import { providerVerifyEnabled, fetchProviderPayment } from "../payments/verify.js";
+import { providerVerifyEnabled, fetchProviderPayment, providerRefundedTotal } from "../payments/verify.js";
 import { fetchPayment } from "../payments/moyasar.js";
 
 export const billingRouter = express.Router();
@@ -654,9 +654,10 @@ billingRouter.post(
 
       /* R15-11: إجمالي المزوّد صار معروفاً — يُحسم أي حجز استرداد معلّق
          نتيجته مجهولة (أقدم من 10 دقائق) إن طابق المسجَّل. */
-      if (providerPayment?.refunded_amount !== undefined) {
+      const prt = providerRefundedTotal(providerPayment);   // COR-02: refunded الموثق أو refunded_amount البديل
+      if (prt.ok) {
         result.releasedHolds = await withTransaction((client) =>
-          releaseStaleRefundHolds(client, req.params.id, Number((Number(providerPayment.refunded_amount) / 100).toFixed(2))));
+          releaseStaleRefundHolds(client, req.params.id, Number((prt.halalas / 100).toFixed(2))));
       }
       await logAdminAction({
         adminUserId: req.admin.id, action: "payment_reconcile",
@@ -699,6 +700,7 @@ const HOLD_LABELS = {
   legacy_currency_unverifiable: "فاتورة قديمة وتغيّرت العملة بعد إنشائها", provider_disagrees: "المزوّد يخالف الحدث",
   provider_unverified: "تعذّر التحقق من المزوّد مؤقتاً", refund_amount_missing: "إجمالي الاسترداد غائب",
   refund_amount_invalid: "إجمالي الاسترداد غير صالح", refund_currency_mismatch: "عملة الاسترداد لا تطابق الدفعة",
+  refund_total_conflict: "حقلا إجمالي الاسترداد (refunded و refunded_amount) مختلفان",
 };
 const holdOut = (h) => ({
   id: h.id, kind: h.kind, reason: h.reason, reasonLabel: HOLD_LABELS[h.reason] || h.reason, source: h.source,

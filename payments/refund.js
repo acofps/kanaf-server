@@ -3,6 +3,7 @@ import { refundPayment } from "./moyasar.js";
 import { generateAndStoreCreditNote } from "../invoicing/generate.js";
 import { withDocumentSlot } from "../invoicing/slot.js";
 import { getBillingSettings } from "../billing/config.js";
+import { providerRefundedTotal } from "./verify.js";
 
 /* ============================================================
    الاسترداد — كامل وجزئي، منفَّذ لدى المزوّد فعلاً
@@ -330,10 +331,12 @@ export async function executeRefund({ paymentId, amountSar, reason, adminUserId 
     const found = await lockAndComputeAvailable(client, paymentId);
     const payment = found.payment;
 
-    // إجمالي المسترد كما يراه المزوّد هو المرجع؛ وإن لم يرجعه نجمع
-    // ما لدينا مع المبلغ المطلوب.
-    const providerTotal = providerResponse?.refunded_amount !== undefined
-      ? Number((Number(providerResponse.refunded_amount) / 100).toFixed(2))
+    // إجمالي المسترد كما يراه المزوّد هو المرجع (providerRefundedTotal: `refunded` الموثق، أو
+    // `refunded_amount` البديل — COR-02). إن لم يرجعه بقيمة صالحة لا تتجاوز الدفعة، نجمع ما لدينا مع
+    // المبلغ الذي طلبناه نحن ونجح طلبه (مصدره طلبنا لا قيمة مفقودة).
+    const pt = providerRefundedTotal(providerResponse);
+    const providerTotal = pt.ok && pt.halalas <= Math.round(Number(payment.amount) * 100)
+      ? Number((pt.halalas / 100).toFixed(2))
       : Number((Number(payment.refunded_amount) + reservation.requested).toFixed(2));
 
     return recordRefund(client, {
