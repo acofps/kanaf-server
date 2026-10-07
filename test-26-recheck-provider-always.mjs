@@ -8,7 +8,7 @@
  *
  * الحالات (كلها والمفتاح معطّل): دليل مطابق ← قبول وتفعيل مرة واحدة وحل الحجز؛ دليل غير مطابق ← يبقى؛
  * مزوّد لا يرد ← 503 برد واضح ويبقى الحجز؛ إعادة الفحص مرتين (متتاليتين ومتزامنتين) ← لا تفعيل مزدوج؛
- * دور بلا payments:reconcile ← 403. المزوّد مزيّف بالكامل؛ لا طلب إلى api.moyasar.com.
+ * دور بلا payments:reconcile ← 403؛ دليل لا يرتبط بالفاتورة ← ليس قبولاً (يبقى، والرد لا يقول «طابق»). المزوّد مزيّف بالكامل؛ لا طلب إلى api.moyasar.com.
  */
 import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
@@ -230,6 +230,19 @@ try {
       `${JSON.stringify(perms)} calls=${prov.calls} ${brief(s1)}`);
     const own = await recheck(hid, "المالك يعيد الفحص", "owner");
     ok("K7b the owner (payments:reconcile) may recheck → accepted on matching evidence", own.status === 200 && own.body.ok === true && (await st(i5)).subs === 1, JSON.stringify(own.body));
+  }
+
+  /* K9: دليل لا يرتبط بالفاتورة (لا invoice_id ولا metadata) ← ليس قبولاً: الحجز يبقى والرد لا يقول «طابق» */
+  {
+    const i6 = await newInvoice(); const d = pay(i6, { amount: "2900" });
+    const s0 = await expectHeld("K9a malformed event, flag off", i6, d, "amount_invalid");
+    const hid = openHold(s0, "amount_invalid")?.id;
+    prov.payments.set(d.id, { id: d.id, status: "paid", amount: 2900, currency: "SAR" });
+    const rk = await recheck(hid, "دليل بلا ربط");
+    const s1 = await st(i6);
+    ok("K9 provider evidence that cannot be linked to the invoice → ok:false, held:true, hold still open, nothing activated",
+      rk.status === 200 && rk.body.ok === false && rk.body.held === true && notActivated(s1) && s1.holds.find((h) => h.id === hid)?.status === "open",
+      `${JSON.stringify(rk.body)} ${brief(s1)}`);
   }
 
   /* K8: لا «اجعلها مدفوعة» */

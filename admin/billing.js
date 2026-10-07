@@ -765,12 +765,17 @@ billingRouter.post(
         return res.status(409).json({ error: "no_provider_payment_id" });
       }
       const { result } = await settlePaymentEvent({ eventType: h.event_type, body, source: "recheck", providerData, webhookEventId: h.webhook_event_id });
+      /* الحكم من حالة الحجز بعد التسوية لا من غياب held في النتيجة: دليل لا يرتبط بالفاتورة
+         (unmatched_invoice مثلاً) لا يُحجز من جديد ولا يحل الحجز — فهو «ما زال محجوزاً» لا «طابق». */
+      const { rows: [after] } = await query(`SELECT status FROM payment_event_holds WHERE id = $1`, [h.id]);
+      const stillHeld = after?.status === "open" || Boolean(result.held);
       await logAdminAction({
         adminUserId: req.admin.id, action: "payment_hold_recheck",
-        oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: result.outcome, held: Boolean(result.held) },
+        oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: result.outcome, held: stillHeld, holdStatus: after?.status || null },
         reason: String(req.body?.reason || req.query?.reason), metadata: { hold_id: h.id, provider_checked: Boolean(providerData) }, ipAddress: req.ip,
       });
-      res.json({ ok: !result.held, outcome: result.outcome, held: Boolean(result.held), holdReason: result.holdReason || null, providerChecked: Boolean(providerData) });
+      res.json({ ok: !stillHeld, outcome: result.outcome, held: stillHeld, holdStatus: after?.status || null,
+        holdReason: result.holdReason || (stillHeld ? result.outcome : null), providerChecked: Boolean(providerData) });
     } catch (err) {
       console.error("[admin/billing] hold recheck failed:", err);
       res.status(500).json({ error: "recheck_failed" });
