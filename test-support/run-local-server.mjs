@@ -29,10 +29,12 @@ globalThis.fetch = async (url, opts = {}) => {
     if (m) {
       let pay = fakeMoyasar.payments.get(m[1]);
       /* دفعات E2E تُحاكى بـwebhook من خارج العملية فلا يعرفها المزوّد الوهمي.
-         عند أول استرداد أو مطابقة تُنشأ له كدفعة مدفوعة (المبلغ من الطلب أو
-         KANAF_FAKE_PAYMENT_HALALAS). اختبار فقط — لا وجود له خارج هذا الملف. */
+         عند أول استرداد أو مطابقة أو إعادة فحص تُنشأ له كدفعة مدفوعة (المبلغ من مقطع
+         ‎_amt<هللات>_‎ في معرّف الدفعة إن وُجد، وإلا KANAF_FAKE_PAYMENT_HALALAS) — فيبقى «دليل المزوّد»
+         مطابقاً لما أرسله الاختبار (ORD-0004 COR-03). اختبار فقط — لا وجود له خارج هذا الملف. */
       if (!pay && process.env.KANAF_FAKE_LAZY_PAYMENTS === "1") {
-        const amount = Number(process.env.KANAF_FAKE_PAYMENT_HALALAS || 2900);
+        const amt = /(?:^|_)amt(\d+)(?:_|$)/.exec(m[1]);
+        const amount = amt ? Number(amt[1]) : Number(process.env.KANAF_FAKE_PAYMENT_HALALAS || 2900);
         pay = { id: m[1], status: "paid", amount, refunded: 0, currency: "SAR" };
         fakeMoyasar.payments.set(m[1], pay);
       }

@@ -12,7 +12,7 @@ import {
 } from "./filters.js";
 import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "../payments/refund.js";
 import { settlePaymentEvent } from "../payments/webhook.js";
-import { providerVerifyEnabled, fetchProviderPayment, providerRefundedTotal } from "../payments/verify.js";
+import { fetchProviderPayment, providerRefundedTotal } from "../payments/verify.js";
 import { fetchPayment } from "../payments/moyasar.js";
 
 export const billingRouter = express.Router();
@@ -686,9 +686,11 @@ billingRouter.post(
    حدث لم يُقبل (عدم مطابقة أو تعذّر تحقق مؤقت) يُحفظ في payment_event_holds بلا أثر مالي.
    • القائمة: payments:view (المحاسب، الدعم، المدير، المالك) — معرّفات آمنة والمتوقع والوارد والسبب،
      لا الحمولة الخام (تلك خلف webhooks:view_payload كما كانت).
-   • إعادة الفحص: payments:reconcile — تمر بالتحقق نفسه (settlePaymentEvent). من المزوّد إن فُعّل
-     التحقق منه أو كان المعلّق من مسار reconcile؛ وإلا بالحمولة المحفوظة. لا «اجعلها مدفوعة»، ولا
-     تحرير حالة يدوي: القبول يأتي من الدليل وحده.
+   • إعادة الفحص: payments:reconcile — تقرأ دليل المزوّد **دائماً** حين للحجز معرّف دفعة (مستقلةً عن
+     KANAF_PAYMENT_PROVIDER_VERIFY الذي يحكم التحقق التلقائي في مسار webhook وحده — ORD-0004 COR-03،
+     كما تفعل المطابقة القائمة)، ثم تمرره على المحقق نفسه تحت القفل (settlePaymentEvent). تعذّر المزوّد
+     ← 503 والحجز يبقى مفتوحاً؛ لا سقوط إلى الحمولة المحفوظة دليلَ قبول. بلا معرّف دفعة: الحمولة المحفوظة
+     وحدها (فلا قبول ممكن). لا «اجعلها مدفوعة»، ولا تحرير حالة يدوي: القبول يأتي من الدليل وحده.
    • الإغلاق بلا أثر: payments:reconcile، بسبب مكتوب — يغلق الاستثناء بعد فحصه ولا يمس مالاً.
    ============================================================ */
 const HOLD_LABELS = {
@@ -708,8 +710,9 @@ const holdOut = (h) => ({
   expected: h.expected, received: h.received, status: h.status, resolution: h.resolution, seenCount: h.seen_count,
   createdAt: h.created_at, updatedAt: h.updated_at, resolvedAt: h.resolved_at,
   nextStep: h.status !== "open" ? null
-    : h.kind === "verification_unavailable" ? "أعد الفحص لاحقاً (تعذّر الوصول للمزوّد)"
-    : "افحص الدفعة لدى المزوّد ثم أعد الفحص؛ لا تفعيل حتى يطابق الدليل",
+    : !h.provider_payment_id ? "لا معرّف دفعة: لا قبول ممكن — افحص لدى المزوّد ثم أغلق بسبب"
+    : h.kind === "verification_unavailable" ? "أعد الفحص لاحقاً: يقرأ الدفعة من المزوّد الآن"
+    : "«إعادة الفحص» تقرأ الدفعة من المزوّد الآن؛ تُقبل فقط إن طابقت الفاتورة",
 });
 
 billingRouter.get("/payment-holds", requireAdminAuth, requirePermission("payments:view"), async (req, res) => {
@@ -744,14 +747,22 @@ billingRouter.post(
       let body = null, providerData = null;
       const { rows: ev } = h.webhook_event_id
         ? await query(`SELECT payload FROM webhook_events WHERE id = $1`, [h.webhook_event_id]) : { rows: [] };
-      if (providerVerifyEnabled() || !ev[0]) {
-        if (!h.provider_payment_id) return res.status(409).json({ error: "no_provider_payment_id" });
+      if (h.provider_payment_id) {
         const f = await fetchProviderPayment(fetchPayment, h.provider_payment_id);
-        if (!f.ok) return res.status(503).json({ error: "provider_unavailable", detail: f.error });
+        if (!f.ok) {
+          await logAdminAction({
+            adminUserId: req.admin.id, action: "payment_hold_recheck",
+            oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: "provider_unavailable", held: true },
+            reason: String(req.body?.reason || req.query?.reason), metadata: { hold_id: h.id, provider_checked: false, provider_error: f.error }, ipAddress: req.ip,
+          });
+          return res.status(503).json({ error: "provider_unavailable", held: true, detail: f.error });
+        }
         providerData = f.data;
         body = { id: null, type: h.event_type, data: f.data };
-      } else {
+      } else if (ev[0]) {
         body = ev[0].payload;
+      } else {
+        return res.status(409).json({ error: "no_provider_payment_id" });
       }
       const { result } = await settlePaymentEvent({ eventType: h.event_type, body, source: "recheck", providerData, webhookEventId: h.webhook_event_id });
       await logAdminAction({

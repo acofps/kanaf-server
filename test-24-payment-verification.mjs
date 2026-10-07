@@ -296,8 +296,10 @@ try {
       perms.accountantList === 200 && perms.supportList === 200 && perms.contentList === 403 && perms.anonList === 401 && perms.accountantRecheck === 403 && perms.supportDismiss === 403, JSON.stringify(perms));
     const noReason = await req("POST", `/admin/billing/payment-holds/${row?.id}/recheck`, {});
     ok("C6 recheck without a written reason → 400", noReason.status === 400, String(noReason.status));
-    const rk = await asAdmin("admin", "POST", `/admin/billing/payment-holds/${row?.id}/recheck`, { reason: "إعادة فحص بالحمولة المحفوظة" });
-    ok("C7 recheck (admin) re-runs the verifier on the stored payload → still held, nothing activated", rk.status === 200 && rk.body.held === true && notActivated(await st(i5)), JSON.stringify(rk.body));
+    /* ORD-0004 COR-03: إعادة الفحص تقرأ المزوّد دائماً حين يوجد معرّف دفعة (والمفتاح معطّل هنا)؛ المزوّد يؤكد 100 هللة */
+    prov.payments.set(d.id, { ...d }); prov.calls = 0;
+    const rk = await asAdmin("admin", "POST", `/admin/billing/payment-holds/${row?.id}/recheck`, { reason: "إعادة فحص من المزوّد" });
+    ok("C7 recheck (admin, provider flag off) reads the provider and re-runs the verifier; the provider also says 100 → still held, nothing activated", rk.status === 200 && rk.body.held === true && rk.body.providerChecked === true && prov.calls >= 1 && notActivated(await st(i5)), `${JSON.stringify(rk.body)} calls=${prov.calls}`);
     for (const path of ["accept", "mark-paid", "approve"]) {
       const x = await req("POST", `/admin/billing/payment-holds/${row?.id}/${path}`, { reason: "لا يوجد" });
       ok(`C8 there is no «make paid» route (/${path} → 404)`, x.status === 404, String(x.status));

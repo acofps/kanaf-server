@@ -46,6 +46,9 @@ export class ApiError extends Error {
       provider_status_not_actionable: "حالة الدفعة لدى المزوّد لا تستدعي تغييراً.",
       replay_failed: "تعذّرت إعادة معالجة الحدث — التفاصيل في سجل الخادم.",
       reconcile_failed: "تعذّرت المطابقة مع المزوّد — حاول لاحقاً.",
+      provider_unavailable: "تعذّر الوصول إلى المزوّد الآن — الحدث باقٍ محجوزاً، لم يتغيّر شيء. أعد الفحص لاحقاً.",
+      recheck_failed: "تعذّرت إعادة الفحص — التفاصيل في سجل الخادم.",
+      hold_not_open: "هذا الحدث لم يعد مفتوحاً.",
       session_minutes_must_be_5_to_60: "عمر الجلسة عدد صحيح من 5 إلى 60 دقيقة.",
       invalid_assistant_policy: "القيمة يجب أن تكون all_verified أو plus_only.",
     };

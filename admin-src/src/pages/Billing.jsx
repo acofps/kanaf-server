@@ -375,7 +375,7 @@ function Holds({ me, toast }) {
           {Object.entries(HOLD_STATUS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           <option value="all">الكل</option>
         </Select>
-        <span className="text-[11px]" style={{ color: C.textFaint }}>حدث دفع لم يطابق فاتورته أو لم يُتحقق منه: لا تفعيل ولا وثيقة حتى يطابق الدليل.</span>
+        <span className="text-[11px]" style={{ color: C.textFaint }}>حدث دفع لم يطابق فاتورته أو لم يُتحقق منه: لا تفعيل ولا وثيقة حتى يطابق الدليل. «إعادة الفحص» تقرأ الدفعة من المزوّد الآن.</span>
       </div>
       <ErrorBar error={state.error} />
       {state.loading ? <div className="py-8 flex justify-center"><Spinner /></div> : rows.length === 0 ? <Empty>لا أحداث محجوزة بهذه الحالة.</Empty> : (
@@ -395,7 +395,7 @@ function Holds({ me, toast }) {
                   <div className="flex gap-1.5 justify-end">
                     <Button size="sm" variant="ghost" onClick={() => setReason({
                       title: "إعادة فحص حدث دفع محجوز",
-                      description: "يمرّر الحدث مرة أخرى على المحقق نفسه (ومن المزوّد إن كان التحقق منه مفعّلاً). إن طابق الآن يُطبَّق كأي حدث سليم؛ وإن لم يطابق يبقى محجوزاً. لا يخصم ولا يسترد ولا يتجاوز التحقق.",
+                      description: "يقرأ هذه الدفعة من المزوّد الآن ويمرّرها على المحقق نفسه: إن طابقت مبلغ الفاتورة وعملتها وحالتها تُطبَّق كأي دفعة سليمة (تفعيل ووثيقة) ويُغلق الحجز؛ وإن لم تطابق أو تعذّر الوصول للمزوّد يبقى محجوزاً. لا يخصم ولا يسترد ولا يتجاوز التحقق.",
                       confirmLabel: "إعادة الفحص",
                       run: async (r) => { const res = await api.recheckPaymentHold(h.id, r); toast(res.held ? `ما زال محجوزاً: ${res.holdReason}` : `طابق: ${res.outcome}`); state.reload(); },
                     })}><RefreshCw size={12} /> إعادة الفحص</Button>
