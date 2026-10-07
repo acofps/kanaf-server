@@ -34,6 +34,8 @@
      `run-tests.mjs` يمرّر لكل ملف يحتاج المستخدم الفائق عنواناً إلى قاعدته المعلنة هو (`NEEDS_SUPERUSER`).
 3. `node test-support/guard-negative-tests.mjs` — يجب أن ينجح كله قبل أي اختبار كاتب.
 4. `node test-support/run-tests.mjs` — قاعدة جديدة لكل ملف من القالب، تُحذف بعده.
+   ملف يخرج بصفر دون أي فحص (لا PASS ولا FAIL) يُعدّ فاشلاً (`FAIL … no-checks`) والخروج الكلي غير صفري
+   (ORD-0004 COR-04)؛ دليله السلبي `node test-support/run-tests-selftest.mjs` على `test-support/selftest/`.
    السجلات في `test-support/.local/logs/` (مستثنى من git).
 5. `node test-support/check-guard-imports.mjs` — كل ملف اختبار محروس.
 

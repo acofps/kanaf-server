@@ -13,6 +13,10 @@
    **ببيئة مبنية من الصفر** (لا يرث DATABASE_URL ولا أي سر من بيئة
    المشغّل)، ثم يحذف القاعدة. test-migrate.mjs وحده يأخذ قالب المخطط
    الأصلي بلا ترحيلات لأنه يقيس تطبيقها.
+
+   KANAF-ORD-0004 COR-04: ملف يخرج بصفر دون أن يطبع فحصاً واحداً (لا PASS ولا FAIL) **فشلٌ معلن**
+   (FAIL … no-checks) ويجعل الخروج الكلي غير صفري: صفر فحوص لا يثبت شيئاً، وقد يعني ملفاً توقف
+   قبل أول فحص أو ابتلع خطأه. الدليل السلبي: node test-support/run-tests-selftest.mjs
    ============================================================ */
 import fs from "node:fs";
 import path from "node:path";
@@ -51,7 +55,7 @@ async function suQuery(db, sql, params) {
   try { return await c.query(sql, params); } finally { await c.end(); }
 }
 
-const LOG_DIR = path.join(HERE, ".local", "logs");
+const LOG_DIR = process.env.KANAF_TEST_LOG_DIR ? path.resolve(process.env.KANAF_TEST_LOG_DIR) : path.join(HERE, ".local", "logs"); // مجلد آخر للفحص الذاتي فقط
 fs.mkdirSync(LOG_DIR, { recursive: true });
 const summary = [];
 
@@ -60,7 +64,7 @@ for (const file of files) {
   const template = TEMPLATE_FOR[file] || "kanaf_tpl_migrated";
   await suQuery("postgres", `DROP DATABASE IF EXISTS ${slug} WITH (FORCE)`);
   await suQuery("postgres", `CREATE DATABASE ${slug} TEMPLATE ${template}`);
-  await suQuery(slug, `UPDATE kanaf_test_env_marker SET purpose = $1`, [file]);
+  await suQuery(slug, `UPDATE kanaf_test_env_marker SET purpose = $1`, [path.basename(file)]);
 
   const env = {
     PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", TZ: process.env.TZ || "UTC",
@@ -77,18 +81,20 @@ for (const file of files) {
   const started = Date.now();
   const r = spawnSync(process.execPath, [file], { cwd: ROOT, env, encoding: "utf8", timeout: 15 * 60 * 1000, maxBuffer: 64 << 20 });
   const out = (r.stdout || "") + (r.stderr ? `\n--- stderr ---\n${r.stderr}` : "");
-  fs.writeFileSync(path.join(LOG_DIR, `${file}.log`), out);
+  fs.writeFileSync(path.join(LOG_DIR, `${path.basename(file)}.log`), out);
 
   const passes = (out.match(/^\s*(PASS|✔|✅)\s/gm) || []).length;
   const fails = (out.match(/^\s*(FAIL|✘|❌)\s/gm) || []).length;
   const skips = (out.match(/^\s*(SKIP|⏭|—)\s/gm) || []).length;
-  summary.push({ file, exit: r.status, signal: r.signal, passes, fails, skips, seconds: Math.round((Date.now() - started) / 1000), template });
-  console.log(`${r.status === 0 ? "OK  " : "FAIL"} ${file.padEnd(32)} exit=${r.status} pass=${passes} fail=${fails} skip=${skips} (${Math.round((Date.now() - started) / 1000)}s)`);
+  const noChecks = passes === 0 && fails === 0;
+  const failed = r.status !== 0 || noChecks;
+  summary.push({ file, exit: r.status, signal: r.signal, passes, fails, skips, noChecks, verdict: failed ? "fail" : "ok", seconds: Math.round((Date.now() - started) / 1000), template });
+  console.log(`${failed ? "FAIL" : "OK  "} ${file.padEnd(32)} exit=${r.status} pass=${passes} fail=${fails} skip=${skips}${noChecks ? " no-checks" : ""} (${Math.round((Date.now() - started) / 1000)}s)`);
 
   if (!process.env.KEEP_DB) await suQuery("postgres", `DROP DATABASE IF EXISTS ${slug} WITH (FORCE)`);
 }
 
 fs.writeFileSync(path.join(LOG_DIR, "summary.json"), JSON.stringify({ at: new Date().toISOString(), node: process.version, revision: REVISION, summary }, null, 2));
 const total = summary.reduce((a, s) => ({ p: a.p + s.passes, f: a.f + s.fails, s: a.s + s.skips }), { p: 0, f: 0, s: 0 });
-console.log(`\nTOTAL pass=${total.p} fail=${total.f} skip=${total.s} files=${summary.length} nonzero-exit=${summary.filter((s) => s.exit !== 0).length}`);
-process.exit(summary.some((s) => s.exit !== 0) ? 1 : 0);
+console.log(`\nTOTAL pass=${total.p} fail=${total.f} skip=${total.s} files=${summary.length} nonzero-exit=${summary.filter((s) => s.exit !== 0).length} no-checks=${summary.filter((s) => s.noChecks).length}`);
+process.exit(summary.some((s) => s.verdict !== "ok") ? 1 : 0);
