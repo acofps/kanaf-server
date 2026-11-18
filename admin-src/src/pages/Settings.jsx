@@ -352,7 +352,7 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
-      style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose}>
+      style={{ background: C.overlay }} onClick={onClose}>
       <div className="rounded-2xl w-full my-8 p-5" style={{ maxWidth: 480, background: C.surface, border: `1px solid ${C.line}` }}
         onClick={(e) => e.stopPropagation()}>
         <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>{entry?.label || setting.key}</h3>

@@ -32,7 +32,7 @@ export function PageTitle({ title, subtitle, children }) {
 
 export function Button({ children, onClick, variant = "primary", disabled, busy, size = "md", type = "button" }) {
   const styles = {
-    primary: { background: C.teal, color: C.bg },
+    primary: { background: C.teal, color: C.onAccent },
     ghost: { background: C.surfaceAlt, color: C.textMuted },
     danger: { background: C.crisis, color: "#fff" },
     soft: { background: C.tealSoft, color: C.teal },
@@ -56,10 +56,14 @@ export function Button({ children, onClick, variant = "primary", disabled, busy,
 
 export function Badge({ children, color = "textMuted", soft }) {
   const bg = soft || (color === "green" ? C.greenSoft : color === "crisis" ? C.crisisSoft
-    : color === "amber" ? C.amberSoft : color === "teal" ? C.tealSoft : C.surfaceAlt);
+    : color === "amber" ? C.amberSoft : color === "teal" ? C.tealSoft : color === "gold" ? C.goldSoft : C.surfaceAlt);
+  /* الذهبي لشارة الطبقة «تنفس+» وحدها، لا لشارة حالة (ORD-0005 §4.5-ج).
+     على الفاتح: تعبئة gold-100 وحد gold-600 ونص داكن — الذهبي لا يُكتب
+     نصاً صغيراً على الفاتح (§4.4)، والحد هو ما يفرّقه عن شارة التحذير. */
+  const border = color === "gold" ? `1px solid ${C.goldLine}` : "1px solid transparent";
   return (
     <span className="text-[10px] font-bold px-2 py-1 rounded-full whitespace-nowrap"
-      style={{ background: bg, color: C[color] || C.textMuted }}>
+      style={{ background: bg, color: C[color] || C.textMuted, border }}>
       {children}
     </span>
   );
@@ -144,7 +148,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
-      style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose}>
+      style={{ background: C.overlay }} onClick={onClose}>
       <div className="rounded-2xl w-full my-8" style={{ background: C.surface, border: `1px solid ${C.line}`, maxWidth: width }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${C.line}` }}>

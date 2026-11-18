@@ -2,10 +2,10 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet,
+  SlidersHorizontal, History, Wallet, Sun, Moon,
 } from "lucide-react";
 import { api } from "./api.js";
-import { C, ROLE_LABEL, canAny } from "./theme.js";
+import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
 import { Spinner } from "./ui.jsx";
 
 import Login from "./pages/Login.jsx";
@@ -41,22 +41,42 @@ import Setup from "./pages/Setup.jsx";
    بنفسه ويردّ 403 لمن كتب العنوان يدوياً.
    ============================================================ */
 
-const SECTIONS = [
-  { key: "overview",     label: "نظرة عامة",     icon: LayoutDashboard,   perms: ["overview:view"] },
-  { key: "users",        label: "المستخدمون",     icon: UsersIcon,         perms: ["users:view"] },
-  { key: "messages",     label: "الرسائل",        icon: Mail,              perms: ["messages:view"] },
-  { key: "content",      label: "المحتوى",        icon: BookOpen,          perms: ["content:view"] },
-  { key: "notifications",label: "الإشعارات",      icon: Bell,              perms: ["notifications:view"] },
-  { key: "plans",        label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
-  { key: "invoices",     label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
-  // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
-  { key: "billing",      label: "المالية",        icon: Wallet,            perms: BILLING_PERMS },
-  { key: "break-glass",  label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
-  { key: "settings",     label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
-  { key: "admin-users",  label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
-  { key: "audit-log",    label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
-  { key: "access-log",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
+/* ثلاث مجموعات كما في التصميم المرجعي (KANAF-ORD-0008 §2.1):
+   المتابعة · التشغيل · الحوكمة. لون كل قسم ثابت: يتكرر في القائمة
+   وفي بطاقة رقمه (sectionTone في theme.js). */
+const GROUPS = [
+  { key: "watch", label: "المتابعة" },
+  { key: "ops",   label: "التشغيل" },
+  { key: "gov",   label: "الحوكمة" },
 ];
+
+const SECTIONS = [
+  { key: "overview",     group: "watch", label: "نظرة عامة",     icon: LayoutDashboard,   perms: ["overview:view"] },
+  { key: "users",        group: "watch", label: "المستخدمون",     icon: UsersIcon,         perms: ["users:view"] },
+  { key: "messages",     group: "watch", label: "الرسائل",        icon: Mail,              perms: ["messages:view"] },
+  { key: "content",      group: "ops",   label: "المحتوى",        icon: BookOpen,          perms: ["content:view"] },
+  { key: "notifications",group: "ops",   label: "الإشعارات",      icon: Bell,              perms: ["notifications:view"] },
+  { key: "plans",        group: "ops",   label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
+  { key: "invoices",     group: "ops",   label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
+  // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
+  { key: "billing",      group: "ops",   label: "المالية",        icon: Wallet,            perms: BILLING_PERMS },
+  { key: "break-glass",  group: "gov",   label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
+  { key: "settings",     group: "gov",   label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
+  { key: "admin-users",  group: "gov",   label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
+  { key: "audit-log",    group: "gov",   label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
+  { key: "access-log",   group: "gov",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
+];
+
+/* زر الوضع — الفاتح افتراضي، والاختيار يُحفظ في هذا المتصفّح وحده. */
+function ThemeToggle({ mode, onToggle }) {
+  const dark = mode === "dark";
+  return (
+    <button onClick={onToggle} title={dark ? "الوضع الفاتح" : "الوضع الداكن"} aria-label={dark ? "الوضع الفاتح" : "الوضع الداكن"}
+      className="rounded-xl p-2 shrink-0" style={{ background: C.surface, border: `1px solid ${C.line}`, color: C.textMuted }}>
+      {dark ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
+    </button>
+  );
+}
 
 export default function App() {
   /* رابط الدعوة يصل بالشكل /?setup=TOKEN، ويصل صاحبه **قبل** أن
@@ -70,6 +90,8 @@ export default function App() {
   const [section, setSection] = useState("overview");
   const [navOpen, setNavOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
+  const [mode, setMode] = useState(readTheme);
+  const toggleMode = () => setMode((m) => applyTheme(m === "dark" ? "light" : "dark"));
 
   const toast = useCallback((m) => {
     setToastMsg(m);
@@ -144,54 +166,89 @@ export default function App() {
     "access-log": AccessLog,
   }[section] || Overview;
 
+  const current = SECTIONS.find((s) => s.key === section);
+
   return (
     <div dir="rtl" className="min-h-screen" style={{ background: C.bg }}>
       {/* شريط علوي للشاشات الصغيرة */}
-      <div className="lg:hidden sticky top-0 z-40 flex items-center justify-between px-4 py-3"
+      <div className="lg:hidden sticky top-0 z-40 flex items-center justify-between gap-2 px-4 py-3"
         style={{ background: C.surface, borderBottom: `1px solid ${C.line}` }}>
-        <button onClick={() => setNavOpen((v) => !v)}>
+        <button onClick={() => setNavOpen((v) => !v)} aria-label="القائمة">
           {navOpen ? <X size={18} color={C.text} /> : <Menu size={18} color={C.text} />}
         </button>
         <span className="text-sm font-bold" style={{ color: C.text }}>لوحة تنفس</span>
-        <button onClick={logout}><LogOut size={16} color={C.textMuted} /></button>
+        <div className="flex items-center gap-2">
+          <ThemeToggle mode={mode} onToggle={toggleMode} />
+          <button onClick={logout} aria-label="خروج"><LogOut size={16} color={C.textMuted} /></button>
+        </div>
       </div>
 
       <div className="flex">
         <aside
-          className={`${navOpen ? "block" : "hidden"} lg:block fixed lg:sticky top-0 right-0 z-30 h-screen w-64 shrink-0 overflow-y-auto p-4`}
+          className={`${navOpen ? "block" : "hidden"} lg:flex lg:flex-col fixed lg:sticky top-0 right-0 z-30 h-screen w-64 shrink-0 overflow-y-auto p-4`}
           style={{ background: C.surface, borderLeft: `1px solid ${C.line}` }}
         >
-          <div className="hidden lg:block mb-6">
-            <h1 className="text-base font-bold" style={{ color: C.text }}>لوحة تنفس</h1>
-            <p className="text-[11px] mt-1" style={{ color: C.textFaint }}>
-              {me.name} · {ROLE_LABEL[me.role] || me.role}
-            </p>
+          <div className="hidden lg:flex items-center gap-2.5 mb-6 px-1">
+            <img src="/favicon.svg" alt="" width="36" height="36" className="shrink-0" />
+            <div className="min-w-0">
+              <h1 className="text-base font-bold leading-tight" style={{ color: C.text }}>لوحة تنفس</h1>
+              <p className="text-[11px] mt-0.5 truncate" style={{ color: C.textFaint }}>
+                {me.name} · {ROLE_LABEL[me.role] || me.role}
+              </p>
+            </div>
           </div>
 
-          <nav className="grid gap-1">
-            {allowed.map((s) => {
-              const Icon = s.icon;
-              const on = s.key === section;
+          <nav className="grid gap-4">
+            {GROUPS.map((g) => {
+              const items = allowed.filter((s) => s.group === g.key);
+              if (items.length === 0) return null;
               return (
-                <button key={s.key} onClick={() => { setSection(s.key); setNavOpen(false); }}
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold text-right"
-                  style={{ background: on ? C.tealSoft : "transparent", color: on ? C.teal : C.textMuted }}>
-                  <Icon size={15} />
-                  {s.label}
-                </button>
+                <div key={g.key}>
+                  <p className="text-[11px] font-bold px-3 mb-1.5" style={{ color: C.textFaint }}>{g.label}</p>
+                  <div className="grid gap-0.5">
+                    {items.map((s) => {
+                      const Icon = s.icon;
+                      const on = s.key === section;
+                      const tone = sectionTone(s.key);
+                      return (
+                        <button key={s.key} onClick={() => { setSection(s.key); setNavOpen(false); }}
+                          aria-current={on ? "page" : undefined}
+                          className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-[13px] font-bold text-right"
+                          style={{ background: on ? C.tealSoft : "transparent", color: on ? C.text : C.textMuted }}>
+                          <span className="rounded-lg p-1.5 shrink-0" style={{ background: tone.soft }}>
+                            <Icon size={16} strokeWidth={1.75} color={tone.fg} />
+                          </span>
+                          {s.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
           </nav>
 
           <button onClick={logout}
-            className="hidden lg:flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold w-full mt-6"
+            className="hidden lg:flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold w-full mt-auto pt-6"
             style={{ color: C.textFaint }}>
-            <LogOut size={15} /> خروج
+            <LogOut size={15} strokeWidth={1.75} /> خروج
           </button>
         </aside>
 
-        <main className="flex-1 min-w-0 p-4 lg:p-6">
-          <Page me={me} toast={toast} />
+        <main className="flex-1 min-w-0">
+          <div className="hidden lg:flex items-center justify-between gap-3 px-6 py-3"
+            style={{ borderBottom: `1px solid ${C.line}`, background: C.surface }}>
+            <div className="flex items-center gap-2 min-w-0">
+              {current && (() => { const tone = sectionTone(current.key); const Icon = current.icon; return (
+                <span className="rounded-lg p-1.5" style={{ background: tone.soft }}><Icon size={16} strokeWidth={1.75} color={tone.fg} /></span>
+              ); })()}
+              <span className="text-xs font-bold truncate" style={{ color: C.textMuted }}>{current?.label}</span>
+            </div>
+            <ThemeToggle mode={mode} onToggle={toggleMode} />
+          </div>
+          <div className="p-4 lg:p-6">
+            <Page me={me} toast={toast} />
+          </div>
         </main>
       </div>
 

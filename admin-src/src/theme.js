@@ -1,33 +1,69 @@
 /* ============================================================
    هوية اللوحة البصرية — «تنفس» (كنف سابقاً).
 
-   اللوحة وضع واحد داكن، فالقيم هنا قيم الوضع الليلي في
-   KANAF-ORD-0005 §5، المبني على عمق لون الشعار #8D79A3.
-   أسماء المفاتيح (teal وغيرها) معرّفات تقرؤها الصفحات، فبقيت كما
-   هي، وتغيّرت قيمها فقط: teal هو لون العلامة على الداكن (brand-300).
+   الألوان كلها رموز CSS معرَّفة في index.css: الوضع الفاتح أولاً
+   (الافتراضي)، ثم الداكن. هنا مراجع إليها فقط — `C.text` يساوي
+   "var(--text)" — فكل صفحة تقرأ من C تتبدّل مع الوضع دون أن تُمسّ.
+   (KANAF-ORD-0008 §2.3)
 
-   الذهبي (gold-300 على الداكن، §4.5) لشارة «تنفس+» وحدها، ولا يظهر
-   في شارة حالة أبداً. الشارات الدلالية تبقى amber/crisis/green.
+   أسماء المفاتيح (teal وغيرها) معرّفات تقرؤها الصفحات، فبقيت كما
+   هي: teal = لون العلامة النشط (brand-600 فاتحاً، brand-300 داكناً).
+
+   الذهبي لشارة «تنفس+» وحدها، ولا يظهر في شارة حالة أبداً.
    ============================================================ */
 export const C = {
-  bg: "#1A1223",
-  surface: "#241A2F",
-  surfaceAlt: "#2E2340",
-  line: "#3A2D4D",
-  text: "#EFE9F5",
-  textMuted: "#B6A8C6",
-  textFaint: "#857699",
-  teal: "#C1AED5",
-  tealSoft: "rgba(193,174,213,0.16)",
-  gold: "#EACD86",
-  goldSoft: "rgba(234,205,134,0.14)",
-  amber: "#D9A441",
-  amberSoft: "rgba(217,164,65,0.14)",
-  crisis: "#E2574C",
-  crisisSoft: "rgba(226,87,76,0.14)",
-  green: "#4CAF7D",
-  greenSoft: "rgba(76,175,125,0.14)",
+  bg: "var(--bg)",
+  surface: "var(--surface)",
+  surfaceAlt: "var(--surface-alt)",
+  line: "var(--line)",
+  lineSoft: "var(--line-soft)",
+  text: "var(--text)",
+  textMuted: "var(--text-muted)",
+  textFaint: "var(--text-faint)",
+  teal: "var(--accent)",
+  tealSoft: "var(--accent-soft)",
+  onAccent: "var(--on-accent)",
+  gold: "var(--gold-text)",
+  goldSoft: "var(--gold-soft)",
+  goldLine: "var(--gold-line)",
+  amber: "var(--amber)",
+  amberSoft: "var(--amber-soft)",
+  crisis: "var(--crisis)",
+  crisisSoft: "var(--crisis-soft)",
+  crisisSignal: "var(--crisis-signal)",
+  crisisSignalSoft: "var(--crisis-soft)",
+  green: "var(--green)",
+  greenSoft: "var(--green-soft)",
+  overlay: "var(--overlay)",
 };
+
+/* ------------------------------------------------------------
+   لون كل قسم — إشارة تموضع لا زينة (KANAF-ORD-0008 §2.5).
+   القيم في index.css (--sec-*) مقيسة: الأيقونة ≥ 4.5:1 على خلفية
+   مربّعها وعلى السطح، في الوضعين. التعبئة نسبة من اللون نفسه.
+   ------------------------------------------------------------ */
+export function sectionTone(key) {
+  const fg = `var(--sec-${key}, var(--accent))`;
+  return { fg, soft: `color-mix(in srgb, ${fg} var(--sec-tint), transparent)` };
+}
+
+/* ------------------------------------------------------------
+   الوضع الفاتح/الداكن — اختيار المسؤول في متصفّحه وحده.
+   التخزين المحلي قد يكون محجوباً (تصفّح خاص)؛ عندها يبقى الفاتح.
+   ------------------------------------------------------------ */
+const THEME_KEY = "tanaffus-admin-theme";
+export function readTheme() {
+  try { return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light"; } catch { return "light"; }
+}
+export function applyTheme(mode) {
+  const m = mode === "dark" ? "dark" : "light";
+  if (m === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", m === "dark" ? "#1A1223" : "#FFFFFF");
+  try { localStorage.setItem(THEME_KEY, m); } catch { /* لا تخزين — يبقى للجلسة */ }
+  return m;
+}
 
 export const ROLE_LABEL = {
   support: "دعم فني",
