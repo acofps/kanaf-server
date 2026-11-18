@@ -205,6 +205,25 @@ export const SETTINGS_REGISTRY = [
     readBy: ["index.js (/api/support-info)"],
     note: "كسابقه. كان @marsah.app في الكود.",
   },
+  /* KANAF-ORD-0008 §9.2 — روابط تذييل البريد. فارغة حتى يضبطها المالك؛ والزر مخفيّ ما دامت فارغة. */
+  {
+    key: "social_tiktok_handle", label: "حساب تيك توك",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/email-template.js (تذييل البريد)"],
+    note: "المعرّف وحده بالقائمة البيضاء نفسها لحسابي X وإنستقرام. فارغ = لا يظهر في التذييل. لمسحه أرسل null.",
+  },
+  {
+    key: "app_store_url", label: "رابط App Store",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/email-template.js (تذييل البريد)"],
+    note: "https://apps.apple.com/… فقط — أي نطاق آخر يُرفض. فارغ = الزر مخفيّ في البريد.",
+  },
+  {
+    key: "google_play_url", label: "رابط Google Play",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/email-template.js (تذييل البريد)"],
+    note: "https://play.google.com/… فقط — أي نطاق آخر يُرفض. فارغ = الزر مخفيّ في البريد.",
+  },
   {
     key: "daily_reminder_time", label: "الوقت الافتراضي لتذكير التسجيل اليومي",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
@@ -267,6 +286,9 @@ const APP_SETTING_VALIDATORS = {
 
   social_x_handle: (v) => normalizeHandle(v),
   social_instagram_handle: (v) => normalizeHandle(v),
+  social_tiktok_handle: (v) => (v === null ? { value: null } : normalizeHandle(v)),
+  app_store_url: (v) => storeUrl(v, "apps.apple.com"),
+  google_play_url: (v) => storeUrl(v, "play.google.com"),
 
   daily_reminder_time: (v) => {
     if (typeof v !== "string" || !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(v.trim())) {
@@ -275,6 +297,16 @@ const APP_SETTING_VALIDATORS = {
     return { value: v.trim() };
   },
 };
+
+/* رابط متجر رسمي وحده: https والمضيف بعينه — فلا يصير الإعداد رابطاً لموقع آخر في بريد العملاء. */
+function storeUrl(v, host) {
+  if (v === null) return { value: null };
+  if (typeof v !== "string") return { error: "value_must_be_string_or_null" };
+  let u;
+  try { u = new URL(v.trim()); } catch { return { error: "invalid_url" }; }
+  if (u.protocol !== "https:" || u.hostname !== host) return { error: `url_must_be_https_${host}` };
+  return { value: u.toString() };
+}
 
 function normalizeHandle(v) {
   if (typeof v !== "string") return { error: "value_must_be_string" };

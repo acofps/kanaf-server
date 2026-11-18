@@ -1,5 +1,6 @@
 import { query } from "../db/pool.js";
 import { sendEmail } from "../mail/send.js";
+import { serviceEmailExtra } from "./email-template.js";
 
 /* ============================================================
    سجل رسائل النظام — KANAF-ORD-0008 §3.4 و§1.1
@@ -39,8 +40,10 @@ export async function logSystemMessage({ userId = null, email = null, kind, chan
  */
 export async function sendSystemEmail(kind, to, subject, text, extra = {}) {
   let result;
+  // القالب الموحّد (§9): النص كما هو، ومعه نسخة HTML بالشعار — بلا رابط إلغاء اشتراك.
+  const withHtml = extra.html ? extra : { ...(await serviceEmailExtra(subject, text)), ...extra };
   try {
-    result = await sendEmail(to, subject, text, extra);
+    result = await sendEmail(to, subject, text, withHtml);
   } catch (err) {
     await logSystemMessage({ email: to, kind, channel: "email", status: "failed", errorCode: "send_error" });
     throw err;

@@ -4,6 +4,7 @@ import { abandonedWhere, purchasedLaterSql } from "../billing/abandoned.js";
 import { sendEmail } from "../mail/send.js";
 import { generateUnsubscribeToken } from "./unsubscribe.js";
 import { sendPushToUser, isPushConfigured } from "./push.js";
+import { renderEmail, footerLinks } from "./email-template.js";
 
 /* ============================================================
    طبقة تسليم الإشعارات — ثلاث قنوات، وحالة حقيقية لكل مستلم.
@@ -419,7 +420,8 @@ async function deliverEmail(delivery, user, campaign) {
   // الخطأ يظهر هنا كـfailed حقيقي بسبب واضح، بدل نجاح كاذب.
   const footer = await marketingFooter();
   const result = await sendEmail(user.email, campaign.title, `${campaign.body}${footer ? `\n\n${footer}` : ""}\n\nلإلغاء الاشتراك: ${unsubscribeUrl}`, {
-    html: wrapAsHtml(campaign.title, campaign.body, unsubscribeUrl, footer),
+    // القالب الموحّد (KANAF-ORD-0008 §9): تسويقية → رابط الإلغاء إلزامي فيها.
+    ...renderEmail({ title: campaign.title, text: campaign.body, kind: "marketing", unsubscribeUrl, footerNote: footer, links: await footerLinks() }),
   });
 
   /* ⚠️ خارج NODE_ENV=production لا يرمي sendEmail — يطبع سطراً في
@@ -486,25 +488,7 @@ async function failCampaign(campaignId, reason) {
   );
 }
 
-function escapeHtml(text) {
-  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
-function wrapAsHtml(subject, plainTextMessage, unsubscribeUrl, footer = "") {
-  const escaped = escapeHtml(plainTextMessage).replace(/\n/g, "<br>");
-  return `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<body style="font-family: Arial, sans-serif; direction: rtl; text-align: right; background: #F6F2FA; padding: 24px;">
-  <div style="max-width: 480px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; border: 1px solid #ECE4F4;">
-    <h2 style="color: #735890; margin-top: 0;">${escapeHtml(subject)}</h2>
-    <p style="color: #333; line-height: 1.8; font-size: 14px;">${escaped}</p>
-  </div>
-  ${footer ? `<p style="text-align: center; font-size: 11px; color: #777; margin-top: 16px;">${escapeHtml(footer)}</p>` : ""}
-  <p style="text-align: center; font-size: 11px; color: #999; margin-top: 16px;">
-    <a href="${unsubscribeUrl}" style="color: #999;">إلغاء الاشتراك من هذي الرسائل</a>
-  </p>
-</body></html>`;
-}
 
 /* ------------------------------------------------------------
    إشعار نظامي لمستخدم واحد — داخل التطبيق فقط.
