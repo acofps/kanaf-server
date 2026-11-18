@@ -102,7 +102,7 @@ function setupUrl(token) {
 function inviteEmailBody(name, url, hours, roleLabel) {
   return `مرحباً ${name}،
 
-أُنشئ لك حساب في لوحة إدارة كنف بصلاحية «${roleLabel}».
+أُنشئ لك حساب في لوحة إدارة تنفس بصلاحية «${roleLabel}».
 
 لتفعيل حسابك واختيار كلمة مرورك، افتح الرابط التالي:
 
@@ -112,13 +112,13 @@ ${url}
 
 إذا ما كنت تتوقع هذه الرسالة، تجاهلها — الحساب لا يعمل قبل فتح الرابط.
 
-فريق كنف`;
+فريق تنفس`;
 }
 
 function resetEmailBody(name, url, hours) {
   return `مرحباً ${name}،
 
-وصلنا طلب لإعادة ضبط كلمة مرور حسابك في لوحة إدارة كنف.
+وصلنا طلب لإعادة ضبط كلمة مرور حسابك في لوحة إدارة تنفس.
 
 ${url}
 
@@ -126,7 +126,7 @@ ${url}
 
 إذا ما طلبت هذا، تجاهل الرسالة — كلمة مرورك الحالية ما زالت تعمل، ويُستحسن تخبر المالك.
 
-فريق كنف`;
+فريق تنفس`;
 }
 
 /* ------------------------------------------------------------
@@ -274,7 +274,7 @@ adminAccountsRouter.post(
       try {
         await sendEmail(
           created.admin.email,
-          "دعوة إلى لوحة إدارة كنف",
+          "دعوة إلى لوحة إدارة تنفس",
           inviteEmailBody(created.admin.name, url, created.expiresInHours, ROLE_LABEL[role] || role)
         );
         emailed = true;
@@ -330,7 +330,7 @@ adminAccountsRouter.post(
       const url = setupUrl(issued.token);
       let emailed = false, emailError = null;
       try {
-        await sendEmail(admin.email, "دعوة إلى لوحة إدارة كنف",
+        await sendEmail(admin.email, "دعوة إلى لوحة إدارة تنفس",
           inviteEmailBody(admin.name, url, issued.expiresInHours, ""));
         emailed = true;
       } catch (err) { emailError = err.message; console.error("[admin/accounts] تعذّر إعادة الإرسال:", err.message); }
@@ -368,7 +368,7 @@ adminAccountsRouter.post(
       const url = setupUrl(issued.token);
       let emailed = false, emailError = null;
       try {
-        await sendEmail(admin.email, "إعادة ضبط كلمة مرور لوحة كنف",
+        await sendEmail(admin.email, "إعادة ضبط كلمة مرور لوحة تنفس",
           resetEmailBody(admin.name, url, issued.expiresInHours));
         emailed = true;
       } catch (err) { emailError = err.message; console.error("[admin/accounts] تعذّر إرسال الاستعادة:", err.message); }

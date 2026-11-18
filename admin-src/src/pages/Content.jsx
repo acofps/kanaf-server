@@ -117,8 +117,9 @@ export default function Content({ me, toast }) {
                     </Td>
                     <Td><span style={{ color: C.textMuted }}>{CONTENT_TYPE_LABEL[it.content_type] || it.content_type}</span></Td>
                     <Td>
-                      <Badge color={it.subscription_tier === "plus" ? "amber" : "textMuted"}>
-                        {it.subscription_tier === "plus" ? "كنف+" : "مجاني"}
+                      <Badge color={it.subscription_tier === "plus" ? "gold" : "textMuted"}
+                        soft={it.subscription_tier === "plus" ? C.goldSoft : undefined}>
+                        {it.subscription_tier === "plus" ? "تنفس+" : "مجاني"}
                       </Badge>
                     </Td>
                     <Td>
@@ -238,7 +239,7 @@ function EditPresentation({ item, me, onClose, onDone }) {
         <Field label="الطبقة" hint={canTier ? "تغيير الطبقة قرار مالي — يُسجَّل في سجل التدقيق." : "يحتاج صلاحية مدير."}>
           <Select value={tier} disabled={!canTier} onChange={(e) => setTier(e.target.value)}>
             <option value="free">مجاني</option>
-            <option value="plus">كنف+</option>
+            <option value="plus">تنفس+</option>
           </Select>
         </Field>
         <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="اختياري" /></Field>

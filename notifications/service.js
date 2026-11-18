@@ -447,9 +447,9 @@ function wrapAsHtml(subject, plainTextMessage, unsubscribeUrl, footer = "") {
   const escaped = escapeHtml(plainTextMessage).replace(/\n/g, "<br>");
   return `<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<body style="font-family: Arial, sans-serif; direction: rtl; text-align: right; background: #f4f6f6; padding: 24px;">
-  <div style="max-width: 480px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; border: 1px solid #e0e6e6;">
-    <h2 style="color: #0D5C6B; margin-top: 0;">${escapeHtml(subject)}</h2>
+<body style="font-family: Arial, sans-serif; direction: rtl; text-align: right; background: #F6F2FA; padding: 24px;">
+  <div style="max-width: 480px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; border: 1px solid #ECE4F4;">
+    <h2 style="color: #735890; margin-top: 0;">${escapeHtml(subject)}</h2>
     <p style="color: #333; line-height: 1.8; font-size: 14px;">${escaped}</p>
   </div>
   ${footer ? `<p style="text-align: center; font-size: 11px; color: #777; margin-top: 16px;">${escapeHtml(footer)}</p>` : ""}

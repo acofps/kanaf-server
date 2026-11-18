@@ -56,7 +56,7 @@ console.log = (...args) => {
 function lastCodeFor(email) {
   const entry = [...sentMail].reverse().find((m) => m.includes(email));
   if (!entry) return null;
-  const m = /كود تأكيد بريدك في كنف: (\d{6})/.exec(entry);
+  const m = /كود تأكيد بريدك في تنفس: (\d{6})/.exec(entry);
   return m ? m[1] : null;
 }
 

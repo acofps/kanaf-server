@@ -110,7 +110,7 @@ export const PERMISSION_CATALOG = {
   "content:review":           "الاعتماد السريري أو الرفض",
   "content:toggle_launch":    "مفتاح الإطلاق — إيقاف محتوى حيّ فوراً أو إعادته",
   "content:schedule":         "جدولة النشر والإيقاف",
-  "content:change_tier":      "تحويل محتوى بين مجاني وكنف+ — قرار مالي",
+  "content:change_tier":      "تحويل محتوى بين مجاني وتنفس+ — قرار مالي",
   "content:bulk_publish":     "النشر الجماعي",
 
   /* --- الإشعارات --- */

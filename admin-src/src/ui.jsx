@@ -32,7 +32,7 @@ export function PageTitle({ title, subtitle, children }) {
 
 export function Button({ children, onClick, variant = "primary", disabled, busy, size = "md", type = "button" }) {
   const styles = {
-    primary: { background: C.teal, color: "#0B1418" },
+    primary: { background: C.teal, color: C.bg },
     ghost: { background: C.surfaceAlt, color: C.textMuted },
     danger: { background: C.crisis, color: "#fff" },
     soft: { background: C.tealSoft, color: C.teal },

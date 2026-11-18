@@ -152,7 +152,7 @@ export default function App() {
         <button onClick={() => setNavOpen((v) => !v)}>
           {navOpen ? <X size={18} color={C.text} /> : <Menu size={18} color={C.text} />}
         </button>
-        <span className="text-sm font-bold" style={{ color: C.text }}>لوحة كنف</span>
+        <span className="text-sm font-bold" style={{ color: C.text }}>لوحة تنفس</span>
         <button onClick={logout}><LogOut size={16} color={C.textMuted} /></button>
       </div>
 
@@ -162,7 +162,7 @@ export default function App() {
           style={{ background: C.surface, borderLeft: `1px solid ${C.line}` }}
         >
           <div className="hidden lg:block mb-6">
-            <h1 className="text-base font-bold" style={{ color: C.text }}>لوحة كنف</h1>
+            <h1 className="text-base font-bold" style={{ color: C.text }}>لوحة تنفس</h1>
             <p className="text-[11px] mt-1" style={{ color: C.textFaint }}>
               {me.name} · {ROLE_LABEL[me.role] || me.role}
             </p>

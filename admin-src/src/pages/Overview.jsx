@@ -25,7 +25,7 @@ const SOURCE_LABEL = {
   daily_log: "تدوين يومي",
   manual: "زر الأزمة",
   notebook: "دفتر",
-  cbt: "أداة كنف",
+  cbt: "أداة تنفس",
 };
 
 function Stat({ icon: Icon, label, value, hint, color = "teal" }) {
