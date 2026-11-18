@@ -113,6 +113,16 @@ export const api = {
   // KANAF-ORD-0008 §3 — السبب إلزامي ويُسجَّل في سجل الوصول
   listSentMessages: (params) => req("/sent-messages", { params }),
   listAbandonedCarts: (params) => req("/abandoned-carts", { params }), // KANAF-ORD-0008 §4
+  // KANAF-ORD-0008 §6 — غير مربوطة بالدفع
+  listDiscountCodes: (params) => req("/discount-codes", { params }),
+  createDiscountCode: (body) => req("/discount-codes", { method: "POST", body }),
+  setDiscountActive: (id, active, reason) => req(`/discount-codes/${id}/active`, { method: "POST", body: { active, reason } }),
+  checkDiscountCode: (body) => req("/discount-codes/check", { method: "POST", body }),
+  // KANAF-ORD-0008 §7 — اعتمادات لا تكامل؛ لا مسار يعيد سرّاً
+  listIntegrations: () => req("/integrations"),
+  setIntegrationKey: (service, key, value, reason) => req(`/integrations/${service}/${key}`, { method: "PUT", body: { value, reason } }),
+  deleteIntegrationKey: (service, key, reason) => req(`/integrations/${service}/${key}`, { method: "DELETE", body: { reason } }),
+  testIntegration: (service, reason) => req(`/integrations/${service}/test`, { method: "POST", body: { reason } }),
   getUser: (id) => req(`/users/${id}`),
   getUserActions: (id) => req(`/users/${id}/actions`),
   getUserSensitive: (id, reason) => req(`/users/${id}/sensitive`, { params: { reason } }),

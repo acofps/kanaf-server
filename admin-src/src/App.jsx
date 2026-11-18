@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
@@ -25,6 +25,8 @@ import SettingsPage from "./pages/Settings.jsx";
 import Setup from "./pages/Setup.jsx";
 import SentMessages from "./pages/SentMessages.jsx";
 import Carts from "./pages/Carts.jsx";
+import Discounts from "./pages/Discounts.jsx";
+import Integrations from "./pages/Integrations.jsx";
 
 /* ============================================================
    هيكل اللوحة.
@@ -61,11 +63,13 @@ const SECTIONS = [
   { key: "notifications",group: "ops",   label: "الإشعارات والتسويق", icon: Bell,          perms: ["notifications:view"] },
   { key: "carts",        group: "ops",   label: "السلات المتروكة", icon: ShoppingCart,      perms: ["carts:view"] },
   { key: "plans",        group: "ops",   label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
+  { key: "discounts",    group: "ops",   label: "أكواد الخصم",    icon: TicketPercent,     perms: ["discounts:view"] },
   { key: "invoices",     group: "ops",   label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
   // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
   { key: "billing",      group: "ops",   label: "المالية",        icon: Wallet,            perms: BILLING_PERMS },
   { key: "break-glass",  group: "gov",   label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
   { key: "settings",     group: "gov",   label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
+  { key: "integrations", group: "gov",   label: "التكاملات",      icon: Plug,              perms: ["integrations:manage"] },
   { key: "admin-users",  group: "gov",   label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
   { key: "audit-log",    group: "gov",   label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
   { key: "access-log",   group: "gov",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
@@ -160,6 +164,8 @@ export default function App() {
     messages: Messages,
     sent: SentMessages,
     carts: Carts,
+    discounts: Discounts,
+    integrations: Integrations,
     content: Content,
     notifications: Notifications,
     plans: Plans,

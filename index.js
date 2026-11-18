@@ -23,6 +23,8 @@ import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
 import { sentMessagesRouter } from "./admin/sent-messages.js";
 import { cartsRouter } from "./admin/carts.js";
+import { discountsRouter } from "./admin/discounts.js";
+import { integrationsRouter } from "./admin/integrations.js";
 /* ---------------------------------------------------------
    المرحلة 5 — الأدوار والصلاحيات والتقارير والإعدادات.
 --------------------------------------------------------- */
@@ -972,6 +974,8 @@ app.use("/admin", adminContentRouter);
 app.use("/admin", adminNotificationsRouter);
 app.use("/admin", sentMessagesRouter); // KANAF-ORD-0008 §3
 app.use("/admin", cartsRouter); // KANAF-ORD-0008 §4
+app.use("/admin", discountsRouter); // KANAF-ORD-0008 §6 — غير مربوط بالدفع
+app.use("/admin", integrationsRouter); // KANAF-ORD-0008 §7 — اعتمادات لا تكامل
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
