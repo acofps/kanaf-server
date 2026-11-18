@@ -28,7 +28,9 @@ import {
    ============================================================ */
 
 const CHANNELS = ["in_app", "email", "push"];
-const AUDIENCES = ["all", "active_subscribers", "trial_or_free", "account_status", "selected_users"];
+const AUDIENCES = ["all", "active_subscribers", "trial_or_free", "account_status", "selected_users", "abandoned_carts", "inactive"];
+/* KANAF-ORD-0008 §5: فئتان تسويقيتان دائماً — منع التسويق يسري عليهما في كل قناة. */
+const MARKETING_ONLY = new Set(["abandoned_carts", "inactive"]);
 const ACCOUNT_STATUSES = ["active", "suspended", "pending_verification"];
 
 export default function Notifications({ me, toast }) {
@@ -295,10 +297,14 @@ function SchedulerCard({ state, onSweep, sweeping }) {
    السبب: "أرسل للكل" في نظام فيه 4000 مستخدم قرار مختلف تماماً
    عنه في نظام فيه 12.
    ------------------------------------------------------------ */
-function Compose({ open, onClose, onDone }) {
+export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [audience, setAudience] = useState("all");
+  const [audience, setAudience] = useState(initialAudience);
+  const [inactiveDays, setInactiveDays] = useState(30);
+  const [marketing, setMarketing] = useState(false);
+  const [optedOut, setOptedOut] = useState(null);
+  const isMarketing = marketing || MARKETING_ONLY.has(audience);
   const [accountStatus, setAccountStatus] = useState("active");
   const [userIds, setUserIds] = useState("");
   const [channels, setChannels] = useState(["in_app"]);
@@ -311,7 +317,8 @@ function Compose({ open, onClose, onDone }) {
 
   useEffect(() => {
     if (!open) return;
-    setTitle(""); setBody(""); setAudience("all"); setAccountStatus("active");
+    setTitle(""); setBody(""); setAudience(initialAudience); setAccountStatus("active");
+    setInactiveDays(30); setMarketing(false); setOptedOut(null);
     setUserIds(""); setChannels(["in_app"]); setWhen("now"); setScheduledAt("");
     setCount(null); setErr("");
   }, [open]);
@@ -324,13 +331,15 @@ function Compose({ open, onClose, onDone }) {
     if (audience === "account_status") params.status = accountStatus;
     if (audience === "selected_users") params.userIds = userIds.split(/[\s,]+/).filter(Boolean).join(",");
     if (audience === "selected_users" && !params.userIds) { setCount(null); return; }
+    if (audience === "inactive") params.days = inactiveDays;
+    if (isMarketing) params.marketing = "1";
     setCounting(true);
     api.audienceCount(params)
-      .then((r) => alive && setCount(r.count))
+      .then((r) => { if (alive) { setCount(r.count); setOptedOut(r.optedOut ?? null); } })
       .catch(() => alive && setCount(null))
       .finally(() => alive && setCounting(false));
     return () => { alive = false; };
-  }, [open, audience, accountStatus, userIds]);
+  }, [open, audience, accountStatus, userIds, inactiveDays, isMarketing]);
 
   const toggleChannel = (ch) =>
     setChannels((cur) => (cur.includes(ch) ? cur.filter((x) => x !== ch) : [...cur, ch]));
@@ -352,6 +361,8 @@ function Compose({ open, onClose, onDone }) {
     if (audience === "selected_users") {
       payload.audienceFilter = { userIds: userIds.split(/[\s,]+/).filter(Boolean) };
     }
+    if (audience === "inactive") payload.audienceFilter = { days: Number(inactiveDays) };
+    if (isMarketing) payload.audienceFilter = { ...(payload.audienceFilter || {}), marketing: true };
 
     setBusy(true); setErr("");
     try {
@@ -393,6 +404,27 @@ function Compose({ open, onClose, onDone }) {
             </Select>
           </Field>
         )}
+
+        {audience === "inactive" && (
+          <Field label="لم يدخل منذ (يوماً)" hint="من 7 إلى 365. آخر نشاط = أحدث دخول أو استعمال جلسة.">
+            <Input type="number" min={7} max={365} value={inactiveDays} onChange={(e) => setInactiveDays(e.target.value)} dir="ltr" />
+          </Field>
+        )}
+
+        {audience === "abandoned_carts" && (
+          <p className="text-[12px] leading-6" style={{ color: C.textMuted }}>
+            من له فاتورة لم تُدفع بعد 20 دقيقة من إنشائها، ولم يشترِ بعدها، وليس مشتركاً الآن.
+          </p>
+        )}
+
+        <label className="flex items-start gap-2 text-[12px] leading-6" style={{ color: C.textMuted }}>
+          <input type="checkbox" className="mt-1" checked={isMarketing} disabled={MARKETING_ONLY.has(audience)}
+            onChange={(e) => setMarketing(e.target.checked)} />
+          <span>
+            <b style={{ color: C.text }}>رسالة تسويقية</b> — لا تصل في أي قناة إلى من أوقف الرسائل التسويقية، ويُسجَّل تسليمه «متجاوَز».
+            رسائل الخدمة (تحقق، إيصال، تنبيه أمني) لا تُرسل من هنا.
+          </span>
+        </label>
 
         {audience === "selected_users" && (
           <Field label="معرّفات المستخدمين" hint="افصل بينها بفاصلة أو سطر جديد.">
@@ -436,6 +468,9 @@ function Compose({ open, onClose, onDone }) {
           {counting ? "يُحسب عدد المستلمين…"
             : count === null ? "عدد المستلمين غير محدد بعد."
             : `سيصل هذا الإشعار إلى ${count} مستخدم.`}
+          {isMarketing && optedOut > 0 && !counting && (
+            <span>· منهم {optedOut} أوقفوا التسويق فلن يصلهم، ويُسجَّلون «متجاوَز».</span>
+          )}
         </div>
 
         <ErrorBar error={err} />

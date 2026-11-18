@@ -112,6 +112,7 @@ export const api = {
   listUsers: (params) => req("/users", { params }),
   // KANAF-ORD-0008 §3 — السبب إلزامي ويُسجَّل في سجل الوصول
   listSentMessages: (params) => req("/sent-messages", { params }),
+  listAbandonedCarts: (params) => req("/abandoned-carts", { params }), // KANAF-ORD-0008 §4
   getUser: (id) => req(`/users/${id}`),
   getUserActions: (id) => req(`/users/${id}/actions`),
   getUserSensitive: (id, reason) => req(`/users/${id}/sensitive`, { params: { reason } }),

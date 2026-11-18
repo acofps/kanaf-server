@@ -22,6 +22,7 @@ import { userDataRouter, pushPublicKeyRouter } from "./userdata/routes.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
 import { sentMessagesRouter } from "./admin/sent-messages.js";
+import { cartsRouter } from "./admin/carts.js";
 /* ---------------------------------------------------------
    المرحلة 5 — الأدوار والصلاحيات والتقارير والإعدادات.
 --------------------------------------------------------- */
@@ -970,6 +971,7 @@ app.use("/admin", adminSettingsRouter);
 app.use("/admin", adminContentRouter);
 app.use("/admin", adminNotificationsRouter);
 app.use("/admin", sentMessagesRouter); // KANAF-ORD-0008 §3
+app.use("/admin", cartsRouter); // KANAF-ORD-0008 §4
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------

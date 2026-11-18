@@ -130,6 +130,8 @@ export const AUDIENCE_LABEL = {
   trial_or_free: "غير المشتركين",
   selected_users: "مستخدمون محددون",
   account_status: "حسب حالة الحساب",
+  abandoned_carts: "أصحاب سلات متروكة",
+  inactive: "مَن لم يدخل منذ مدة",
 };
 
 export const CHANNEL_LABEL = { in_app: "داخل التطبيق", email: "بريد", push: "إشعار جهاز" };

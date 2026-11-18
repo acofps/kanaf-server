@@ -119,6 +119,7 @@ export const PERMISSION_CATALOG = {
   "notifications:send":       "تنفيذ الإرسال",
   "notifications:cancel":     "إلغاء حملة مسودة أو مجدولة",
   "notifications:sweep":      "تشغيل المسح الدوري يدوياً",
+  "carts:view":               "السلات المتروكة: فواتير معلّقة لم تُدفع بعد 20 دقيقة (العميل مقنَّع)",
   "notifications:view_sent":  "سجل الرسائل المرسلة إلى المستخدمين — قراءة حساسة تُسجَّل بسبب (المستلم مقنَّع، ورسائل التحقق بلا نص)",
 
   /* --- الباقات والإعدادات --- */
@@ -276,7 +277,7 @@ const MATRIX = {
     "messages:view", "messages:update_status",
     "content:view", "content:edit_presentation", "content:review",
     "content:toggle_launch", "content:schedule", "content:change_tier",
-    "notifications:view", "notifications:create", "notifications:send", "notifications:view_sent",
+    "notifications:view", "notifications:create", "notifications:send", "notifications:view_sent", "carts:view",
     "notifications:cancel", "notifications:sweep",
     "plans:view", "plans:edit",
     "tax_settings:view", "billing_settings:view", "app_settings:view",

@@ -2,7 +2,7 @@ import express from "express";
 import { query } from "../db/pool.js";
 import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction } from "./middleware.js";
 import {
-  countAudience, dispatchCampaign, VALID_CHANNELS, isPushConfigured,
+  countAudience, countAudienceOptedOut, dispatchCampaign, VALID_CHANNELS, isPushConfigured, MARKETING_AUDIENCES,
 } from "../notifications/service.js";
 import { sweepDueCampaigns, schedulerStatus } from "../notifications/scheduler.js";
 
@@ -45,8 +45,12 @@ adminNotificationsRouter.get(
       const filter = {};
       if (req.query.status) filter.status = req.query.status;
       if (req.query.userIds) filter.userIds = String(req.query.userIds).split(",").map((s) => s.trim()).filter(Boolean);
+      if (req.query.days) filter.days = Number(req.query.days); // فئة inactive (KANAF-ORD-0008 §5.2)
       const count = await countAudience(req.query.audience, filter);
-      res.json({ count });
+      const marketing = MARKETING_AUDIENCES.includes(req.query.audience) || req.query.marketing === "1";
+      // التسويق لا يصل من أوقفه — يُعرض عددهم قبل الإرسال، ويُسجَّلون skipped عند الإرسال.
+      const optedOut = marketing ? await countAudienceOptedOut(req.query.audience, filter) : null;
+      res.json({ count, marketing, optedOut });
     } catch (err) {
       if (err.status) return res.status(err.status).json({ error: err.message });
       console.error("[admin/notifications] audience count failed:", err);
@@ -191,7 +195,12 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     // العدد يُحسب قبل الإنشاء ليُرفض جمهور فارغ — إرسال إلى صفر
     // مستلم يعني غالباً فلتراً خاطئاً، وتمريره ينتج حملة "ناجحة"
     // بلا أثر يربك من يقرأ السجل لاحقاً.
-    const count = await countAudience(audience, audienceFilter || {});
+    /* KANAF-ORD-0008 §5: علامة «تسويقية» تجعل منع التسويق يسري في كل قناة.
+       الفئتان التسويقيتان تُفرض عليهما دائماً؛ وغيرهما باختيار المرسِل. */
+    const filter = { ...(audienceFilter && typeof audienceFilter === "object" ? audienceFilter : {}) };
+    if (MARKETING_AUDIENCES.includes(audience)) filter.marketing = true;
+    else if (filter.marketing !== true) delete filter.marketing;
+    const count = await countAudience(audience, filter);
     if (count === 0) return res.status(422).json({ error: "no_recipients_in_audience" });
 
     const status = scheduled ? "scheduled" : "draft";
@@ -201,7 +210,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
        VALUES ($1, $2, $3, $4::jsonb, $5::text[], $6, $7, $8, $9)
        RETURNING id, status, scheduled_at, created_at`,
       [
-        title.trim(), body.trim(), audience, JSON.stringify(audienceFilter || {}),
+        title.trim(), body.trim(), audience, JSON.stringify(filter),
         chans, status, scheduled, count, req.admin.id,
       ]
     );
@@ -210,7 +219,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     await logAdminAction({
       adminUserId: req.admin.id,
       action: scheduled ? "notification_schedule" : "notification_create",
-      newValue: { title: title.trim(), audience, channels: chans, scheduled_at: scheduled, recipient_count: count },
+      newValue: { title: title.trim(), audience, channels: chans, scheduled_at: scheduled, recipient_count: count, marketing: filter.marketing === true },
       reason: "إنشاء إشعار",
       metadata: { campaign_id: campaign.id },
       ipAddress: req.ip,

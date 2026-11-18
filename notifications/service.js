@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db/pool.js";
 import { entitledSql } from "../billing/subscription.js";
+import { abandonedWhere, purchasedLaterSql } from "../billing/abandoned.js";
 import { sendEmail } from "../mail/send.js";
 import { generateUnsubscribeToken } from "./unsubscribe.js";
 import { sendPushToUser, isPushConfigured } from "./push.js";
@@ -80,7 +81,35 @@ export const AUDIENCE_SQL = {
             WHEN u.email_verified_at IS NULL THEN 'pending_verification'
             ELSE 'active'
           END = $1`,
+
+  /* ---- KANAF-ORD-0008 §4.4 و§5.2: فئتان تسويقيتان، مشتقّتان عند القراءة ---- */
+
+  // أصحاب السلات المتروكة: فاتورة معلّقة متروكة، لم يشترِ بعدها، وليس مشتركاً الآن.
+  // «فلا يُطارَد من اشترى» — شرطان لا واحد.
+  abandoned_carts: `
+    SELECT DISTINCT u.id AS user_id, u.email, u.marketing_opt_out FROM users u
+    JOIN invoices i ON i.user_id = u.id
+    LEFT JOIN (${LATEST_SUB}) s ON s.user_id = u.id
+    WHERE u.deleted_at IS NULL AND ${abandonedWhere("i")} AND NOT ${purchasedLaterSql("i")}
+      AND (s.id IS NULL OR NOT ${entitledSql("s")})`,
+
+  // من لم يدخل منذ $1 يوماً: آخر نشاط = أحدث دخول أو استعمال جلسة، وإن لم يوجد فتاريخ التسجيل.
+  inactive: `
+    SELECT u.id AS user_id, u.email, u.marketing_opt_out FROM users u
+    LEFT JOIN user_auth_state st ON st.user_id = u.id
+    WHERE u.deleted_at IS NULL AND u.email_verified_at IS NOT NULL
+      AND COALESCE(GREATEST(st.last_login_at,
+            (SELECT max(GREATEST(ss.created_at, ss.last_used_at)) FROM user_sessions ss WHERE ss.user_id = u.id)),
+          u.created_at) < now() - make_interval(days => $1::int)`,
 };
+
+/* الحملة التسويقية تحترم marketing_opt_out في **كل** قناة (KANAF-ORD-0008 §5.3).
+   الحملات القائمة بلا العلامة باقية على سلوكها الموثّق أعلاه (البريد وحده).
+   الفئتان التسويقيتان تسويق دائماً، وتُفرض العلامة عليهما عند الإنشاء. */
+export const MARKETING_AUDIENCES = ["abandoned_carts", "inactive"];
+export function isMarketingCampaign(campaign) {
+  return MARKETING_AUDIENCES.includes(campaign?.audience) || campaign?.audience_filter?.marketing === true;
+}
 
 export const VALID_CHANNELS = ["in_app", "email", "push"];
 
@@ -97,6 +126,13 @@ function audienceParams(audience, filter = {}) {
     }
     return [s];
   }
+  if (audience === "inactive") {
+    const days = Number(filter.days);
+    if (!Number.isInteger(days) || days < 7 || days > 365) {
+      throw Object.assign(new Error("invalid_inactive_days"), { status: 400 });
+    }
+    return [days];
+  }
   return [];
 }
 
@@ -105,6 +141,14 @@ export async function resolveAudience(audience, filter = {}) {
   if (!sql) throw Object.assign(new Error("invalid_audience"), { status: 400 });
   const { rows } = await query(sql, audienceParams(audience, filter));
   return rows;
+}
+
+/** كم من الجمهور أوقف التسويق — يُعرض قبل الإرسال لأنهم سيُسجَّلون skipped (§5.3). */
+export async function countAudienceOptedOut(audience, filter = {}) {
+  const sql = AUDIENCE_SQL[audience];
+  if (!sql) throw Object.assign(new Error("invalid_audience"), { status: 400 });
+  const { rows } = await query(`SELECT count(*)::int AS n FROM (${sql}) a WHERE a.marketing_opt_out`, audienceParams(audience, filter));
+  return rows[0].n;
 }
 
 export async function countAudience(audience, filter = {}) {
@@ -310,7 +354,10 @@ async function deliverOne(delivery, user, campaign) {
 
   let result;
   try {
-    if (delivery.channel === "in_app") {
+    if (isMarketingCampaign(campaign) && user.marketing_opt_out) {
+      // §5.3: من أوقف التسويق لا يصله شيء تسويقي في أي قناة — skipped لا failed.
+      result = { status: "skipped", errorCode: "marketing_opt_out", errorDetail: "المستخدم ألغى اشتراكه في الرسائل التسويقية" };
+    } else if (delivery.channel === "in_app") {
       result = await deliverInApp(delivery, campaign);
     } else if (delivery.channel === "email") {
       result = await deliverEmail(delivery, user, campaign);

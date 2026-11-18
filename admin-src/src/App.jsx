@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon, Send,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
@@ -24,6 +24,7 @@ import AuditLog from "./pages/AuditLog.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 import Setup from "./pages/Setup.jsx";
 import SentMessages from "./pages/SentMessages.jsx";
+import Carts from "./pages/Carts.jsx";
 
 /* ============================================================
    هيكل اللوحة.
@@ -57,7 +58,8 @@ const SECTIONS = [
   { key: "messages",     group: "watch", label: "الرسائل",        icon: Mail,              perms: ["messages:view"] },
   { key: "sent",         group: "watch", label: "الرسائل المرسلة", icon: Send,              perms: ["notifications:view_sent"] },
   { key: "content",      group: "ops",   label: "المحتوى",        icon: BookOpen,          perms: ["content:view"] },
-  { key: "notifications",group: "ops",   label: "الإشعارات",      icon: Bell,              perms: ["notifications:view"] },
+  { key: "notifications",group: "ops",   label: "الإشعارات والتسويق", icon: Bell,          perms: ["notifications:view"] },
+  { key: "carts",        group: "ops",   label: "السلات المتروكة", icon: ShoppingCart,      perms: ["carts:view"] },
   { key: "plans",        group: "ops",   label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
   { key: "invoices",     group: "ops",   label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
   // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
@@ -157,6 +159,7 @@ export default function App() {
     users: Users,
     messages: Messages,
     sent: SentMessages,
+    carts: Carts,
     content: Content,
     notifications: Notifications,
     plans: Plans,
