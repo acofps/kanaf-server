@@ -233,6 +233,8 @@ export async function purgeDeletedAccount(userId, { policy } = {}) {
     await del("user_sessions", `DELETE FROM user_sessions WHERE user_id = $1`);
     // إيصالات منع التكرار (014): معرّفات فقط، لكن الحذف النهائي يشملها — الحساب يُجهَّل لا يُحذف فلا يعمل CASCADE.
     await del("user_write_receipts", `DELETE FROM user_write_receipts WHERE user_id = $1`);
+    // KANAF-ORD-0008 §3.4: سجل رسائل النظام (بلا نص) يتبع المستخدم — الترحيل 016.
+    await del("system_message_log", `DELETE FROM system_message_log WHERE user_id = $1`);
     await del("email_verification_codes", `DELETE FROM email_verification_codes WHERE LOWER(email) = LOWER($1)`, [u[0].email]);
     await client.query(
       `UPDATE users SET name = 'حساب محذوف', email = $2, password_hash = '!deleted', photo_url = NULL,

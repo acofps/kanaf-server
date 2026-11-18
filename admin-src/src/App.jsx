@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
@@ -23,6 +23,7 @@ import AccessLog from "./pages/AccessLog.jsx";
 import AuditLog from "./pages/AuditLog.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 import Setup from "./pages/Setup.jsx";
+import SentMessages from "./pages/SentMessages.jsx";
 
 /* ============================================================
    هيكل اللوحة.
@@ -54,6 +55,7 @@ const SECTIONS = [
   { key: "overview",     group: "watch", label: "نظرة عامة",     icon: LayoutDashboard,   perms: ["overview:view"] },
   { key: "users",        group: "watch", label: "المستخدمون",     icon: UsersIcon,         perms: ["users:view"] },
   { key: "messages",     group: "watch", label: "الرسائل",        icon: Mail,              perms: ["messages:view"] },
+  { key: "sent",         group: "watch", label: "الرسائل المرسلة", icon: Send,              perms: ["notifications:view_sent"] },
   { key: "content",      group: "ops",   label: "المحتوى",        icon: BookOpen,          perms: ["content:view"] },
   { key: "notifications",group: "ops",   label: "الإشعارات",      icon: Bell,              perms: ["notifications:view"] },
   { key: "plans",        group: "ops",   label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
@@ -154,6 +156,7 @@ export default function App() {
     overview: Overview,
     users: Users,
     messages: Messages,
+    sent: SentMessages,
     content: Content,
     notifications: Notifications,
     plans: Plans,

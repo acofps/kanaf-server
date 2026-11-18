@@ -1,6 +1,7 @@
 import { query, pool } from "../db/pool.js";
 import { notifyUser } from "./service.js";
 import { sendPushToUser, isPushConfigured } from "./push.js";
+import { logSystemMessage } from "./system-log.js";
 
 /* ============================================================
    تذكير التسجيل اليومي — البند 6 من المرحلة 6
@@ -181,12 +182,19 @@ async function remindOne(row) {
      وهذا هو الفرق الذي أُصلح في المرحلة 4 بين sent و delivered:
      قبول القناة ليس وصولاً، وتسميته وصولاً هي الكذبة نفسها. */
   if (!isPushConfigured()) {
+    await logSystemMessage({ userId: row.user_id, kind: "daily_reminder", channel: "push", status: "skipped", errorCode: "push_not_configured" });
     return { userId: row.user_id, status: "inbox_only", pushReason: "push_not_configured" };
   }
   const push = await sendPushToUser(row.user_id, {
     title: REMINDER_TITLE,
     body: REMINDER_BODY,
     url: "/",
+  });
+  // KANAF-ORD-0008 §3.4: دفعة الجهاز لم يكن لها سجل. بلا نص — النص ثابت ومخزَّن في الصندوق أصلاً.
+  await logSystemMessage({
+    userId: row.user_id, kind: "daily_reminder", channel: "push",
+    status: push.ok ? "sent" : (push.errorCode === "no_push_subscription" ? "skipped" : "failed"),
+    errorCode: push.ok ? null : push.errorCode,
   });
   return push.ok
     ? { userId: row.user_id, status: "inbox_and_push", pushed: push.sent }
