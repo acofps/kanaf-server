@@ -23,7 +23,7 @@ const dbSsl = (process.env.DB_SSL || "false").toLowerCase();
 const ssl = dbSsl === "true" ? { rejectUnauthorized: false } : false;
 // (د) تشخيص قبل الاتصال — أعلام لا قيم
 const hasSslmode = /[?&]sslmode=/i.test(URLS);
-out("== ORD-0012 probe v2");
+out("== ORD-0012 probe v2.1");
 out(`CONN DB_SSL=${dbSsl} url_has_sslmode=${hasSslmode}${hasSslmode ? "  <-- WARNING: pg ignores DB_SSL and verifies the certificate fully; remove ?sslmode from DATABASE_URL (ORD-0012 §1.3)" : ""}`);
 const c = new pg.Client({ connectionString: URLS, ssl, application_name: "ord-0012-readonly-probe" });
 const q = async (sql, p) => (await c.query(sql, p)).rows;
@@ -58,8 +58,10 @@ try {
   } catch (e) { out("MIG " + (e.code === "42P01" ? "absent (no schema_migrations table)" : clean(e))); }
 
   // (ب) الملكية والصلاحيات: جدول لكل جدول/تسلسل
-  const objs = await q(`SELECT c.relname AS n, c.relkind AS k, pg_get_userbyid(c.relowner) AS owner,
-      c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS mine,
+  // المالك من pg_tables.tableowner وpg_sequences.sequenceowner كما يسمّيهما الأمر (§3)، والصلاحيات من pg_class
+  const objs = await q(`SELECT c.relname AS n, c.relkind AS k,
+      COALESCE(t.tableowner, sq.sequenceowner) AS owner,
+      COALESCE(t.tableowner, sq.sequenceowner) = current_user AS mine,
       concat_ws('',
         CASE WHEN has_table_privilege(current_user, c.oid, 'SELECT') THEN 's' ELSE '-' END,
         CASE WHEN c.relkind = 'S' THEN '' WHEN has_table_privilege(current_user, c.oid, 'INSERT') THEN 'i' ELSE '-' END,
@@ -69,6 +71,8 @@ try {
         CASE WHEN c.relkind = 'S' THEN '' WHEN has_table_privilege(current_user, c.oid, 'TRIGGER') THEN 'T' ELSE '-' END,
         CASE WHEN c.relkind <> 'S' THEN '' WHEN has_sequence_privilege(current_user, c.oid, 'USAGE') THEN 'U' ELSE '-' END) AS eff
     FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+    LEFT JOIN pg_tables t ON t.schemaname = ns.nspname AND t.tablename = c.relname AND c.relkind IN ('r','p')
+    LEFT JOIN pg_sequences sq ON sq.schemaname = ns.nspname AND sq.sequencename = c.relname AND c.relkind = 'S'
     WHERE ns.nspname = 'public' AND c.relkind IN ('r','p','S') ORDER BY c.relkind DESC, c.relname`);
   const grants = await q(`SELECT table_name AS n, string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type) AS g
     FROM information_schema.role_table_grants WHERE table_schema = 'public' AND grantee = current_user GROUP BY 1`);
