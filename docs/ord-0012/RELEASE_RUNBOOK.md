@@ -90,7 +90,7 @@ node -e "fetch('https://raw.githubusercontent.com/acofps/kanaf-server/cf4b410bab
   ثم أعد المسبار.
 - **`url_has_sslmode=true`:** احذف `?sslmode=…` من `DATABASE_URL`، وأبقِ `DB_SSL=true`. السبب: pg 8.22 يحوّل `sslmode=require` إلى تحقّق كامل من الشهادة، ويتجاهل `DB_SSL` (`.env.example`، ‏`db/pool.js`).
 - **`MIG` أو `SEQVAL` غير المتوقَّع:** لا تتقدّم. والصق المخرَج كاملاً للمستشار.
-  - `SEQVAL` أكبر من 3 يعني أن فاتورة صدرت بعد قراءة §1.9، فخطوة الترقيم ستتوقف وحدها.
+  - `SEQVAL` أكبر من 3 يعني أن فاتورة صدرت بعد قراءة §1، فخطوة الترقيم ستتوقف وحدها.
 - **`FAIL … certificate`:** هي مشكلة `sslmode` نفسها أعلاه.
 
 ---
@@ -127,7 +127,7 @@ node -e "fetch('https://kanaf-server.onrender.com/api/setup/run-migrations',{met
 **النجاح:**
 - `200 {"ok":true,"results":[…]}`.
 - كل ملف من `011` إلى `020` حالته `"applied"`، والبقية `"skipped"`.
-- الزمن المقيس للعشرة نحو 80ms على جداول فارغة.
+- الزمن المقيس للعشرة نحو 60ms على جداول شبه فارغة (`REHEARSAL.md`).
 
 **افعل (3-ب) — التحقّق:**
 ```bash

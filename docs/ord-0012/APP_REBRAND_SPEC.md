@@ -1,6 +1,6 @@
 # ما يحتاجه `kanaf-app` ليحمل هوية «تنفس» (KANAF-ORD-0012 §7.1)
 
-**الحالة اليوم (§1.14):** `https://app.tanfs.net` يخدم البناء القديم.
+**الحالة اليوم (§1):** `https://app.tanfs.net` يخدم البناء القديم.
 - العنوان: `Kanaf — كنف`.
 - ولون الشريط: `theme-color #756B86`.
 
@@ -68,7 +68,7 @@ curl -s https://app.tanfs.net/ | grep -oE '<title>[^<]*</title>|name="theme-colo
 
 ثم:
 - [ ] التثبيت على الشاشة الرئيسية في iOS وAndroid يُظهر أيقونة «تنفس» واسمها.
-- [ ] الطلبات من المتصفح تذهب إلى `kanaf-server.onrender.com` بلا خطأ CORS. هذا يتطلب أن يحمل `ALLOWED_ORIGINS` على Render القيمة `https://app.tanfs.net`، وهو يحملها اليوم (§1.12).
+- [ ] الطلبات من المتصفح تذهب إلى `kanaf-server.onrender.com` بلا خطأ CORS. هذا يتطلب أن يحمل `ALLOWED_ORIGINS` على Render القيمة `https://app.tanfs.net`، وهو يحملها اليوم (§1).
 
 ## 6. حالة الموقع التعريفي (§7.2)
 
