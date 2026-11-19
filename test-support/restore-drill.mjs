@@ -6,7 +6,8 @@
    1) pg_dump بصيغة custom من قاعدة اختبار فيها بيانات اصطناعية.
    2) pg_restore إلى قاعدة جديدة فارغة على نفس العنقود المعزول.
    3) يقارن: عدد الصفوف لكل جدول، بصمة محتوى كل جدول، قيم
-      التسلسلات، مالك كل جدول، صلاحيات كل جدول (relacl)، سجل
+      التسلسلات، مالك كل جدول، صلاحيات كل جدول الفعلية (relacl، والفارغ = acldefault للمالك: بعد ALTER OWNER
+      يُكتب حق المالك صراحةً، وpg_dump يُسقطه لأنه الافتراضي — الاثنان صلاحية واحدة. KANAF-ORD-0012 §4)، سجل
       الترحيلات، وبصمات ملفات PDF للفواتير.
    لا يلمس أي قاعدة غير معزولة: العناوين تُبنى من test-env.json فقط.
    ============================================================ */
@@ -26,7 +27,7 @@ const BIN = process.env.PG_BIN || "/usr/lib/postgresql/16/bin";
 async function q(d, sql, p) { const c = new pg.Client({ connectionString: su(d), ssl: false }); await c.connect(); try { return await c.query(sql, p); } finally { await c.end(); } }
 
 async function snapshot(db) {
-  const { rows: tables } = await q(db, `SELECT c.relname t, pg_get_userbyid(c.relowner) owner, coalesce(c.relacl::text,'') acl
+  const { rows: tables } = await q(db, `SELECT c.relname t, pg_get_userbyid(c.relowner) owner, coalesce(c.relacl, acldefault('r', c.relowner))::text acl
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' ORDER BY 1`);
   const out = { tables: {}, sequences: {}, migrations: [], pdfs: {} };
   for (const t of tables) {

@@ -95,7 +95,11 @@ async function legacyInvoice(userId, tag) {
 
 const USER_EMAIL = "n03-user@kanaf.test", USER_PW = "N03-Base-Pass-2026!";
 const ADMIN_EMAIL = "n03-owner@kanaf.test", ADMIN_PW = "N03-Owner-Long-Pass-2026!";
-const NEW_MIGS = ["011_safety_plan_and_account_lifecycle.sql", "012_assistant_access_policy.sql", "013_admin_login_throttle.sql", "014_user_write_receipts.sql", "015_payment_verification.sql"];
+/* KANAF-ORD-0012 §5: كانت القائمة ثابتة 011…015 (prep الأول). صارت تُشتقّ: كل ترحيلة في المرشح ليست في
+   خط الأساس — فيصلح التمرين لـn03-prep-22fead5 (011…015 مع مرشح أكتوبر) ولـn03-prep-v2-22fead5 (011…020). */
+const migsIn = (d) => fs.readdirSync(path.join(d, "db/migrations")).filter((f) => f.endsWith(".sql"));
+const NEW_MIGS = migsIn(CAND_DIR).filter((f) => !migsIn(BASE_DIR).includes(f)).sort();
+if (!NEW_MIGS.length) { console.error("no new migrations in candidate vs baseline"); process.exit(2); }
 say(`REVISION baseline=${rev(BASE_DIR)} prep=${rev(PREP_DIR)} candidate=${rev(CAND_DIR)} db=${new URL(DB_URL).pathname.slice(1)} node=${process.version}`);
 const prepFiles = execFileSync("git", ["-C", PREP_DIR, "diff", "--name-only", rev(BASE_DIR), "HEAD"], { encoding: "utf8" }).trim().split("\n");
 ok("P0", "prep commit = baseline + migration files only", prepFiles.length === NEW_MIGS.length && prepFiles.every((f) => NEW_MIGS.includes(path.basename(f)) && f.startsWith("db/migrations/")), prepFiles.join(","));
@@ -137,7 +141,7 @@ try {
   note("S1c", "two concurrent run-migrations on the OLD migrate.js (no advisory lock)", { first: m1.status, second: m2.status, applied: applied1, errors: [m1.body.error, m2.body.error].filter(Boolean) });
   r = await call(s.B, "POST", "/api/setup/run-migrations", { body: { token: SECRETS.SETUP_TOKEN } });
   const after1 = await migs();
-  ok("S1d", "after the concurrent pair and one more call: 011…015 each recorded exactly once, last call all skipped", NEW_MIGS.every((f) => after1.filter((x) => x === f).length === 1) && r.status === 200 && (r.body.results || []).every((x) => x.status === "skipped"), `${r.status} ${JSON.stringify(after1.slice(-6))}`);
+  ok("S1d", "after the concurrent pair and one more call: each new migration recorded exactly once, last call all skipped", NEW_MIGS.every((f) => after1.filter((x) => x === f).length === 1) && r.status === 200 && (r.body.results || []).every((x) => x.status === "skipped"), `${r.status} ${JSON.stringify(after1.slice(-6))}`);
   const { rows: dupm } = await q(`SELECT filename FROM schema_migrations GROUP BY 1 HAVING count(*) > 1`);
   ok("S1e", "no duplicate schema_migrations rows (each file applied once even without the lock)", dupm.length === 0, JSON.stringify(dupm));
   ok("S1f", "at most one of the two concurrent calls failed, and that failure left nothing half-applied", [m1.status, m2.status].filter((x) => x === 200).length >= 1, `${m1.status} ${m2.status}`);
