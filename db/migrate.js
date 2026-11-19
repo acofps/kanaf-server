@@ -56,8 +56,17 @@ export async function runMigrations({ log = console.log } = {}) {
     await lock.query(`SELECT pg_advisory_lock(hashtext('kanaf_schema_migrations'))`);
     return await applyPending(log);
   } finally {
-    await lock.query(`SELECT pg_advisory_unlock(hashtext('kanaf_schema_migrations'))`).catch(() => {});
-    lock.release();
+    /* KANAF-ORD-0012 §2.4: كان فشل الإطلاق يُبتلع ثم يعود الاتصال إلى المجمّع وهو يحمل قفل
+       الجلسة — فيعلق كل run-migrations لاحق حتى يُغلق ذلك الاتصال. هو عطب R15-14 نفسه الذي
+       أُصلح في التذكير (notifications/reminders.js). الآن مثله: يُتلف الاتصال فتطلق Postgres القفل. */
+    let unlockFailed = false;
+    try {
+      await lock.query(`SELECT pg_advisory_unlock(hashtext('kanaf_schema_migrations'))`);
+    } catch (err) {
+      unlockFailed = true;
+      console.error("[migrate] تعذّر إطلاق قفل الترحيل — سيُتلف الاتصال:", err.message);
+    }
+    lock.release(unlockFailed);
   }
 }
 

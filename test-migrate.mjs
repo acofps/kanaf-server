@@ -60,6 +60,42 @@ out.push(["status now shows applied with timestamps", st.every(m => m.applied ==
 const { rows } = await query("SELECT count(*)::int n FROM schema_migrations");
 out.push(["each migration recorded exactly once", rows[0].n === st.length, JSON.stringify(rows)]);
 
+/* KANAF-ORD-0012 §2.4 — قفل الترحيل لا يبقى معلّقاً على اتصال في المجمّع.
+   يُفحص من جلسة مستقلة: إن أمسك اتصالٌ في المجمّع القفل، فشلت pg_try_advisory_lock هنا. */
+const { default: pg } = await import("pg");
+const { pool } = await import("./db/pool.js");
+async function lockFreeFromOutside() {
+  const c = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL, ssl: false });
+  await c.connect();
+  try {
+    const { rows: [x] } = await c.query(`SELECT pg_try_advisory_lock(hashtext('kanaf_schema_migrations')) AS got`);
+    if (x.got) await c.query(`SELECT pg_advisory_unlock(hashtext('kanaf_schema_migrations'))`);
+    return x.got;
+  } finally { await c.end(); }
+}
+out.push(["advisory lock released after a normal run", await lockFreeFromOutside()]);
+// فشل الإطلاق مُفتعَل: اتصال القفل يرفض جملة الإطلاق وحدها
+const realConnect = pool.connect.bind(pool);
+const quiet = console.error; console.error = () => {};
+pool.connect = (...a) => {
+  if (typeof a[0] === "function") return realConnect(...a); // pool.query الداخلي: يمرّ كما هو
+  return realConnect().then((c) => wrapLockClient(c));
+};
+function wrapLockClient(c) {
+  if (!c.__wrapped) {
+    const q = c.query.bind(c);
+    c.query = (sql, ...rest) => (typeof sql === "string" && /pg_advisory_unlock/.test(sql) ? Promise.reject(new Error("simulated unlock failure")) : q(sql, ...rest));
+    c.__wrapped = true;
+  }
+  return c;
+}
+let simulated;
+try { simulated = await runMigrations({ log }); } finally { pool.connect = realConnect; console.error = quiet; }
+out.push(["unlock failure: run still answers (all skipped)", simulated.every((m) => m.status === "skipped"), JSON.stringify(simulated.slice(0, 2))]);
+out.push(["unlock failure: the locked connection is discarded, so the lock is not left on a pooled connection", await lockFreeFromOutside()]);
+r = await runMigrations({ log });
+out.push(["unlock failure: the next run-migrations is not blocked", r.every((m) => m.status === "skipped")]);
+
 let pass = 0, fail = 0;
 for (const [l, c, e] of out) { if (c) { pass++; console.log(`  PASS  ${l}`); } else { fail++; console.log(`  FAIL  ${l}${e ? ` (${e})` : ""}`); } }
 console.log(`\n  ${pass} passed, ${fail} failed`);
