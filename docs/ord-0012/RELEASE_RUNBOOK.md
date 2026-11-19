@@ -56,13 +56,13 @@ node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
 
 **افعل (1-ب) — المسبار، قراءة فقط** (إضافة مني على ترتيب الأمر: يحسم الملكية قبل أي ترحيل):
 ```bash
-curl -sSL https://raw.githubusercontent.com/acofps/kanaf-server/cf4b410babf5046ba5d3c3752ed3ee4014a6c75f/test-support/probe-ord0011.mjs -o /tmp/p.mjs && node /tmp/p.mjs
+curl -sSL https://raw.githubusercontent.com/acofps/kanaf-server/19381461c85806e216e7e6513a50327dc7a9ef32/test-support/probe-ord0011.mjs -o /tmp/p.mjs && node /tmp/p.mjs
 ```
 بديل إن لم يوجد `curl`:
 ```bash
-node -e "fetch('https://raw.githubusercontent.com/acofps/kanaf-server/cf4b410babf5046ba5d3c3752ed3ee4014a6c75f/test-support/probe-ord0011.mjs').then(r=>r.text()).then(t=>require('fs').writeFileSync('/tmp/p.mjs',t))" && node /tmp/p.mjs
+node -e "fetch('https://raw.githubusercontent.com/acofps/kanaf-server/19381461c85806e216e7e6513a50327dc7a9ef32/test-support/probe-ord0011.mjs').then(r=>r.text()).then(t=>require('fs').writeFileSync('/tmp/p.mjs',t))" && node /tmp/p.mjs
 ```
-بصمة الملف الصحيح `sha256 9b114083d97e6c04…cbf121d`. تتحقق منها بـ`sha256sum /tmp/p.mjs`.
+بصمة الملف الصحيح `sha256 60a52aa47f534b18…82ffacb0`. تتحقق منها بـ`sha256sum /tmp/p.mjs`.
 
 **النجاح — كل البنود معاً:**
 

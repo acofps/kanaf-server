@@ -5,7 +5,7 @@
 ## أ. القاعدة — بالمسبار (قراءة فقط)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/acofps/kanaf-server/cf4b410babf5046ba5d3c3752ed3ee4014a6c75f/test-support/probe-ord0011.mjs -o /tmp/p.mjs && node /tmp/p.mjs
+curl -sSL https://raw.githubusercontent.com/acofps/kanaf-server/19381461c85806e216e7e6513a50327dc7a9ef32/test-support/probe-ord0011.mjs -o /tmp/p.mjs && node /tmp/p.mjs
 ```
 
 - [ ] `MIG applied 19` و`MIG pending from 011-020: none`.
