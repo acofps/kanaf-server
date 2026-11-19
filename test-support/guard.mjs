@@ -40,7 +40,8 @@ const PRODUCTION_HOST_PATTERNS = [
   /kanaf\.me$/i, /tanfs\.net$/i, /kanaf\.app$/i, /onrender\.com$/i, /render\.com$/i,
   /dimofinf/i, /cpanel/i, /amazonaws\.com$/i,
 ];
-const FORBIDDEN_ROLES = new Set(["kanaf_adel", "postgres"]);
+// kanaf_kanaf: دور الإنتاج بعد نقل القاعدة إلى السيرفر الجديد (KANAF-ORD-0012 §1.2)؛ kanaf_adel القديم يبقى ممنوعاً.
+const FORBIDDEN_ROLES = new Set(["kanaf_adel", "kanaf_kanaf", "postgres"]);
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "[::1]"]);
 
 function die(reason) {

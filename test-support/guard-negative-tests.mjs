@@ -59,6 +59,7 @@ const CASES = [
   ["N1b عنوان محلي لقاعدة بلا علامة (نسخة إنتاج مستعادة محلياً مثلاً)", { TEST_DATABASE_URL: url("postgres"), KANAF_TEST_MARKER: cfg.marker }],
   ["N1c مضيف إنتاج حتى لو أُعلن في KANAF_TEST_ALLOWED_HOSTS", { TEST_DATABASE_URL: "postgresql://kanaf_runtime_test:x@kanaf-server.onrender.com:5432/x", KANAF_TEST_MARKER: cfg.marker, KANAF_TEST_ALLOWED_HOSTS: "kanaf-server.onrender.com" }],
   ["N1t مضيف الإنتاج بالنطاق الجديد (KANAF-ORD-0010)", { TEST_DATABASE_URL: "postgresql://kanaf_runtime_test:x@db.tanfs.net:5432/kanaf", KANAF_TEST_MARKER: cfg.marker, KANAF_TEST_ALLOWED_HOSTS: "db.tanfs.net" }],
+  ["N1k دور الإنتاج الجديد kanaf_kanaf على مضيف مُعلَن (KANAF-ORD-0012)", { TEST_DATABASE_URL: "postgresql://kanaf_kanaf:x@127.0.0.1:55432/kanaf_kanaf", KANAF_TEST_MARKER: cfg.marker }],
   ["N2 غياب الإعداد (DATABASE_URL وحده مضبوط على الكناري)", { DATABASE_URL: url(CANARY) }],
   ["N2b غياب علامة KANAF_TEST_MARKER", { TEST_DATABASE_URL: url(CANARY) }],
   ["N2c nonce خاطئ", { TEST_DATABASE_URL: url(CANARY), KANAF_TEST_MARKER: "0".repeat(48) }],

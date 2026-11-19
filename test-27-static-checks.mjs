@@ -65,5 +65,24 @@ for (const f of files) {
 }
 log(`D1 لا تنسيق أرقام/تواريخ يفلت من الأرقام اللاتينية (${files.length} ملفاً)`, bad.length === 0, bad.join(" · "));
 
+/* M) ترتيب الترحيلات — KANAF-ORD-0012 §2.5-هـ
+   db/migrate.js يفرز الملفات بـ .sort()، فيقع DB006_invoice_presentation.sql بعد 020 على أي
+   قاعدة تُبنى من الصفر (بروفة، اختبار، استعادة)، بينما طُبّق على الإنتاج في أغسطس قبل 007…010.
+   لا تبعية اليوم، والملف المطبَّق لا يُعاد تسميته. فالحماية هنا: أي ترحيلة مرقَّمة تذكر عموداً
+   يضيفه DB006 تفشل على القاعدة الجديدة وتنجح على الإنتاج — يُرفض هذا قبل أن يُكتب. */
+const MIG = path.join(ROOT, "db/migrations");
+const db006 = fs.readFileSync(path.join(MIG, "DB006_invoice_presentation.sql"), "utf8");
+const db006Cols = [...db006.matchAll(/ADD COLUMN IF NOT EXISTS\s+([a-z_]+)/gi)].map((m) => m[1]);
+export function migrationsUsingCols(files, cols) {
+  const re = new RegExp(`\\b(${cols.join("|")})\\b`, "i");
+  return files.filter(([, sql]) => re.test(sql.replace(/--.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, ""))).map(([f]) => f);
+}
+const numbered = fs.readdirSync(MIG).filter((f) => /^\d+_.*\.sql$/.test(f)).map((f) => [f, fs.readFileSync(path.join(MIG, f), "utf8")]);
+log("M0 أعمدة DB006 مُستخرَجة من الملف نفسه", db006Cols.length >= 4, db006Cols.join(","));
+log("M1 الفاحص يلتقط ترحيلة مرقَّمة تذكر عموداً من DB006", migrationsUsingCols([["999_x.sql", "SELECT document_number_token FROM billing_settings"]], db006Cols).length === 1);
+log("M2 الفاحص يتجاهل ذكر العمود في تعليق", migrationsUsingCols([["999_x.sql", "-- document_number_token\nSELECT 1"]], db006Cols).length === 0);
+const badMig = migrationsUsingCols(numbered, db006Cols);
+log(`M3 لا ترحيلة مرقَّمة (${numbered.length}) تعتمد على عمود يضيفه DB006`, badMig.length === 0, badMig.join(","));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
