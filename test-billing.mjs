@@ -484,6 +484,15 @@ async function run() {
   log("H4 صافي الإيراد = الإجمالي − الاستردادات",
     Math.abs(k.netRevenue - (k.grossRevenue - k.refunds)) < 0.01, JSON.stringify([k.grossRevenue, k.refunds, k.netRevenue]));
   log("H5 المدفوعات الفاشلة معدودة", k.failedPayments >= 1, String(k.failedPayments));
+  {
+    /* KANAF-ORD-0012 §2.4: H5 كان يفشل كل ليلة 21:00–24:00 UTC — اليوم الافتراضي يُحسب الآن بمنطقة التقارير.
+       لحظات ثابتة كي لا يتوقف الفحص على ساعة التشغيل. */
+    const { dayInZone } = await import("./admin/billing.js");
+    const at = (h, m) => Date.UTC(2026, 10, 19, h, m);
+    log("H5b اليوم الافتراضي بتوقيت الرياض لا UTC (20:59Z ← 19، 21:00Z و23:59Z ← 20)",
+      dayInZone(at(20, 59), "Asia/Riyadh") === "2026-11-19" && dayInZone(at(21, 0), "Asia/Riyadh") === "2026-11-20" && dayInZone(at(23, 59), "Asia/Riyadh") === "2026-11-20",
+      [dayInZone(at(20, 59), "Asia/Riyadh"), dayInZone(at(21, 0), "Asia/Riyadh"), dayInZone(at(23, 59), "Asia/Riyadh")].join(","));
+  }
   log("H6 المنطقة الزمنية المحاسبية بالرياض لا UTC", r.body.range.timezone === "Asia/Riyadh", r.body.range.timezone);
 
   const { rows: h7 } = await query(`SELECT count(*)::int n FROM subscriptions WHERE status='active'`);

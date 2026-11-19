@@ -56,10 +56,16 @@ function dateBoundsSql(fromParam, toParam, tzParam) {
   };
 }
 
-function defaultRange(req) {
-  const to = String(req.query.to || "").trim() || new Date().toISOString().slice(0, 10);
-  const from = String(req.query.from || "").trim() ||
-    new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+/* KANAF-ORD-0012 §2.4: الحدود تُفسَّر بمنطقة التقارير (dateBoundsSql)، فاليوم الافتراضي يجب أن
+   يُحسب بها أيضاً. كان يُؤخذ تاريخ UTC، فبين 21:00 و24:00 UTC (منتصف الليل وما بعده في الرياض)
+   كان «اليوم» هو الأمس، وتسقط من المؤشرات كل عملية جرت بعد منتصف الليل بتوقيت الرياض. */
+export function dayInZone(ms, tz) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+}
+function defaultRange(req, tz) {
+  const now = Date.now();
+  const to = String(req.query.to || "").trim() || dayInZone(now, tz);
+  const from = String(req.query.from || "").trim() || dayInZone(now - 29 * 86400000, tz);
   return { from, to };
 }
 
@@ -376,8 +382,8 @@ billingRouter.get("/refunds", requireAdminAuth, requirePermission("refunds:view"
 billingRouter.get("/kpis", requireAdminAuth, requirePermission("reports:view_kpis"), async (req, res) => {
   try {
     const settings = await getBillingSettings();
-    const { from, to } = defaultRange(req);
     const tz = settings.reportingTimezone;
+    const { from, to } = defaultRange(req, tz);
     const { fromExpr, toExpr } = dateBoundsSql("$1", "$2", "$3");
     const rangeParams = [from, to, tz];
 
