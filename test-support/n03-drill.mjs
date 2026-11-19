@@ -127,12 +127,13 @@ try {
 
   /* ---------- 1) المرحلة 1: prep ---------- */
   s = await start(PREP_DIR, "1-prep");
-  r = await call(s.B, "GET", "/api/setup/migration-status", { headers: { "X-Setup-Token": SECRETS.SETUP_TOKEN } });
-  const st1 = r.status === 200 ? (r.body.migrations || []).filter((m) => !m.applied).map((m) => m.file || m.filename) : null;
-  if (st1 === null) {
-    r = await call(s.B, "POST", "/api/setup/migration-status", { body: { token: SECRETS.SETUP_TOKEN } });
-  }
-  note("S1a", "prep (old code) sees pending migrations", { status: r.status, pending: (r.body.migrations || []).filter((m) => !m.applied).map((m) => m.file || m.filename) });
+  /* KANAF-ORD-0012: الصيغة نفسها التي في RELEASE_RUNBOOK الخطوة 3-ب — كود 22fead5 يقرأ الرمز من ?token= وحده
+     (كان التمرين يرسله في ترويسة يتجاهلها الكود القديم، فلم تُختبر صيغة الدليل). */
+  r = await call(s.B, "GET", `/api/setup/migration-status?token=${encodeURIComponent(SECRETS.SETUP_TOKEN)}`);
+  const st1 = (r.body.migrations || []).filter((m) => !m.applied).map((m) => m.filename);
+  ok("S1a", "prep (old code) migration-status with ?token= (runbook 3-b) lists exactly the new migrations as pending", r.status === 200 && JSON.stringify(st1) === JSON.stringify(NEW_MIGS), `${r.status} ${st1.join(",")}`);
+  const hdr = await call(s.B, "GET", "/api/setup/migration-status", { headers: { "X-Setup-Token": SECRETS.SETUP_TOKEN } });
+  note("S1a2", "old code ignores the X-Setup-Token header (runbook must use ?token= before stage 2)", hdr.status);
   /* قبل الترحيل: الكود القديم ما زال يعمل (لا نافذة في المرحلة 1 — الكود لا يعتمد على الجديد) */
   r = await call(s.B, "POST", "/api/auth/login", { body: { email: USER_EMAIL, password: USER_PW } });
   ok("S1b", "before migrating, prep = baseline code: user login works", r.status === 200, String(r.status));
@@ -142,6 +143,8 @@ try {
   r = await call(s.B, "POST", "/api/setup/run-migrations", { body: { token: SECRETS.SETUP_TOKEN } });
   const after1 = await migs();
   ok("S1d", "after the concurrent pair and one more call: each new migration recorded exactly once, last call all skipped", NEW_MIGS.every((f) => after1.filter((x) => x === f).length === 1) && r.status === 200 && (r.body.results || []).every((x) => x.status === "skipped"), `${r.status} ${JSON.stringify(after1.slice(-6))}`);
+  r = await call(s.B, "GET", `/api/setup/migration-status?token=${encodeURIComponent(SECRETS.SETUP_TOKEN)}`);
+  ok("S1d2", "after migrating, runbook 3-b on old code shows nothing pending", r.status === 200 && (r.body.migrations || []).every((m) => m.applied), String(r.status));
   const { rows: dupm } = await q(`SELECT filename FROM schema_migrations GROUP BY 1 HAVING count(*) > 1`);
   ok("S1e", "no duplicate schema_migrations rows (each file applied once even without the lock)", dupm.length === 0, JSON.stringify(dupm));
   ok("S1f", "at most one of the two concurrent calls failed, and that failure left nothing half-applied", [m1.status, m2.status].filter((x) => x === 200).length >= 1, `${m1.status} ${m2.status}`);
