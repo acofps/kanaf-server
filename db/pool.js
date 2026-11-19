@@ -19,6 +19,16 @@ const connectionString = process.env.DATABASE_URL;
 const sslMode = (process.env.DB_SSL || "false").toLowerCase();
 const ssl = sslMode === "true" ? { rejectUnauthorized: false } : false;
 
+/* 🔴 مصيدة sslmode — KANAF-ORD-0012 §1.3 (أسقطت الاتصال بالإنتاج في 2026-11-19).
+   إن حملت DATABASE_URL ‎?sslmode=require‎ فإن pg@8 **يتجاهل** `ssl` أعلاه ويتحقق من
+   الشهادة كاملاً (مقيس على pg 8.22.0: sslmode=require → ssl={}). وشهادة خادم الاستضافة
+   موقَّعة ذاتياً، فيفشل الاتصال بـ «self-signed certificate» ويبدو كأنه كلمة مرور خاطئة.
+   القاعدة: التشفير من DB_SSL وحده، وDATABASE_URL بلا sslmode. والتحذير أدناه لا يطبع السلسلة. */
+if (/[?&]sslmode=/i.test(connectionString || "")) {
+  console.warn("[db] ⚠️ DATABASE_URL يحمل sslmode — pg سيتجاهل DB_SSL ويتحقق من الشهادة كاملاً. " +
+    "احذف ?sslmode=… من DATABASE_URL واعتمد على DB_SSL=true (انظر db/pool.js و.env.example).");
+}
+
 // A single shared connection pool. Import { pool } from this file
 // anywhere you need to run a query — never create a second Pool.
 export const pool = new Pool({
