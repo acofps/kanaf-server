@@ -92,15 +92,22 @@ userAccountRouter.put("/safety-plan", requireVerifiedUser, async (req, res) => {
       if (cur[0] && (baseVersion === null || baseVersion !== cur[0].version)) {
         throw httpError(409, "safety_plan_changed_elsewhere", { currentVersion: cur[0].version });
       }
-      const { rows } = await client.query(
-        `INSERT INTO user_safety_plans (user_id, warning_signs, coping_strategies, safe_place)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (user_id) DO UPDATE SET
-           warning_signs = EXCLUDED.warning_signs, coping_strategies = EXCLUDED.coping_strategies,
-           safe_place = EXCLUDED.safe_place, version = user_safety_plans.version + 1, updated_at = now()
-         RETURNING *`,
-        [req.userId, vals.warning_signs, vals.coping_strategies, vals.safe_place]
-      );
+      /* KANAF-ORD-0012 §2.4: FOR UPDATE لا يقفل صفاً غير موجود. فكان حفظان أوّلان متزامنان
+         (جهازان، أو إعادة إرسال) يمرّان معاً، ويستبدل الثاني الأول بصمت عبر ON CONFLICT DO UPDATE.
+         الآن: الحفظ الأول إدراج فقط، ومن يخسر السباق يأخذ 409 كأي تعارض آخر. */
+      const params = [req.userId, vals.warning_signs, vals.coping_strategies, vals.safe_place];
+      const { rows } = cur[0]
+        ? await client.query(
+          `UPDATE user_safety_plans SET warning_signs = $2, coping_strategies = $3, safe_place = $4,
+             version = version + 1, updated_at = now()
+           WHERE user_id = $1 RETURNING *`, params)
+        : await client.query(
+          `INSERT INTO user_safety_plans (user_id, warning_signs, coping_strategies, safe_place)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING RETURNING *`, params);
+      if (!rows[0]) {
+        const { rows: now } = await client.query(`SELECT version FROM user_safety_plans WHERE user_id = $1`, [req.userId]);
+        throw httpError(409, "safety_plan_changed_elsewhere", { currentVersion: now[0]?.version ?? null });
+      }
       return rows[0];
     });
     res.json({ plan: planOut(saved) });

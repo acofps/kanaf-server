@@ -106,6 +106,21 @@ try {
   r = await call("GET", "/api/me/safety-plan");
   ok("S8 no token → 401", r.status === 401);
 
+  /* KANAF-ORD-0012 §2.4: حفظان أوّلان متزامنان — واحد يُحفظ، والآخر 409، لا استبدال صامت */
+  const firsts = await Promise.all(["الأول", "الثاني", "الثالث"].map((w) => call("PUT", "/api/me/safety-plan", { token: Bu.token, body: { warningSigns: w, copingStrategies: "", safePlace: "" } })));
+  const firstWon = firsts.filter((x) => x.status === 200);
+  const { rows: bp } = await query(`SELECT warning_signs, version FROM user_safety_plans WHERE user_id = $1`, [Bu.id]);
+  ok("S10 three concurrent first saves → exactly one 200, the rest 409, stored plan is the winner's at version 1", firstWon.length === 1 && firsts.filter((x) => x.status === 409 && x.body.error === "safety_plan_changed_elsewhere").length === 2 && bp[0]?.warning_signs === firstWon[0]?.body.plan?.warningSigns && bp[0]?.version === 1, JSON.stringify({ st: firsts.map((x) => x.status), db: bp[0] }));
+  /* حذف الخطة — لم يكن مُختبَراً (جرد ORD-0012) */
+  r = await call("DELETE", "/api/me/safety-plan");
+  ok("S11 delete without token → 401", r.status === 401);
+  r = await call("DELETE", "/api/me/safety-plan", { token: Bu.token });
+  const { rows: bp2 } = await query(`SELECT count(*)::int n FROM user_safety_plans WHERE user_id = $1`, [Bu.id]);
+  const { rows: ap } = await query(`SELECT count(*)::int n FROM user_safety_plans WHERE user_id = $1`, [A.id]);
+  ok("S12 owner deletes own plan (deleted 1), another user's plan untouched", r.status === 200 && r.body.deleted === 1 && bp2[0].n === 0 && ap[0].n === 1, JSON.stringify({ body: r.body, mine: bp2[0].n, other: ap[0].n }));
+  r = await call("DELETE", "/api/me/safety-plan", { token: Bu.token });
+  ok("S13 deleting again is harmless (deleted 0)", r.status === 200 && r.body.deleted === 0);
+
   /* دائرة الدعم */
   r = await call("POST", "/api/me/support-contacts", { token: A.token, body: { name: "أخوي", phone: "05 0000 0001", relationship: "أخ" } });
   ok("C1 add contact → 201 normalised phone", r.status === 201 && r.body.contact?.phone === "0500000001", JSON.stringify(r.body));
