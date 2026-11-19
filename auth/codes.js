@@ -50,7 +50,7 @@ function generateCode() {
  * This matters beyond abuse prevention: /api/send-code was previously
  * open with only the global 60-per-15-min per-IP limit, which is a
  * usable mail cannon pointed at arbitrary addresses. Every one of
- * those sends comes from mail.kanaf.me, and Gmail attributes the
+ * those sends comes from the mail host (mail.tanfs.net since KANAF-ORD-0010), and Gmail attributes the
  * resulting spam complaints to the domain's reputation — a plausible
  * contributor to the junk-folder problem, not just a security issue.
  *

@@ -15,7 +15,7 @@
 |---|---|
 | `TEST_DATABASE_URL` | غيابه — لا fallback إلى `DATABASE_URL` أبداً |
 | لا بيئة مختلطة | `DATABASE_URL` مضبوط بقيمة مختلفة |
-| المضيف | غير loopback/مقبس محلي، أو أي مضيف إنتاج معروف (kanaf.me، onrender.com…) حتى لو أُعلن |
+| المضيف | غير loopback/مقبس محلي، أو أي مضيف إنتاج معروف (kanaf.me، tanfs.net، onrender.com…) حتى لو أُعلن |
 | الدور | `kanaf_adel` أو `postgres` بالاسم، أو أي دور superuser فعلياً (من pg_roles) |
 | علامة البيئة | غياب جدول `kanaf_test_env_marker` أو nonce لا يطابق `KANAF_TEST_MARKER` |
 | المزودات | مفتاح دفع `sk_live_`، أو `NODE_ENV=production`؛ وتُفرَّغ أسرار SMTP/VAPID/Anthropic |

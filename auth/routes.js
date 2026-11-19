@@ -89,7 +89,7 @@ function verificationEmailBody(name, code, ttlMinutes) {
 إذا ما طلبت هذا الكود، تجاهل الرسالة ولا تشاركها مع أحد.
 
 فريق تنفس
-kanaf.me`;
+tanfs.net`;
 }
 
 function resetEmailBody(name, code, ttlMinutes) {
@@ -101,7 +101,7 @@ function resetEmailBody(name, code, ttlMinutes) {
 إذا ما طلبت استعادة كلمة المرور، تجاهل الرسالة — كلمة مرورك ما تغيّرت ولا يحتاج منك أي إجراء.
 
 فريق تنفس
-kanaf.me`;
+tanfs.net`;
 }
 
 function existingAccountEmailBody(name) {
@@ -109,11 +109,11 @@ function existingAccountEmailBody(name) {
 
 وصلنا طلب إنشاء حساب في تنفس بهذا البريد، وعندك حساب مسجّل مسبقاً.
 
-لو كنت أنت: سجّل الدخول مباشرة من app.kanaf.me
+لو كنت أنت: سجّل الدخول مباشرة من app.tanfs.net
 لو ما كنت أنت: ما صار شيء، حسابك بأمان ولا يحتاج أي إجراء.
 
 فريق تنفس
-kanaf.me`;
+tanfs.net`;
 }
 
 /* =========================================================

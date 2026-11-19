@@ -37,7 +37,7 @@ const EXIT_CODE = 97;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const PRODUCTION_HOST_PATTERNS = [
-  /kanaf\.me$/i, /kanaf\.app$/i, /onrender\.com$/i, /render\.com$/i,
+  /kanaf\.me$/i, /tanfs\.net$/i, /kanaf\.app$/i, /onrender\.com$/i, /render\.com$/i,
   /dimofinf/i, /cpanel/i, /amazonaws\.com$/i,
 ];
 const FORBIDDEN_ROLES = new Set(["kanaf_adel", "postgres"]);

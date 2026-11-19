@@ -4,7 +4,7 @@ import { query, withTransaction } from "../db/pool.js";
 import { requireVerifiedUser } from "../auth/middleware.js";
 import { getUserSubscription } from "../billing/subscription.js";
 import { assertContentAvailable } from "../content/catalog.js";
-import { saveSubscription, removeSubscription, getPublicKey } from "../notifications/push.js";
+import { saveSubscription, removeSubscription, getPublicKey, isPushConfigured } from "../notifications/push.js";
 import { isClientRef, isUuid, onceByClientRef } from "./receipts.js";
 
 export const userDataRouter = express.Router();
@@ -1382,7 +1382,9 @@ export const pushPublicKeyRouter = express.Router();
 
 pushPublicKeyRouter.get("/push/public-key", (req, res) => {
   const key = getPublicKey();
-  res.json({ publicKey: key, enabled: Boolean(key) });
+  // KANAF-ORD-0010 §2: «مفعّل» = الخادم يقدر يرسل فعلاً (المفتاحان + VAPID_SUBJECT صالح)،
+  // لا مجرد وجود المفتاح العام — وإلا طلب التطبيق إذناً من المستخدم لإشعارات لن تصل.
+  res.json({ publicKey: key, enabled: Boolean(key) && isPushConfigured() });
 });
 
 /**

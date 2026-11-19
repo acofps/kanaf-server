@@ -108,7 +108,7 @@ export async function comparePassword(plaintext, storedHash) {
    Access token — short-lived JWT, sent as:
      Authorization: Bearer <token>
 
-   Header rather than cookie because the app (app.kanaf.me) and this
+   Header rather than cookie because the app (app.tanfs.net; app.kanaf.me before KANAF-ORD-0010) and this
    API (kanaf-server.onrender.com) are different sites. SameSite=Strict
    cookies are never sent cross-site — the exact failure that broke the
    admin panel copy on cPanel. SameSite=None would technically work but
