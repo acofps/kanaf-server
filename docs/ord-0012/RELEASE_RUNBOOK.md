@@ -231,6 +231,11 @@ cd /opt/render/project/src && node ops/tnfs-numbering.mjs --apply
 
 ## الخطوة 6 — متغيّرات البريد على Render
 
+> ⚠️ **تحديث 2026-11-20 — هذه الخطوة تجاوزها الواقع.**
+> - البريد يعمل عبر Mailgun (`smtp.mailgun.org:587`).
+> - والقيم المضبوطة في `PRODUCTION_RELEASE_LOG.md` §7.
+> - لا تُطبَّق القيم أدناه فوقها.
+
 **قبلها:** سجلات DNS في `DNS_RECORDS.md` مطبَّقة عند dimofinf، وتعيد القيم المطلوبة.
 
 **افعل:** Render ← Environment. أضف هذه المتغيّرات ولا تغيّر غيرها:
