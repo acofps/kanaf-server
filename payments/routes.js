@@ -98,6 +98,13 @@ paymentsRouter.post("/create-invoice", requireVerifiedUser, async (req, res) => 
         `INSERT INTO invoices (user_id, plan_id, amount_sar, status) VALUES ($1, $2, $3, 'pending') RETURNING id`,
         [userId, planId, plan.price_sar]
       );
+      // المتوقع المالي للفاتورة يُثبَّت في نفس المعاملة (ORD-0003 N-02): حدث «مدفوع» يُطابَق عليه
+      // بالهللة والعملة، لا على سعر الباقة أو عملة الإعدادات وقت وصول الحدث. نفس التحويل الذي
+      // يرسله createInvoice إلى المزود (Math.round(price × 100)).
+      await client.query(
+        `INSERT INTO invoice_payment_expectations (invoice_id, amount_halalas, currency) VALUES ($1, $2, $3)`,
+        [rows[0].id, Math.round(Number(plan.price_sar) * 100), settings.currency]
+      );
       return rows[0].id;
     });
 

@@ -1,3 +1,6 @@
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
+// يعدّ جدول users كاملاً (يفترض صفاً واحداً) — قاعدة مخصّصة فقط.
+requireDedicatedDatabase(import.meta.url);
 import express from "express";
 import { authRouter } from "./auth/routes.js";
 import { query } from "./db/pool.js";
@@ -53,7 +56,7 @@ console.log = (...args) => {
 function lastCodeFor(email) {
   const entry = [...sentMail].reverse().find((m) => m.includes(email));
   if (!entry) return null;
-  const m = /كود تأكيد بريدك في كنف: (\d{6})/.exec(entry);
+  const m = /كود تأكيد بريدك في تنفس: (\d{6})/.exec(entry);
   return m ? m[1] : null;
 }
 

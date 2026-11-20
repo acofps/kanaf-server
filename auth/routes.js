@@ -1,7 +1,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { query, withTransaction } from "../db/pool.js";
-import { sendEmail } from "../mail/send.js";
+import { sendSystemEmail } from "../notifications/system-log.js";
 import {
   validatePassword, hashPassword, comparePassword,
   issueAccessToken, issueRefreshToken, rotateRefreshToken,
@@ -83,37 +83,37 @@ async function issueSession(user, req) {
 function verificationEmailBody(name, code, ttlMinutes) {
   return `أهلاً ${name}،
 
-كود تأكيد بريدك في كنف: ${code}
+كود تأكيد بريدك في تنفس: ${code}
 
 الكود صالح لمدة ${ttlMinutes} دقائق.
 إذا ما طلبت هذا الكود، تجاهل الرسالة ولا تشاركها مع أحد.
 
-فريق كنف
-kanaf.me`;
+فريق تنفس
+tanfs.net`;
 }
 
 function resetEmailBody(name, code, ttlMinutes) {
   return `أهلاً ${name}،
 
-كود استعادة كلمة المرور في كنف: ${code}
+كود استعادة كلمة المرور في تنفس: ${code}
 
 الكود صالح لمدة ${ttlMinutes} دقائق، ويُستخدم مرة واحدة.
 إذا ما طلبت استعادة كلمة المرور، تجاهل الرسالة — كلمة مرورك ما تغيّرت ولا يحتاج منك أي إجراء.
 
-فريق كنف
-kanaf.me`;
+فريق تنفس
+tanfs.net`;
 }
 
 function existingAccountEmailBody(name) {
   return `أهلاً ${name}،
 
-وصلنا طلب إنشاء حساب في كنف بهذا البريد، وعندك حساب مسجّل مسبقاً.
+وصلنا طلب إنشاء حساب في تنفس بهذا البريد، وعندك حساب مسجّل مسبقاً.
 
-لو كنت أنت: سجّل الدخول مباشرة من app.kanaf.me
+لو كنت أنت: سجّل الدخول مباشرة من app.tanfs.net
 لو ما كنت أنت: ما صار شيء، حسابك بأمان ولا يحتاج أي إجراء.
 
-فريق كنف
-kanaf.me`;
+فريق تنفس
+tanfs.net`;
 }
 
 /* =========================================================
@@ -202,7 +202,7 @@ authRouter.post("/register", async (req, res) => {
       // Mail failure here must not change the response shape, or the
       // timing/status difference re-leaks what the branch exists to hide.
       try {
-        await sendEmail(cleanEmail, "محاولة إنشاء حساب — كنف", existingAccountEmailBody(cleanName));
+        await sendSystemEmail("existing_account_notice", cleanEmail, "محاولة إنشاء حساب — تنفس", existingAccountEmailBody(cleanName));
       } catch (err) {
         console.error("existing-account notice failed:", err.message);
       }
@@ -227,7 +227,7 @@ authRouter.post("/register", async (req, res) => {
     const { code, ttlMinutes } = await issueCode(cleanEmail, "signup");
 
     try {
-      await sendEmail(cleanEmail, "كود التحقق — كنف", verificationEmailBody(cleanName, code, ttlMinutes));
+      await sendSystemEmail("email_verification", cleanEmail, "كود التحقق — تنفس", verificationEmailBody(cleanName, code, ttlMinutes));
     } catch (err) {
       // The row exists and the code is stored, so the account is
       // recoverable via resend — but say so plainly rather than
@@ -325,7 +325,7 @@ authRouter.post("/resend-code", async (req, res) => {
 
     const { code, ttlMinutes } = await issueCode(cleanEmail, "signup");
     try {
-      await sendEmail(cleanEmail, "كود التحقق — كنف", verificationEmailBody(user.name, code, ttlMinutes));
+      await sendSystemEmail("email_verification", cleanEmail, "كود التحقق — تنفس", verificationEmailBody(user.name, code, ttlMinutes));
     } catch (err) {
       console.error("resend failed:", err.message);
       return res.status(502).json({ error: "email_send_failed" });
@@ -529,7 +529,7 @@ authRouter.post("/forgot-password", async (req, res) => {
     if (!rate.allowed) return;
 
     const { code, ttlMinutes } = await issueCode(cleanEmail, "password_reset");
-    await sendEmail(cleanEmail, "استعادة كلمة المرور — كنف", resetEmailBody(user.name, code, ttlMinutes));
+    await sendSystemEmail("password_reset", cleanEmail, "استعادة كلمة المرور — تنفس", resetEmailBody(user.name, code, ttlMinutes));
   } catch (err) {
     console.error("forgot-password:", err.message);
   }

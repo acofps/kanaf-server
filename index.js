@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import crypto from "node:crypto";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
@@ -20,6 +21,10 @@ import { contentRouter } from "./content/routes.js";
 import { userDataRouter, pushPublicKeyRouter } from "./userdata/routes.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
+import { sentMessagesRouter } from "./admin/sent-messages.js";
+import { cartsRouter } from "./admin/carts.js";
+import { discountsRouter } from "./admin/discounts.js";
+import { integrationsRouter } from "./admin/integrations.js";
 /* ---------------------------------------------------------
    المرحلة 5 — الأدوار والصلاحيات والتقارير والإعدادات.
 --------------------------------------------------------- */
@@ -27,7 +32,10 @@ import { adminAccountsRouter } from "./admin/accounts.js";
 import { adminExportsRouter } from "./admin/exports.js";
 import { adminSettingsRouter, getAppSettings } from "./admin/settings.js";
 import { sweepMiddleware } from "./notifications/scheduler.js";
-import { requireUserAuth } from "./auth/middleware.js";
+import { requireVerifiedUser } from "./auth/middleware.js";
+import { userAccountRouter } from "./userdata/account.js";
+import { assistantGate } from "./assistant/guard.js";
+import { internalRouter } from "./ops/internal.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -40,7 +48,17 @@ const app = express();
 // read the real client IP from X-Forwarded-For instead of either
 // rate-limiting everyone as a single client, or trusting a
 // spoofable header from an untrusted number of hops.
-app.set("trust proxy", 1);
+/* KANAF-ORD-0001 R15-07: عدد الوكلاء الموثوقين صار متغيّر بيئة
+   TRUST_PROXY_HOPS، والافتراضي 1 — نفس سلوك الإنتاج حرفياً. لا يُغيَّر
+   قبل قياس سلسلة الوكلاء الفعلية عبر GET /admin/diagnostics/client-ip
+   (للمالك) من شبكتين مختلفتين: رقم أكبر من عدد الوكلاء الفعلي يجعل
+   X-Forwarded-For الذي يرسله العميل نفسه «عنوانه» — أي قابلاً للتزوير. */
+const TRUST_PROXY_HOPS = process.env.TRUST_PROXY_HOPS === undefined ? 1 : Number(process.env.TRUST_PROXY_HOPS);
+if (!Number.isInteger(TRUST_PROXY_HOPS) || TRUST_PROXY_HOPS < 0 || TRUST_PROXY_HOPS > 4) {
+  console.error("FATAL: TRUST_PROXY_HOPS يجب أن يكون عدداً صحيحاً من 0 إلى 4.");
+  process.exit(1);
+}
+app.set("trust proxy", TRUST_PROXY_HOPS);
 app.use(express.json({ limit: "200kb" }));
 app.use(cookieParser());
 
@@ -329,10 +347,46 @@ function normalizeContent(c) {
   if (c && typeof c === "object" && typeof c.text === "string") return c.text;
   return "";
 }
+/* ⚠️ تطبيع الإملاء العربي — مسار أمان، لا تجميل (KANAF-ORD-0001 X08).
+   المطابقة كانت حرفية: «ابي اموت» في القائمة بلا همزة، فالصيغة الشائعة
+   «أبي أموت» **لا تُكتشف**، ومثلها «أذي نفسي» و«انتحاري» بتاء أو
+   تشكيل. التطبيع يُطبَّق على النص وعلى العبارات معاً، فلا عبارة جديدة
+   تُضاف ولا معيار يتغيّر: العبارات العشرون نفسها تطابق صيغها الإملائية.
+   (همزات الألف → ا، ى → ي، ة → ه، ؤ → و، ئ → ي، حذف التشكيل والتطويل
+   وتوحيد المسافات.) */
+function normalizeArabic(s) {
+  return s
+    .toLowerCase()
+    .replace(/[ً-ٰٟـ]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/[’'`]/g, "'")
+    .replace(/\s+/g, " ");
+}
+const CRISIS_PATTERNS_NORMALIZED = CRISIS_PATTERNS.map(normalizeArabic);
+/* ومقارنة ثانية بلا مسافات: «ما في داعي أعيش» = «مافي داعي أعيش».
+   الخطأ هنا في اتجاه الأمان (إظهار لوحة الأزمة لا إخفاؤها). وهذا لا
+   يجعل القائمة تغطية لغوية كاملة — انظر سجل X08.
+
+   حدّها (KANAF-ORD-0002 CONS-04): كانت تقارن **كل** العبارات بالنص كله بعد حذف
+   مسافاته، فتلتقط ما ليس إشارة: «إنت حار» → «انتحار»، «كان تحار»، «friend my life»
+   → «endmylife». فصار للمقارنة بلا مسافات شرطان: (1) للعبارات متعددة الكلمات وحدها —
+   الكلمة المفردة («انتحار») تُطابَق بالتطبيع العادي، ومنه «انتحاري» و«الانتحار»؛
+   (2) أن يبدأ التطابق عند بداية كلمة في النص. العبارات نفسها لم تتغير. */
+const CRISIS_PATTERNS_COMPACT = CRISIS_PATTERNS_NORMALIZED.filter((p) => p.includes(" ")).map((p) => p.replace(/ /g, ""));
 function containsCrisisSignal(text = "") {
-  const norm = normalizeContent(text).toLowerCase();
-  if (!norm) return false;
-  return CRISIS_PATTERNS.some((p) => norm.includes(p.toLowerCase()));
+  const norm = normalizeArabic(normalizeContent(text));
+  if (!norm.trim()) return false;
+  if (CRISIS_PATTERNS_NORMALIZED.some((p) => norm.includes(p))) return true;
+  const words = norm.trim().split(" ");
+  for (let i = 0; i < words.length; i++) {
+    const tail = words.slice(i).join("");
+    if (CRISIS_PATTERNS_COMPACT.some((p) => tail.startsWith(p))) return true;
+  }
+  return false;
 }
 
 const CHAT_SYSTEM_PROMPT = `أنت مساعد تثقيفي داعم داخل تطبيق للصحة النفسية اسمه Kanaf، اسمك "رفيق". قواعدك صارمة ولا يجوز كسرها:
@@ -394,7 +448,11 @@ function crisisFirewall(req, res, next) {
 /* ---------------------------------------------------------
    POST /api/chat  { messages: [{role, content}] }
 --------------------------------------------------------- */
-app.post("/api/chat", crisisFirewall, requireUserAuth, async (req, res) => {
+/* requireVerifiedUser لا requireUserAuth: المسار يصرف مالاً عند المزوّد،
+   والتعليق على requireVerifiedUser نفسه يشترطه لما يصرف مالاً. بدونه
+   يظل حساب معلّق أو طلب حذفه يستهلك النموذج حتى ينتهي رمز وصوله
+   (15 دقيقة). جدار الأمان قبله كما كان — بلا مصادقة. KANAF-ORD-0001 R15-02/X08 */
+app.post("/api/chat", crisisFirewall, requireVerifiedUser, assistantGate("chat"), async (req, res) => {
   try {
     const { messages } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -540,7 +598,7 @@ function normalizePlan(obj) {
   return { summary, focus_areas: focusAreas, specialist_note: specialistNote };
 }
 
-app.post("/api/plan", crisisFirewall, requireUserAuth, async (req, res) => {
+app.post("/api/plan", crisisFirewall, requireVerifiedUser, assistantGate("plan"), async (req, res) => {
   const dataNote = req.body?.dataNote;
   if (typeof dataNote !== "string" || !dataNote.trim()) {
     return res.status(400).json({ error: "dataNote is required" });
@@ -755,6 +813,8 @@ app.post("/api/crisis-signal", async (req, res) => {
 app.use("/api/content", contentRouter);
 app.use("/api", pushPublicKeyRouter);
 app.use("/api/me", userDataRouter);
+// خطة الأمان ودائرة الدعم وطلب الحذف والتصدير — KANAF-ORD-0001 R15-01/02/03
+app.use("/api/me", userAccountRouter);
 
 /* ---------------------------------------------------------
    GET /api/support-info — البيانات المعلنة التي يعرضها التطبيق.
@@ -823,7 +883,7 @@ app.get("/api/support-info", async (req, res) => {
     res.json({
       supportEmail: s.support_email ?? null,
       supportHours: s.support_hours ?? null,
-      appName: s.app_public_name ?? "كنف",
+      appName: s.app_public_name ?? "تنفس",
       whatsapp: {
         enabled: whatsappUsable,
         url: whatsappUsable ? `https://wa.me/${digits}` : null,
@@ -840,7 +900,7 @@ app.get("/api/support-info", async (req, res) => {
        قراءة الإعداد لا يجوز أن يُظهر زراً برقم لا نعرفه. */
     console.error("[support-info] تعذّرت القراءة:", err.message);
     res.json({
-      supportEmail: null, supportHours: null, appName: "كنف",
+      supportEmail: null, supportHours: null, appName: "تنفس",
       whatsapp: { enabled: false, url: null },
       social: { x: null, instagram: null },
       dailyReminderTime: "20:00",
@@ -849,6 +909,9 @@ app.get("/api/support-info", async (req, res) => {
 });
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+/* مشغّل المجدول الخارجي المحمي + الجاهزية — KANAF-ORD-0001 R15-14/R15-15/X10.
+   معطّل ما لم يُضبط SWEEP_TRIGGER_TOKEN (انظر ops/internal.js). */
+app.use("/api/internal", internalRouter);
 
 /* ---------------------------------------------------------
    Unsubscribe from broadcast emails — the real gap a strict review
@@ -865,10 +928,10 @@ app.get("/api/unsubscribe", (req, res) => {
       <p>الرابط غير صالح أو منتهي.</p></body></html>`);
   }
   res.send(`<!DOCTYPE html><html dir="rtl" lang="ar"><body style="font-family:Arial;text-align:center;padding:40px;">
-    <p>تأكيد إلغاء الاشتراك من رسائل كنف التسويقية؟</p>
+    <p>تأكيد إلغاء الاشتراك من رسائل تنفس التسويقية؟</p>
     <form method="POST" action="/api/unsubscribe">
       <input type="hidden" name="token" value="${String(req.query.token).replace(/"/g, "&quot;")}">
-      <button type="submit" style="padding:10px 24px;border-radius:8px;background:#0D5C6B;color:#fff;border:none;font-size:14px;">تأكيد إلغاء الاشتراك</button>
+      <button type="submit" style="padding:10px 24px;border-radius:8px;background:#735890;color:#fff;border:none;font-size:14px;">تأكيد إلغاء الاشتراك</button>
     </form>
   </body></html>`);
 });
@@ -909,6 +972,10 @@ app.use("/admin", adminExportsRouter);
 app.use("/admin", adminSettingsRouter);
 app.use("/admin", adminContentRouter);
 app.use("/admin", adminNotificationsRouter);
+app.use("/admin", sentMessagesRouter); // KANAF-ORD-0008 §3
+app.use("/admin", cartsRouter); // KANAF-ORD-0008 §4
+app.use("/admin", discountsRouter); // KANAF-ORD-0008 §6 — غير مربوط بالدفع
+app.use("/admin", integrationsRouter); // KANAF-ORD-0008 §7 — اعتمادات لا تكامل
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
@@ -921,13 +988,30 @@ app.use("/admin", adminRouter);
    used as a backdoor. Safe to leave the code in place permanently;
    once one admin exists, every call is rejected regardless of token.
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   مقارنة رمز الإعداد — KANAF-ORD-0001 X06
+   • زمن ثابت (timingSafeEqual) بدل !== التي تتوقف عند أول حرف مختلف.
+   • يُقبل من ترويسة X-Setup-Token أولاً؛ الرمز في عنوان GET
+     (?token=) يُكتب في سجلات الوصول لدى الاستضافة والوكلاء. يبقى
+     مقبولاً للتوافق مع الطريقة الموثقة سابقاً، ويُفضَّل الترويسة.
+   • SETUP_TOKEN فارغ = المسارات معطّلة (كما كان). بعد الاستعمال
+     يُفرَّغ من Render — دورة الإبطال موثقة في المرجع.
+--------------------------------------------------------- */
+function setupTokenMatches(req, bodyOrQueryToken) {
+  const expected = process.env.SETUP_TOKEN;
+  if (!expected) return false;
+  const given = String(req.headers["x-setup-token"] || bodyOrQueryToken || "");
+  const a = crypto.createHash("sha256").update(given).digest();
+  const b = crypto.createHash("sha256").update(expected).digest();
+  return given.length > 0 && crypto.timingSafeEqual(a, b);
+}
 app.post("/api/setup/create-first-admin", async (req, res) => {
   try {
     const setupToken = process.env.SETUP_TOKEN;
     if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
 
     const { token, name, email, password } = req.body || {};
-    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    if (!setupTokenMatches(req, token)) return res.status(403).json({ error: "invalid_token" });
 
     const { rows: existing } = await query(`SELECT count(*)::int AS n FROM admin_users`);
     if (existing[0].n > 0) return res.status(409).json({ error: "admin_already_exists" });
@@ -966,7 +1050,7 @@ app.get("/api/setup/migration-status", async (req, res) => {
   try {
     const setupToken = process.env.SETUP_TOKEN;
     if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
-    if (req.query.token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    if (!setupTokenMatches(req, req.query.token)) return res.status(403).json({ error: "invalid_token" });
 
     res.json({ migrations: await migrationStatus() });
   } catch (err) {
@@ -981,7 +1065,7 @@ app.post("/api/setup/run-migrations", async (req, res) => {
     if (!setupToken) return res.status(403).json({ error: "setup_disabled" });
 
     const { token } = req.body || {};
-    if (!token || token !== setupToken) return res.status(403).json({ error: "invalid_token" });
+    if (!setupTokenMatches(req, token)) return res.status(403).json({ error: "invalid_token" });
 
     const results = await runMigrations();
     const failed = results.find((r) => r.status === "failed");

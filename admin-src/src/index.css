@@ -30,15 +30,88 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+/* ============================================================
+   رموز الألوان — KANAF-ORD-0008 §2.3 و§2.4، وORD-0005 §4–§5.
+
+   الوضع الفاتح هو الافتراضي، ويُعرَّف كل رمز هنا أولاً، ثم يُعاد
+   تعريفه كله في كتلة الداكن. لا لون يُعرَّف في كتلة الداكن وحدها.
+   الاختيار يُحفظ في متصفّح المسؤول (theme.js) ويُطبَّق بـdata-theme.
+
+   الألوان الدلالية (#D9A441 / #4CAF7D / #E2574C) ثابتة كإشارة: نقطة،
+   أيقونة، تعبئة. وعلى السطح الفاتح يُكتب **النص** الذي يحمل معناها
+   بحبر أغمق من الدرجة نفسها، مقيس ≥ 4.6:1 (--amber/--green/--crisis
+   أدناه)، لأن الدرجة نفسها على الأبيض 2.25 و2.71 و3.68 فقط.
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --bg: #FAF9FC;
+  --surface: #FFFFFF;
+  --surface-alt: #F3F1F7;
+  --line: #E5E1EC;
+  --line-soft: #EFECF4;
+  --text: #1C1626;          /* 17.62:1 على #FFF */
+  --text-muted: #5B5168;    /*  7.44:1 */
+  --text-faint: #6E6480;    /*  5.53:1 */
+  --accent: #735890;        /* brand-600 — 5.95:1 */
+  --accent-soft: rgba(115, 88, 144, 0.10);
+  --on-accent: #FFFFFF;     /* نص على تعبئة brand-600 — 5.95:1 */
+  --gold-text: #1C1626;     /* §4.4: لا ذهبي لنص صغير على الفاتح — الشارة تعبئة وحد ذهبيان ونص داكن */
+  --gold-soft: #F8EDD3;     /* gold-100 */
+  --gold-line: #B48B25;     /* gold-600 — حد 3.15:1 على الأبيض */
+  --amber: #85601B;         /* حبر التحذير — ≥ 4.66:1 على الأبيض و#FAF9FC و#F3F1F7 وعلى تعبئته فوقها */
+  --amber-soft: rgba(217, 164, 65, 0.14);
+  --green: #317151;         /* ≥ 4.64:1 على كل الأسطح الفاتحة وتعبئته فوقها */
+  --green-soft: rgba(76, 175, 125, 0.14);
+  --crisis: #BB2A1E;        /* حبر خطر/أزمة للنص — ≥ 4.60:1 على كل الأسطح الفاتحة وتعبئته فوقها */
+  --crisis-soft: rgba(226, 87, 76, 0.14);
+  --crisis-signal: #E2574C; /* الإشارة نفسها — لا تتغيّر */
+  --overlay: rgba(28, 22, 38, 0.45);
+  --sec-tint: 12%;
+  --sec-overview: #6758D8; --sec-users: #2C6CBA; --sec-messages: #1C7674; --sec-sent: #1D7A43;
+  --sec-content: #9E35D0; --sec-notifications: #BA2C96; --sec-carts: #6D6D1A; --sec-plans: #2B7A1D;
+  --sec-discounts: #C02D72; --sec-invoices: #227391; --sec-billing: #44781C; --sec-break-glass: #824BD5;
+  --sec-settings: #4960D4; --sec-integrations: #1C785C; --sec-admin-users: #B12BB6;
+  --sec-audit-log: #1D7A29; --sec-access-log: #5B741B;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1A1223;            /* brand-950 */
+  --surface: #241A2F;
+  --surface-alt: #2E2340;
+  --line: #3A2D4D;
+  --line-soft: #2E2340;
+  --text: #EFE9F5;
+  --text-muted: #B6A8C6;
+  --text-faint: #A68EC0;    /* brand-400 — ORD-0008 §2.4-أ (5.07–6.28:1) بدل #857699 */
+  --accent: #C1AED5;        /* brand-300 */
+  --accent-soft: rgba(193, 174, 213, 0.16);
+  --on-accent: #1A1223;     /* 8.90:1 */
+  --gold-text: #EACD86;     /* gold-300 — على الداكن يقرأ ويجوز */
+  --gold-soft: rgba(234, 205, 134, 0.14);
+  --gold-line: transparent;
+  --amber: #D9A441;
+  --amber-soft: rgba(217, 164, 65, 0.14);
+  --green: #4CAF7D;
+  --green-soft: rgba(76, 175, 125, 0.14);
+  --crisis: #E2574C;
+  --crisis-soft: rgba(226, 87, 76, 0.14);
+  --crisis-signal: #E2574C;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --sec-tint: 16%;
+  --sec-overview: #9990DA; --sec-users: #85A9D6; --sec-messages: #85D6D5; --sec-sent: #85D6A7;
+  --sec-content: #BC85D6; --sec-notifications: #D685C2; --sec-carts: #D6D685; --sec-plans: #91D685;
+  --sec-discounts: #D685AB; --sec-invoices: #85C0D6; --sec-billing: #A8D685; --sec-break-glass: #AB8CD9;
+  --sec-settings: #8896D7; --sec-integrations: #85D6BE; --sec-admin-users: #D385D6;
+  --sec-audit-log: #85D68F; --sec-access-log: #BFD685;
+}
 body {
   margin: 0;
-  background: #0B1418;
-  color: #E8F1F2;
+  background: var(--bg);
+  color: var(--text);
   font-family: "IBM Plex Sans Arabic", "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
 }
 /* الأرقام لاتينية في كل مكان — قرار موثّق في تفضيلات المشروع. */
 * { font-variant-numeric: lining-nums tabular-nums; }
 input, textarea, select, button { font-family: inherit; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #26383F; border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }

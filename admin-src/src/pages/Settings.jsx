@@ -18,7 +18,7 @@ import {
    مختبَر منذ المرحلة 3 — تغيير النسبة كان يحتاج نداءً مباشراً.
    والبيانات الضريبية داخل صفحة «الباقات»، وهو موضع غريب.
 
-   جمعها هنا يجعل سؤال «ما الذي يمكن ضبطه في كنف؟» له مكان واحد
+   جمعها هنا يجعل سؤال «ما الذي يمكن ضبطه في تنفس؟» له مكان واحد
    يُجاب فيه.
 
    ------------------------------------------------------------
@@ -104,6 +104,7 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
 
   const save = async () => {
     if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
+    if (String(vatRate).trim() === "") { setErr("النسبة مطلوبة: 0.15 لخمسة عشر بالمئة."); return; }   // Number("") = 0
     const r = Number(vatRate);
     if (!Number.isFinite(r) || r < 0 || r >= 1) {
       setErr("النسبة تُكتب ككسر عشري: 0.15 لخمسة عشر بالمئة، لا 15."); return;
@@ -330,12 +331,19 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const save = async () => {
+  /* KANAF-ORD-0001 R15-21: رقم واتساب يُمسح. الخادم يقبل null لمسحه منذ
+     المرحلة 6، والشاشة كانت ترفض الفراغ فيستحيل المسح منها. الفراغ هنا
+     = مسح صريح يُرسل null؛ الزر يختفي في التطبيق حتى لو بقي المفتاح
+     مرفوعاً (الخادم يقرّر ذلك). */
+  // التذييل التسويقي اختياري: مسحه = بلا تذييل؛ رابط إلغاء الاشتراك يُلحق بكل رسالة بث مستقلاً عنه (B-11)
+  const nullable = setting.key === "whatsapp_number" || setting.key === "marketing_email_footer";
+  const save = async (forceClear = false) => {
     if (!reason.trim()) { setErr("السبب مطلوب."); return; }
-    if (!isBool && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
+    const clearing = nullable && (forceClear || !String(value).trim());
+    if (!isBool && !clearing && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
     setBusy(true); setErr("");
     try {
-      const payload = isBool ? boolValue : (isNumber ? Number(value) : value);
+      const payload = clearing ? null : isBool ? boolValue : (isNumber ? Number(value) : value);
       await api.updateAppSetting(setting.key, payload, reason.trim());
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
@@ -344,7 +352,7 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
-      style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose}>
+      style={{ background: C.overlay }} onClick={onClose}>
       <div className="rounded-2xl w-full my-8 p-5" style={{ maxWidth: 480, background: C.surface, border: `1px solid ${C.line}` }}
         onClick={(e) => e.stopPropagation()}>
         <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>{entry?.label || setting.key}</h3>
@@ -376,9 +384,19 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
           <Field label="السبب" hint="يُحفظ في سجل التدقيق بالقيمة القديمة والجديدة.">
             <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
+          {nullable && (
+            <p className="text-[11px] leading-5" style={{ color: C.textFaint }}>
+              {setting.key === "whatsapp_number"
+                ? "اترك الحقل فارغاً أو اضغط «مسح الرقم» لإزالته. بلا رقم صالح لا يظهر زر واتساب في التطبيق حتى لو كان مفتاح الإظهار مفعّلاً — فلا رابط مكسور."
+                : "اترك الحقل فارغاً أو اضغط «مسح التذييل» لتُرسل رسائل البث بلا تذييل. رابط إلغاء الاشتراك يُضاف لكل رسالة بث دائماً ولا يتأثر."}
+            </p>
+          )}
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div className="flex gap-2">
-            <Button onClick={save} busy={busy}>حفظ</Button>
+            <Button onClick={() => save(false)} busy={busy}>حفظ</Button>
+            {nullable && setting.value !== null && setting.value !== "" && (
+              <Button variant="warn" onClick={() => save(true)} disabled={busy}>{setting.key === "whatsapp_number" ? "مسح الرقم" : "مسح التذييل"}</Button>
+            )}
             <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
           </div>
         </div>

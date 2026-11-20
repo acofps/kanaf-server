@@ -1,7 +1,7 @@
 import React from "react";
 import { Users, CreditCard, Mail, LifeBuoy } from "lucide-react";
 import { api } from "../api.js";
-import { C, can } from "../theme.js";
+import { C, can, sectionTone } from "../theme.js";
 import { Card, PageTitle, Spinner, ErrorBar, Empty, useAsync } from "../ui.jsx";
 
 /* ============================================================
@@ -13,20 +13,31 @@ import { Card, PageTitle, Spinner, ErrorBar, Empty, useAsync } from "../ui.jsx";
    ============================================================ */
 
 const SOURCE_LABEL = {
+  /* المصادر التي يخزّنها /api/crisis-signal فعلاً (CRISIS_SOURCES في index.js) — كانت تظهر
+     بمفاتيحها الإنجليزية لأن القائمة هنا بأسماء أخرى (KANAF-ORD-0002). الأسماء القديمة باقية لأي صف قديم. */
+  phq9_item9: "مقياس PHQ-9 (البند 9)",
+  chat_keyword: "عبارة في سند",
+  journal_keyword: "عبارة في اليوميات",
+  manual_button: "زر «أحتاج مساعدة عاجلة»",
+  screening_band: "نتيجة مقياس",
   chat: "محادثة",
   screening: "مقياس",
   daily_log: "تدوين يومي",
   manual: "زر الأزمة",
   notebook: "دفتر",
-  cbt: "أداة كنف",
+  cbt: "أداة تنفس",
 };
 
-function Stat({ icon: Icon, label, value, hint, color = "teal" }) {
+/* tone = لون القسم (sectionTone) — يتكرر في القائمة وفي بطاقة الرقم.
+   color = لون معنى (تحذير/أزمة) حين تحمل البطاقة إشارة لا تموضعاً. */
+function Stat({ icon: Icon, label, value, hint, color = "teal", tone }) {
+  const fg = tone ? tone.fg : (C[color] || C.textMuted);
+  const soft = tone ? tone.soft : (C[`${color}Soft`] || C.surfaceAlt);
   return (
     <Card>
       <div className="flex items-start gap-3">
-        <div className="rounded-xl p-2.5 shrink-0" style={{ background: C[`${color}Soft`] || C.surfaceAlt }}>
-          <Icon size={16} color={C[color] || C.textMuted} />
+        <div className="rounded-xl p-2.5 shrink-0" style={{ background: soft }}>
+          <Icon size={18} strokeWidth={1.75} color={fg} />
         </div>
         <div>
           <p className="text-[11px]" style={{ color: C.textMuted }}>{label}</p>
@@ -63,13 +74,13 @@ export default function Overview({ me }) {
       <PageTitle title="نظرة عامة" subtitle="الأرقام محسوبة لحظة فتح الصفحة." />
 
       <div className="grid gap-3 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}>
-        <Stat icon={Users} label="إجمالي المستخدمين" value={d?.totalUsers ?? 0} />
+        <Stat icon={Users} label="إجمالي المستخدمين" value={d?.totalUsers ?? 0} tone={sectionTone("users")} />
         <Stat icon={CreditCard} label="اشتراكات فعّالة" value={d?.activeSubscriptions ?? 0}
-          hint="حسب أحدث اشتراك لكل مستخدم" color="green" />
+          hint="حسب أحدث اشتراك لكل مستخدم" tone={sectionTone("plans")} />
         <Stat icon={Mail} label="رسائل غير مقروءة" value={d?.unreadMessages ?? 0}
-          color={(d?.unreadMessages ?? 0) > 0 ? "amber" : "teal"} />
+          color="amber" tone={(d?.unreadMessages ?? 0) > 0 ? undefined : sectionTone("messages")} />
         <Stat icon={LifeBuoy} label="إشارات أزمة (30 يوماً)" value={crisisTotal}
-          hint="مجمّعة بلا هوية" color="crisis" />
+          hint="مجمّعة بلا هوية" color="crisisSignal" />
       </div>
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))" }}>

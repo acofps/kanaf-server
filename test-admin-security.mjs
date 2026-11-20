@@ -25,6 +25,7 @@
  * فحين لا يمكن الوصول إلى حالة ما، يُقال ذلك صراحةً بدل كتابة
  * عنوان يوحي بأنها فُحصت — انظر الاختبار 4-ج.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
@@ -161,6 +162,7 @@ async function purge() {
    تصدر بعده. اختبار يترك هذا الصف مغيَّراً لا يفسد بيانات اختبار،
    بل يفسد وثائق نظامية. */
 let TAX_BEFORE = null;
+let SUPPORT_EMAIL_BEFORE;
 
 async function run() {
   /* يُقرأ **بعد** التهيئة لا قبلها: التهيئة تنظّف بقايا تشغيل سابق،
@@ -170,6 +172,11 @@ async function run() {
   await seedAdmins();
   const { rows: tb } = await query(`SELECT legal_name, vat_number, address, updated_by FROM tax_settings LIMIT 1`);
   TAX_BEFORE = tb[0] || null;
+  /* القيمة الأصلية لبريد الدعم — يُعاد إليها في التنظيف بدل القيمة
+     المبذورة (كان التنظيف يكتب "support@kanaf.me" فوق أي قيمة ضبطها
+     المالك). KANAF-ORD-0001 U09-2 */
+  const { rows: se } = await query(`SELECT value FROM app_settings WHERE key = 'support_email'`);
+  SUPPORT_EMAIL_BEFORE = se[0] ? se[0].value : undefined;
 
   /* ============================================================
      1) Content Manager لا يدخل المحاسبة
@@ -552,8 +559,13 @@ async function run() {
         && list.body.settings.every((s) => typeof s.wired === "boolean"),
       `مسجَّل=${registeredAppKeys.length} معروض=${listedKeys.length} · ${list.body.settings?.map((s) => `${s.key}:${s.wired}`).join(" ")}`);
 
-    log("8-ز. admin_session_minutes معلَّم بأنه لا يؤثر (قيمته السارية من متغيّر بيئة)",
-      list.body.settings.find((s) => s.key === "admin_session_minutes")?.wired === false);
+    /* KANAF-ORD-0001 R15-19: كان هذا الفحص يثبت الحال القديمة الصادقة
+       (لا يؤثر). صار الإعداد مربوطاً فعلاً بمدة رمز الوصول وكوكيه، وأثره
+       مقيس عند مستهلكه في test-11-settings-wiring.mjs (A1–A3). فالفحص
+       هنا يثبت أن العلامة تقول الحقيقة الجديدة وأن القارئ المعلن موجود. */
+    const asm = list.body.settings.find((s) => s.key === "admin_session_minutes");
+    log("8-ز. admin_session_minutes معلَّم مربوطاً، وقارئه admin/auth.js يقرؤه فعلاً",
+      asm?.wired === true && /admin_session_minutes/.test(readFileSync("./admin/auth.js", "utf8")));
   }
 
   /* ============================================================
@@ -756,13 +768,15 @@ async function run() {
        NULL. استعادة معرّف محذوف تفشل بقيد المفتاح الأجنبي. */
     const { rows: still } = await query(`SELECT 1 FROM admin_users WHERE id = $1`, [TAX_BEFORE.updated_by]);
     await query(
-      `UPDATE tax_settings SET legal_name = $1, vat_number = $2, address = $3, updated_by = $4`,
+      `UPDATE tax_settings SET legal_name = $1, vat_number = $2, address = $3, updated_by = $4 WHERE singleton = true`,
       [TAX_BEFORE.legal_name, TAX_BEFORE.vat_number, TAX_BEFORE.address, still.length ? TAX_BEFORE.updated_by : null]
     );
   }
   await purge();
   // إعداد الدعم يُعاد إلى قيمته المبذورة
-  await query(`UPDATE app_settings SET value = '"support@kanaf.me"'::jsonb WHERE key = 'support_email'`);
+  if (SUPPORT_EMAIL_BEFORE !== undefined) {
+    await query(`UPDATE app_settings SET value = $1::jsonb WHERE key = 'support_email'`, [JSON.stringify(SUPPORT_EMAIL_BEFORE)]);
+  }
 }
 
 run()

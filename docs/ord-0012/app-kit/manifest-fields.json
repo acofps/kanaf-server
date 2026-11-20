@@ -1,0 +1,32 @@
+{
+  "_note": "الحقول المعروضة (ORD-0005 §6.1)، ومعها start_url وscope بعد نقل النطاق (ORD-0010 §3.5). إن كانا في manifest التطبيق نسبيين (\"/\") فلا يتغيّران؛ وإن كانا مطلقين بـapp.kanaf.me فيصيران كما هنا. لا تغيّر id ولا مسارات icons. عنوان الـAPI ليس في الـmanifest، ويبقى kanaf-server.onrender.com.",
+  "manifest": {
+    "name": "تنفس",
+    "short_name": "تنفس",
+    "theme_color": "#FFFFFF",
+    "start_url": "https://app.tanfs.net/",
+    "scope": "https://app.tanfs.net/"
+  },
+  "theme_color_by_mode": {
+    "light": "#FFFFFF",
+    "dark": "#1A1223"
+  },
+  "html_meta": [
+    "<meta name=\"theme-color\" content=\"#FFFFFF\" media=\"(prefers-color-scheme: light)\">",
+    "<meta name=\"theme-color\" content=\"#1A1223\" media=\"(prefers-color-scheme: dark)\">"
+  ],
+  "maskable_icon_entry_if_one_exists_today": {
+    "src": "<المسار الحالي نفسه>",
+    "sizes": "512x512",
+    "type": "image/png",
+    "purpose": "maskable"
+  },
+  "manifest_if_relative": {
+    "start_url": "/",
+    "scope": "/"
+  },
+  "origin": {
+    "app": "https://app.tanfs.net",
+    "api_unchanged": "https://kanaf-server.onrender.com"
+  }
+}

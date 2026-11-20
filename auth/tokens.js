@@ -108,7 +108,7 @@ export async function comparePassword(plaintext, storedHash) {
    Access token — short-lived JWT, sent as:
      Authorization: Bearer <token>
 
-   Header rather than cookie because the app (app.kanaf.me) and this
+   Header rather than cookie because the app (app.tanfs.net; app.kanaf.me before KANAF-ORD-0010) and this
    API (kanaf-server.onrender.com) are different sites. SameSite=Strict
    cookies are never sent cross-site — the exact failure that broke the
    admin panel copy on cPanel. SameSite=None would technically work but
@@ -177,7 +177,15 @@ export async function rotateRefreshToken(token, context = {}) {
   if (session.deleted_at) return null;
   if (new Date(session.expires_at) < new Date()) return null;
 
-  await query(`UPDATE user_sessions SET revoked_at = now(), last_used_at = now() WHERE id = $1`, [session.id]);
+  /* الإبطال مشروط بأن الصف ما زال حياً، والنتيجة تُفحص. بدونه كان
+     طلبان متزامنان بنفس الرمز يمرّان كلاهما من الـSELECT أعلاه ويحصل
+     كل منهما على رمز جديد — أي أن الرمز «يُستعمل مرة واحدة» لم يكن
+     صحيحاً تحت التزامن. الآن يفوز واحد فقط. KANAF-ORD-0001 X05 */
+  const { rowCount } = await query(
+    `UPDATE user_sessions SET revoked_at = now(), last_used_at = now() WHERE id = $1 AND revoked_at IS NULL`,
+    [session.id]
+  );
+  if (rowCount !== 1) return null;
   const fresh = await issueRefreshToken(session.user_id, context);
   return { userId: session.user_id, refreshToken: fresh };
 }

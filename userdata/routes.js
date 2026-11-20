@@ -4,7 +4,8 @@ import { query, withTransaction } from "../db/pool.js";
 import { requireVerifiedUser } from "../auth/middleware.js";
 import { getUserSubscription } from "../billing/subscription.js";
 import { assertContentAvailable } from "../content/catalog.js";
-import { saveSubscription, removeSubscription, getPublicKey } from "../notifications/push.js";
+import { saveSubscription, removeSubscription, getPublicKey, isPushConfigured } from "../notifications/push.js";
+import { isClientRef, isUuid, onceByClientRef } from "./receipts.js";
 
 export const userDataRouter = express.Router();
 
@@ -26,7 +27,7 @@ export const userDataRouter = express.Router();
    ------------------------------------------------------------
    الأثر التجاري المباشر
    ------------------------------------------------------------
-   شرط فتح "بوصلة كنف" (ميزة كنف+ المدفوعة) هو
+   شرط فتح "بوصلة تنفس" (ميزة تنفس+ المدفوعة) هو
    trackedDays >= 7 || hasScreening، والعدّاد يصفّر مع كل تحديث.
    أي أن ميزة مدفوعة كان يستحيل الوصول إليها. GET /api/me/summary
    أدناه هو المصدر الذي يقرأ منه التطبيق هذين الرقمين الآن — من
@@ -59,6 +60,19 @@ async function assertCanStart(userId, contentType, contentKey) {
   if (subscriptionTier === "plus" && !(await hasPlusAccess(userId))) {
     throw Object.assign(new Error("subscription_required"), { status: 402 });
   }
+}
+
+/* clientRef اختياري (B-04): مفقود ← إدراج عادي؛ موجود وغير UUID ← 400. */
+function clientRefOf(req, res) {
+  const v = (req.body || {}).clientRef;
+  if (v === undefined || v === null) return { ok: true, ref: null };
+  if (!isClientRef(v)) { res.status(400).json({ error: "invalid_client_ref" }); return { ok: false }; }
+  return { ok: true, ref: v.toLowerCase() };
+}
+/* إعادة كتابة وصلت سابقاً تُرد 200 بنفس جسم الإنشاء، وإنشاء جديد 201. */
+function sendCreated(res, { row, replayed }) {
+  if (replayed) res.set("Idempotent-Replayed", "true");
+  return res.status(replayed ? 200 : 201).json(row);
 }
 
 function fail(res, err, where) {
@@ -162,7 +176,7 @@ userDataRouter.post("/push/unsubscribe", requireVerifiedUser, async (req, res) =
      • ولو أرسل "2026-08-10" الصحيح → يُقارَن بيوم الخادم (9)
        فيُرفض بـlogged_on_in_future.
 
-   والعدّاد نفسه هو ما يفتح «بوصلة كنف» المدفوعة.
+   والعدّاد نفسه هو ما يفتح «بوصلة تنفس» المدفوعة.
 
    الآن: تاريخ مجرد فقط، ومهلة يوم كامل في فحص المستقبل تغطي كل
    المناطق الزمنية (UTC−12 إلى UTC+14) بلا الحاجة لمعرفة إزاحة
@@ -246,14 +260,20 @@ userDataRouter.post("/screenings", requireVerifiedUser, async (req, res) => {
   if (!Number.isInteger(total) || !bandLabel) {
     return res.status(400).json({ error: "total_and_band_label_required" });
   }
+  const cr = clientRefOf(req, res); if (!cr.ok) return;
   try {
-    const { rows } = await query(
-      `INSERT INTO screenings (user_id, kind, total, band_label, answers)
-       VALUES ($1, $2, $3, $4, $5::jsonb)
-       RETURNING id, kind, total, band_label, created_at`,
-      [req.userId, kind, total, bandLabel, JSON.stringify(answers || {})]
-    );
-    res.status(201).json(rows[0]);
+    const out = await onceByClientRef(req.userId, cr.ref, "screening",
+      async (c) => (await c.query(
+        `INSERT INTO screenings (user_id, kind, total, band_label, answers)
+         VALUES ($1, $2, $3, $4, $5::jsonb)
+         RETURNING id, kind, total, band_label, created_at`,
+        [req.userId, kind, total, bandLabel, JSON.stringify(answers || {})]
+      )).rows[0],
+      async (c, id) => (await c.query(
+        `SELECT id, kind, total, band_label, created_at FROM screenings WHERE id = $1 AND user_id = $2`,
+        [id, req.userId])).rows[0]);
+    if (!out.row) return res.status(410).json({ error: "already_deleted" });
+    sendCreated(res, out);
   } catch (err) { fail(res, err, "screenings"); }
 });
 
@@ -298,9 +318,14 @@ userDataRouter.post("/journeys", requireVerifiedUser, async (req, res) => {
                            ELSE user_journey_enrollments.status END,
              client_state = COALESCE($6::jsonb, user_journey_enrollments.client_state),
              updated_at = now()
+         /* رحلة أنهاها المستخدم (abandoned) لا يُعاد تسجيلها بالكتابة فوق حالتها
+            (KANAF-ORD-0002 B-03): الصف واحد لكل رحلة، و«البدء من جديد» بلا معنى
+            محدد في الخادم (هل تُمسح أيامها؟) — قرار مالك، لا يُخترع هنا. */
+         WHERE user_journey_enrollments.status <> 'abandoned'
        RETURNING id, journey_key, status, total_days, started_at, client_state`,
       [req.userId, journeyKey, journeyType, contentVersion, totalDays, JSON.stringify(clientState || {})]
     );
+    if (!rows[0]) return res.status(409).json({ error: "journey_stopped" });
     res.status(201).json(rows[0]);
   } catch (err) { fail(res, err, "journeys"); }
 });
@@ -335,6 +360,10 @@ userDataRouter.post("/journeys/:key/days/:day/complete", requireVerifiedUser, as
       );
       const e = rows[0];
       if (!e) throw Object.assign(new Error("not_enrolled"), { status: 404 });
+      /* إكمال يوم يخص رحلة جارية فقط (B-03): المنهاة لا تُكمَّل (ولا يُكتب «completed» فوق
+         «abandoned» عند آخر يوم)، والموقوفة مؤقتاً تُستأنف أولاً — التطبيق يستأنفها قبل فتح اليوم. */
+      if (e.status === "abandoned") throw Object.assign(new Error("journey_stopped"), { status: 409 });
+      if (e.status === "paused") throw Object.assign(new Error("invalid_transition"), { status: 409 });
       if (dayNumber > e.total_days) throw Object.assign(new Error("day_out_of_range"), { status: 400 });
 
       await client.query(
@@ -391,13 +420,23 @@ userDataRouter.post("/journeys/:key/status", requireVerifiedUser, async (req, re
   const status = req.body?.status;
   if (!["active", "paused", "abandoned"].includes(status)) return res.status(400).json({ error: "invalid_status" });
   try {
+    /* الانتقالات المسموحة تطابق ENROLLMENT_TRANSITIONS في التطبيق (B-03):
+       نشطة ↔ موقوفة، ونشطة/موقوفة → منتهية. تكرار نفس الحالة لا يغيّر شيئاً
+       (إعادة طلب بعد انقطاع)، ولا خروج من «منتهية» أو «مكتملة». */
+    const FROM = { paused: ["active", "paused"], active: ["paused", "active"], abandoned: ["active", "paused", "abandoned"] };
     const { rows } = await query(
-      `UPDATE user_journey_enrollments SET status = $3, updated_at = now()
-       WHERE user_id = $1 AND journey_key = $2 AND status <> 'completed'
+      `UPDATE user_journey_enrollments
+          SET status = $3, updated_at = CASE WHEN status = $3 THEN updated_at ELSE now() END
+       WHERE user_id = $1 AND journey_key = $2 AND status = ANY($4::text[])
        RETURNING journey_key, status`,
-      [req.userId, req.params.key, status]
+      [req.userId, req.params.key, status, FROM[status]]
     );
-    if (!rows[0]) return res.status(404).json({ error: "not_found_or_completed" });
+    if (!rows[0]) {
+      const { rows: cur } = await query(
+        `SELECT status FROM user_journey_enrollments WHERE user_id = $1 AND journey_key = $2`, [req.userId, req.params.key]);
+      if (cur[0]) return res.status(409).json({ error: "invalid_transition", from: cur[0].status, to: status });
+      return res.status(404).json({ error: "not_found_or_completed" });
+    }
     res.json(rows[0]);
   } catch (err) { fail(res, err, "journeys/status"); }
 });
@@ -412,20 +451,37 @@ userDataRouter.post("/journeys/:key/status", requireVerifiedUser, async (req, re
 userDataRouter.post("/notebooks", requireVerifiedUser, async (req, res) => {
   const { templateKey, templateVersion = "1.0.0" } = req.body || {};
   if (!templateKey) return res.status(400).json({ error: "template_key_required" });
+  const cr = clientRefOf(req, res); if (!cr.ok) return;
   try {
     await assertCanStart(req.userId, "notebook", templateKey);
-    const { rows } = await query(
-      `INSERT INTO user_notebook_entries (user_id, template_key, template_version)
-       VALUES ($1, $2, $3)
-       RETURNING id, template_key, status, revision, started_at`,
-      [req.userId, templateKey, templateVersion]
-    );
-    res.status(201).json(rows[0]);
+    const out = await onceByClientRef(req.userId, cr.ref, "notebook",
+      async (c) => (await c.query(
+        `INSERT INTO user_notebook_entries (user_id, template_key, template_version)
+         VALUES ($1, $2, $3)
+         RETURNING id, template_key, status, revision, started_at, updated_at`,
+        [req.userId, templateKey, templateVersion]
+      )).rows[0],
+      async (c, id) => (await c.query(
+        `SELECT id, template_key, status, revision, started_at, updated_at FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
+        [id, req.userId])).rows[0]);
+    /* الدفتر قد يُحذف بعد إنشائه؛ إعادة نفس المفتاح بعدها لا تعيد إنشاءه. */
+    if (!out.row) return res.status(410).json({ error: "already_deleted" });
+    sendCreated(res, out);
   } catch (err) { fail(res, err, "notebooks"); }
 });
 
 userDataRouter.patch("/notebooks/:id", requireVerifiedUser, async (req, res) => {
-  const { answers, lastPromptKey, status, helpfulness } = req.body || {};
+  const { answers, lastPromptKey, status, helpfulness, baseUpdatedAt } = req.body || {};
+  /* معرّف ليس UUID كان يصل Postgres فيرد 500؛ هو دفتر غير موجود لهذا المستخدم. */
+  if (!isUuid(req.params.id)) return res.status(404).json({ error: "not_found" });
+  /* baseUpdatedAt اختياري (KANAF-ORD-0002 B-02): آخر updated_at رآه العميل. إن تغيّر
+     الدفتر بعده (تبويب أو جهاز آخر) يُرفض الحفظ بـ409 بدل الكتابة فوق الأحدث.
+     المقارنة بدقة المللي ثانية لأن JSON لا يحمل ما دونها. */
+  let base = null;
+  if (baseUpdatedAt !== undefined && baseUpdatedAt !== null) {
+    base = new Date(baseUpdatedAt);
+    if (Number.isNaN(base.getTime())) return res.status(400).json({ error: "invalid_base_updated_at" });
+  }
   if (status !== undefined && !["draft", "completed"].includes(status)) {
     return res.status(400).json({ error: "invalid_status" });
   }
@@ -451,6 +507,7 @@ userDataRouter.patch("/notebooks/:id", requireVerifiedUser, async (req, res) => 
            completed_at   = CASE WHEN $6 = 'completed' THEN COALESCE(completed_at, now()) ELSE completed_at END,
            updated_at     = now()
        WHERE id = $1 AND user_id = $2
+         AND ($7::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $7::timestamptz))
        RETURNING id, template_key, status, revision, updated_at, completed_at`,
       [
         req.params.id, req.userId,
@@ -458,9 +515,18 @@ userDataRouter.patch("/notebooks/:id", requireVerifiedUser, async (req, res) => 
         lastPromptKey ?? null,
         helpfulness ?? null,
         status ?? null,
+        base ? base.toISOString() : null,
       ]
     );
-    if (!rows[0]) return res.status(404).json({ error: "not_found" });
+    if (!rows[0]) {
+      if (base) {
+        const { rows: cur } = await query(
+          `SELECT status, revision, updated_at FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
+          [req.params.id, req.userId]);
+        if (cur[0]) return res.status(409).json({ error: "notebook_conflict", current: cur[0] });
+      }
+      return res.status(404).json({ error: "not_found" });
+    }
     res.json(rows[0]);
   } catch (err) { fail(res, err, "notebooks/update"); }
 });
@@ -479,6 +545,7 @@ userDataRouter.get("/notebooks", requireVerifiedUser, async (req, res) => {
 });
 
 userDataRouter.delete("/notebooks/:id", requireVerifiedUser, async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ error: "not_found" });
   try {
     const { rowCount } = await query(
       `DELETE FROM user_notebook_entries WHERE id = $1 AND user_id = $2`,
@@ -490,7 +557,7 @@ userDataRouter.delete("/notebooks/:id", requireVerifiedUser, async (req, res) =>
 });
 
 /* ============================================================
-   7) جلسات أدوات كنف
+   7) جلسات أدوات تنفس
    ============================================================ */
 
 userDataRouter.post("/cbt-sessions", requireVerifiedUser, async (req, res) => {
@@ -499,15 +566,21 @@ userDataRouter.post("/cbt-sessions", requireVerifiedUser, async (req, res) => {
   if (!["in_progress", "completed", "abandoned"].includes(status)) {
     return res.status(400).json({ error: "invalid_status" });
   }
+  const cr = clientRefOf(req, res); if (!cr.ok) return;
   try {
     await assertCanStart(req.userId, "cbt_tool", toolId);
-    const { rows } = await query(
-      `INSERT INTO user_cbt_sessions (user_id, tool_id, status, payload, completed_at)
-       VALUES ($1, $2, $3, $4::jsonb, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
-       RETURNING id, tool_id, status, started_at, completed_at`,
-      [req.userId, toolId, status, JSON.stringify(payload || {})]
-    );
-    res.status(201).json(rows[0]);
+    const out = await onceByClientRef(req.userId, cr.ref, "cbt_session",
+      async (c) => (await c.query(
+        `INSERT INTO user_cbt_sessions (user_id, tool_id, status, payload, completed_at)
+         VALUES ($1, $2, $3, $4::jsonb, CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
+         RETURNING id, tool_id, status, started_at, completed_at`,
+        [req.userId, toolId, status, JSON.stringify(payload || {})]
+      )).rows[0],
+      async (c, id) => (await c.query(
+        `SELECT id, tool_id, status, started_at, completed_at FROM user_cbt_sessions WHERE id = $1 AND user_id = $2`,
+        [id, req.userId])).rows[0]);
+    if (!out.row) return res.status(410).json({ error: "already_deleted" });
+    sendCreated(res, out);
   } catch (err) { fail(res, err, "cbt-sessions"); }
 });
 
@@ -587,6 +660,13 @@ userDataRouter.patch("/preferences", requireVerifiedUser, async (req, res) => {
   }
 
   try {
+    /* الوقت الافتراضي لمن يفعّل التذكير أول مرة بلا وقت — من
+       app_settings.daily_reminder_time (KANAF-ORD-0001 R15-19). يُستعمل
+       عند **إنشاء** صف الجدولة فقط: من له وقت محفوظ لا يتغيّر وقته
+       بتغيير الإعداد. قيمة غير صالحة أو غائبة = 20:00 كما كان. */
+    const { rows: drt } = await query(`SELECT value FROM app_settings WHERE key = 'daily_reminder_time'`).catch(() => ({ rows: [] }));
+    const defaultTime = typeof drt[0]?.value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(drt[0].value) ? drt[0].value : "20:00";
+
     const result = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `UPDATE users
@@ -608,13 +688,13 @@ userDataRouter.patch("/preferences", requireVerifiedUser, async (req, res) => {
       if (needsSchedule) {
         const { rows: sched } = await client.query(
           `INSERT INTO user_reminder_prefs (user_id, local_time, timezone, updated_at)
-           VALUES ($1, COALESCE($2::time, '20:00'::time), COALESCE($3, 'Asia/Riyadh'), now())
+           VALUES ($1, COALESCE($2::time, $4::time), COALESCE($3, 'Asia/Riyadh'), now())
            ON CONFLICT (user_id) DO UPDATE SET
              local_time = COALESCE($2::time, user_reminder_prefs.local_time),
              timezone   = COALESCE($3, user_reminder_prefs.timezone),
              updated_at = now()
            RETURNING local_time, timezone`,
-          [req.userId, time, tz]
+          [req.userId, time, tz, defaultTime]
         );
         schedule = sched[0];
       } else {
@@ -1256,7 +1336,7 @@ userDataRouter.get("/plans", requireVerifiedUser, async (req, res) => {
 });
 
 /* ============================================================
-   12) ملخص التقدّم — مصدر شرط فتح "بوصلة كنف"
+   12) ملخص التقدّم — مصدر شرط فتح "بوصلة تنفس"
 
    trackedDays يُحسب من الصفوف الفعلية لا من عدّاد في المتصفح. هذا
    هو السطر الذي يفتح ميزة مدفوعة كانت مغلقة على كل مستخدم.
@@ -1302,7 +1382,9 @@ export const pushPublicKeyRouter = express.Router();
 
 pushPublicKeyRouter.get("/push/public-key", (req, res) => {
   const key = getPublicKey();
-  res.json({ publicKey: key, enabled: Boolean(key) });
+  // KANAF-ORD-0010 §2: «مفعّل» = الخادم يقدر يرسل فعلاً (المفتاحان + VAPID_SUBJECT صالح)،
+  // لا مجرد وجود المفتاح العام — وإلا طلب التطبيق إذناً من المستخدم لإشعارات لن تصل.
+  res.json({ publicKey: key, enabled: Boolean(key) && isPushConfigured() });
 });
 
 /**

@@ -69,7 +69,7 @@ export const DEFAULT_VAT_RATE = 0.15;
 
 /**
  * يفصل الإجمالي الشامل للضريبة إلى وعاء وضريبة.
- * أسعار كنف معروضة شاملة الضريبة، وهذا يستخرج التفصيل منها.
+ * أسعار تنفس معروضة شاملة الضريبة، وهذا يستخرج التفصيل منها.
  * يعيد نصوصاً بمنزلتين — نفس القيمة بالضبط تدخل الـPDF وحمولة الـQR.
  */
 export function splitVatInclusiveAmount(totalInclVat, vatRate = DEFAULT_VAT_RATE) {

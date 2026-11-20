@@ -34,6 +34,23 @@ export class ApiError extends Error {
       title_cannot_be_empty: "العنوان لا يمكن أن يكون فارغاً.",
       already_resolved: "هذا الطلب حُسم مسبقاً.",
       cannot_self_approve: "لا يمكنك اعتماد طلبك بنفسك.",
+      refund_exceeds_available_amount: "المبلغ أكبر من المتبقّي القابل للاسترداد في هذه الدفعة.",
+      refund_already_recorded: "هذا الاسترداد مسجّل مسبقاً — لم يُكرَّر.",
+      already_fully_refunded: "هذه الدفعة مستردة بالكامل.",
+      payment_not_captured: "الدفعة غير محصّلة — لا شيء يُسترد.",
+      provider_refund_failed: "رفض المزوّد الاسترداد — لم يتغيّر شيء عندنا.",
+      provider_outcome_unknown: "لم يصل رد المزوّد — قد يكون الاسترداد نُفّذ. المبلغ محجوز لمنع التكرار؛ اضغط «مطابقة» على الدفعة بعد 10 دقائق قبل أي محاولة جديدة.",
+      refund_amount_must_be_positive: "مبلغ الاسترداد يجب أن يكون أكبر من صفر.",
+      refund_exceeds_captured_amount: "المبلغ أكبر من المحصَّل.",
+      no_provider_payment_id: "لا رقم معاملة لدى المزوّد لهذه الدفعة — لا يمكن مطابقتها.",
+      provider_status_not_actionable: "حالة الدفعة لدى المزوّد لا تستدعي تغييراً.",
+      replay_failed: "تعذّرت إعادة معالجة الحدث — التفاصيل في سجل الخادم.",
+      reconcile_failed: "تعذّرت المطابقة مع المزوّد — حاول لاحقاً.",
+      provider_unavailable: "تعذّر الوصول إلى المزوّد الآن — الحدث باقٍ محجوزاً، لم يتغيّر شيء. أعد الفحص لاحقاً.",
+      recheck_failed: "تعذّرت إعادة الفحص — التفاصيل في سجل الخادم.",
+      hold_not_open: "هذا الحدث لم يعد مفتوحاً.",
+      session_minutes_must_be_5_to_60: "عمر الجلسة عدد صحيح من 5 إلى 60 دقيقة.",
+      invalid_assistant_policy: "القيمة يجب أن تكون all_verified أو plus_only.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -93,6 +110,19 @@ export const api = {
 
   /* ---------- المستخدمون ---------- */
   listUsers: (params) => req("/users", { params }),
+  // KANAF-ORD-0008 §3 — السبب إلزامي ويُسجَّل في سجل الوصول
+  listSentMessages: (params) => req("/sent-messages", { params }),
+  listAbandonedCarts: (params) => req("/abandoned-carts", { params }), // KANAF-ORD-0008 §4
+  // KANAF-ORD-0008 §6 — غير مربوطة بالدفع
+  listDiscountCodes: (params) => req("/discount-codes", { params }),
+  createDiscountCode: (body) => req("/discount-codes", { method: "POST", body }),
+  setDiscountActive: (id, active, reason) => req(`/discount-codes/${id}/active`, { method: "POST", body: { active, reason } }),
+  checkDiscountCode: (body) => req("/discount-codes/check", { method: "POST", body }),
+  // KANAF-ORD-0008 §7 — اعتمادات لا تكامل؛ لا مسار يعيد سرّاً
+  listIntegrations: () => req("/integrations"),
+  setIntegrationKey: (service, key, value, reason) => req(`/integrations/${service}/${key}`, { method: "PUT", body: { value, reason } }),
+  deleteIntegrationKey: (service, key, reason) => req(`/integrations/${service}/${key}`, { method: "DELETE", body: { reason } }),
+  testIntegration: (service, reason) => req(`/integrations/${service}/test`, { method: "POST", body: { reason } }),
   getUser: (id) => req(`/users/${id}`),
   getUserActions: (id) => req(`/users/${id}/actions`),
   getUserSensitive: (id, reason) => req(`/users/${id}/sensitive`, { params: { reason } }),
@@ -104,7 +134,8 @@ export const api = {
     req(`/users/${id}/subscription/refund`, { method: "POST", body: { reason, amountSar } }),
 
   /* ---------- الرسائل ---------- */
-  listMessages: () => req("/messages"),
+  // الصفحة تقول «أحدث 100 رسالة»؛ بلا pageSize كان الخادم يعيد 50 (افتراضيه)
+  listMessages: () => req("/messages?pageSize=100"),
   setMessageStatus: (id, status) => req(`/messages/${id}/status`, { method: "POST", body: { status } }),
 
   /* ---------- المحتوى ---------- */
@@ -133,7 +164,7 @@ export const api = {
   listPlans: () => req("/plans"),
   createPlan: (body) => req("/plans", { method: "POST", body }),
   updatePlan: (id, body) => req(`/plans/${id}`, { method: "PATCH", body }),
-  togglePlanActive: (id, active) => req(`/plans/${id}/toggle-active`, { method: "POST", body: { active } }),
+  togglePlanActive: (id, active, reason) => req(`/plans/${id}/toggle-active`, { method: "POST", body: { active, reason } }),
   getTaxSettings: () => req("/tax-settings"),
   saveTaxSettings: (body) => req("/tax-settings", { method: "PUT", body }),
 
@@ -164,6 +195,24 @@ export const api = {
   /* ---------- قبول الدعوة وضبط كلمة المرور — بلا مصادقة ---------- */
   validateSetupToken: (token) => req("/setup/validate", { params: { token } }),
   acceptSetup: (token, password) => req("/setup/accept", { method: "POST", body: { token, password } }),
+
+  /* ---------- المالية — /admin/billing/* — KANAF-ORD-0001 R15-09 ----------
+     كانت هذه المسارات مبنية ومختبرة في الخادم بلا شاشة. */
+  billingKpis: (params) => req("/billing/kpis", { params }),
+  billingSubscriptions: (params) => req("/billing/subscriptions", { params }),
+  billingPayments: (params) => req("/billing/payments", { params }),
+  billingRefunds: (params) => req("/billing/refunds", { params }),
+  refundPayment: (id, reason, amountSar) =>
+    req(`/billing/payments/${id}/refund`, { method: "POST", body: { reason, amountSar } }),
+  reconcilePayment: (id, reason) => req(`/billing/payments/${id}/reconcile`, { method: "POST", body: { reason } }),
+  webhookEvents: (params) => req("/billing/webhook-events", { params }),
+  webhookEvent: (id) => req(`/billing/webhook-events/${id}`),
+  replayWebhookEvent: (id, reason) => req(`/billing/webhook-events/${id}/replay`, { method: "POST", body: { reason } }),
+  billingIntegrity: () => req("/billing/integrity"),
+  paymentHolds: (status) => req("/billing/payment-holds", { params: { status } }),
+  recheckPaymentHold: (id, reason) => req(`/billing/payment-holds/${id}/recheck`, { method: "POST", body: { reason } }),
+  dismissPaymentHold: (id, reason) => req(`/billing/payment-holds/${id}/dismiss`, { method: "POST", body: { reason } }),
+  userBilling: (id) => req(`/billing/users/${id}/billing`),
 
   /* ---------- الإعدادات ---------- */
   settingsOverview: () => req("/settings/overview"),

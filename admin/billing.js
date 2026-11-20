@@ -10,8 +10,9 @@ import {
   UUID_RE, likeTerm, readPaging,
   buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter,
 } from "./filters.js";
-import { executeRefund, issueCreditNoteDocument } from "../payments/refund.js";
-import { processWebhookEvent, issueInvoiceDocument } from "../payments/webhook.js";
+import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "../payments/refund.js";
+import { settlePaymentEvent } from "../payments/webhook.js";
+import { fetchProviderPayment, providerRefundedTotal } from "../payments/verify.js";
 import { fetchPayment } from "../payments/moyasar.js";
 
 export const billingRouter = express.Router();
@@ -55,10 +56,16 @@ function dateBoundsSql(fromParam, toParam, tzParam) {
   };
 }
 
-function defaultRange(req) {
-  const to = String(req.query.to || "").trim() || new Date().toISOString().slice(0, 10);
-  const from = String(req.query.from || "").trim() ||
-    new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+/* KANAF-ORD-0012 §2.4: الحدود تُفسَّر بمنطقة التقارير (dateBoundsSql)، فاليوم الافتراضي يجب أن
+   يُحسب بها أيضاً. كان يُؤخذ تاريخ UTC، فبين 21:00 و24:00 UTC (منتصف الليل وما بعده في الرياض)
+   كان «اليوم» هو الأمس، وتسقط من المؤشرات كل عملية جرت بعد منتصف الليل بتوقيت الرياض. */
+export function dayInZone(ms, tz) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+}
+function defaultRange(req, tz) {
+  const now = Date.now();
+  const to = String(req.query.to || "").trim() || dayInZone(now, tz);
+  const from = String(req.query.from || "").trim() || dayInZone(now - 29 * 86400000, tz);
   return { from, to };
 }
 
@@ -375,8 +382,8 @@ billingRouter.get("/refunds", requireAdminAuth, requirePermission("refunds:view"
 billingRouter.get("/kpis", requireAdminAuth, requirePermission("reports:view_kpis"), async (req, res) => {
   try {
     const settings = await getBillingSettings();
-    const { from, to } = defaultRange(req);
     const tz = settings.reportingTimezone;
+    const { from, to } = defaultRange(req, tz);
     const { fromExpr, toExpr } = dateBoundsSql("$1", "$2", "$3");
     const rangeParams = [from, to, tz];
 
@@ -558,8 +565,10 @@ billingRouter.get("/webhook-events/:id", requireAdminAuth, requirePermission("we
  * إعداد ضريبي ناقص وقتها) يُعاد تشغيله بحمولته المحفوظة بعد إصلاح
  * السبب — بدل انتظار إعادة محاولة من المزوّد قد تكون نافذتها انتهت.
  *
- * مقصور على الأحداث الفاشلة أو المستلمة. الحدث المعالَج لا يُعاد
- * تشغيله أبداً: كل الحماية من التكرار تفترض أن ذلك لا يحدث.
+ * يقبل أي حدث محفوظ — الفاشل والمستلم **والمعالَج** (KANAF-ORD-0002 B-10:
+ * كان هذا التعليق يقول إن المعالَج لا يُعاد أبداً، والكود أدناه يسمح عن قصد).
+ * الحماية من التكرار على مستوى الدفعة لا الحدث: دفعة مسجلة ← النتيجة
+ * payment_already_recorded بلا أثر مالي. السبب والتفصيل في التعليق داخل المعالج.
  */
 billingRouter.post(
   "/webhook-events/:id/replay",
@@ -588,32 +597,26 @@ billingRouter.post(
          النتيجة payment_already_recorded بلا أثر، ولو لم تكن مسجَّلة
          فهذا بالضبط ما نريد إصلاحه.
          ------------------------------------------------------ */
-      const result = await withTransaction((client) =>
-        processWebhookEvent(client, { eventType: event.event_type, body: event.payload })
-      );
-
-      if (result.needsInvoiceDocument) {
-        result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
-        delete result.needsInvoiceDocument;
-      }
-      if (result.needsCreditNote) {
-        result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
-        delete result.needsCreditNote;
-      }
+      /* نفس التحقق والمعالجة التي يمر بها الـwebhook (settlePaymentEvent — N-02/ج). حالة الحدث تتبع
+         النتيجة الفعلية: معلّق أو تكرار ← ignored، تعذّر تحقق مؤقت ← failed، مقبول ← processed. لا
+         يُكتب processed على نتيجة مرفوضة. الإعادة لا تتجاوز التحقق ولا تجعل حدثاً مدفوعاً. */
+      const { result, eventStatus } = await settlePaymentEvent({
+        eventType: event.event_type, body: event.payload, source: "replay", webhookEventId: event.id,
+      });
 
       await query(
-        `UPDATE webhook_events SET status = 'processed', outcome = $1, error = NULL,
-                attempts = attempts + 1, processed_at = now() WHERE id = $2`,
-        [JSON.stringify({ ...result, replayed_by: req.admin.id }), event.id]
+        `UPDATE webhook_events SET status = $1, outcome = $2, error = $3,
+                attempts = attempts + 1, processed_at = now() WHERE id = $4`,
+        [eventStatus, JSON.stringify({ ...result, replayed_by: req.admin.id }), result.temporary ? "provider verification unavailable" : null, event.id]
       );
 
       await logAdminAction({
         adminUserId: req.admin.id, action: "webhook_replay",
-        oldValue: { status: event.status }, newValue: { status: "processed", outcome: result.outcome },
+        oldValue: { status: event.status }, newValue: { status: eventStatus, outcome: result.outcome },
         reason: String(req.body?.reason || req.query?.reason), metadata: { event_id: event.id }, ipAddress: req.ip,
       });
 
-      res.json({ ok: true, outcome: result.outcome });
+      res.json({ ok: !result.held, outcome: result.outcome, held: Boolean(result.held), holdReason: result.holdReason || null, eventStatus });
     } catch (err) {
       await query(`UPDATE webhook_events SET status = 'failed', error = $1, attempts = attempts + 1 WHERE id = $2`,
         [String(err?.message || err).slice(0, 2000), req.params.id]).catch(() => {});
@@ -650,26 +653,25 @@ billingRouter.post(
         return res.status(422).json({ error: "provider_status_not_actionable", providerStatus: providerPayment?.status });
       }
 
-      const result = await withTransaction((client) =>
-        processWebhookEvent(client, { eventType, body: { id: null, type: eventType, data: providerPayment } })
-      );
+      /* بيانات المزوّد المقروءة هي الحمولة وهي دليل المزوّد معاً؛ وتمر بالتحقق المحلي نفسه (N-02/ج). */
+      const { result } = await settlePaymentEvent({
+        eventType, body: { id: null, type: eventType, data: providerPayment }, source: "reconcile", providerData: providerPayment,
+      });
 
-      if (result.needsInvoiceDocument) {
-        result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
-        delete result.needsInvoiceDocument;
+      /* R15-11: إجمالي المزوّد صار معروفاً — يُحسم أي حجز استرداد معلّق
+         نتيجته مجهولة (أقدم من 10 دقائق) إن طابق المسجَّل. */
+      const prt = providerRefundedTotal(providerPayment);   // COR-02: refunded الموثق أو refunded_amount البديل
+      if (prt.ok) {
+        result.releasedHolds = await withTransaction((client) =>
+          releaseStaleRefundHolds(client, req.params.id, Number((prt.halalas / 100).toFixed(2))));
       }
-      if (result.needsCreditNote) {
-        result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
-        delete result.needsCreditNote;
-      }
-
       await logAdminAction({
         adminUserId: req.admin.id, action: "payment_reconcile",
         oldValue: { status: rows[0].status }, newValue: { providerStatus: providerPayment.status, outcome: result.outcome },
         reason: String(req.body?.reason || req.query?.reason), metadata: { payment_id: req.params.id }, ipAddress: req.ip,
       });
 
-      res.json({ ok: true, providerStatus: providerPayment.status, outcome: result.outcome });
+      res.json({ ok: !result.held, providerStatus: providerPayment.status, outcome: result.outcome, held: Boolean(result.held), holdReason: result.holdReason || null, releasedHolds: result.releasedHolds || 0 });
     } catch (err) {
       console.error("[admin/billing] reconcile failed:", err);
       res.status(500).json({ error: "reconcile_failed", detail: String(err?.message || err) });
@@ -685,6 +687,132 @@ billingRouter.post(
    وجودها، وما قد يتسرّب من مسار لم يخطر على البال.
    ============================================================ */
 
+/* ============================================================
+   أحداث الدفع المعلّقة — KANAF-ORD-0003 N-02/ج
+   حدث لم يُقبل (عدم مطابقة أو تعذّر تحقق مؤقت) يُحفظ في payment_event_holds بلا أثر مالي.
+   • القائمة: payments:view (المحاسب، الدعم، المدير، المالك) — معرّفات آمنة والمتوقع والوارد والسبب،
+     لا الحمولة الخام (تلك خلف webhooks:view_payload كما كانت).
+   • إعادة الفحص: payments:reconcile — تقرأ دليل المزوّد **دائماً** حين للحجز معرّف دفعة (مستقلةً عن
+     KANAF_PAYMENT_PROVIDER_VERIFY الذي يحكم التحقق التلقائي في مسار webhook وحده — ORD-0004 COR-03،
+     كما تفعل المطابقة القائمة)، ثم تمرره على المحقق نفسه تحت القفل (settlePaymentEvent). تعذّر المزوّد
+     ← 503 والحجز يبقى مفتوحاً؛ لا سقوط إلى الحمولة المحفوظة دليلَ قبول. بلا معرّف دفعة: الحمولة المحفوظة
+     وحدها (فلا قبول ممكن). لا «اجعلها مدفوعة»، ولا تحرير حالة يدوي: القبول يأتي من الدليل وحده.
+   • الإغلاق بلا أثر: payments:reconcile، بسبب مكتوب — يغلق الاستثناء بعد فحصه ولا يمس مالاً.
+   ============================================================ */
+const HOLD_LABELS = {
+  missing_payment_id: "معرّف الدفعة غائب", status_mismatch: "نوع الحدث يناقض حالة الدفعة",
+  invoice_identity_conflict: "تعارض معرّفات الفاتورة", payment_invoice_conflict: "الدفعة مسجّلة لفاتورة أو مستخدم آخر",
+  second_payment_for_paid_invoice: "دفعة ثانية لفاتورة مسدَّدة", invoice_not_payable: "الفاتورة لا تقبل دفعاً",
+  amount_missing: "المبلغ غائب", amount_invalid: "المبلغ غير صالح", amount_mismatch: "المبلغ لا يطابق الفاتورة",
+  currency_missing: "العملة غائبة", currency_invalid: "العملة غير صالحة", currency_mismatch: "العملة لا تطابق الفاتورة",
+  legacy_currency_unverifiable: "فاتورة قديمة وتغيّرت العملة بعد إنشائها", provider_disagrees: "المزوّد يخالف الحدث",
+  provider_unverified: "تعذّر التحقق من المزوّد مؤقتاً", refund_amount_missing: "إجمالي الاسترداد غائب",
+  refund_amount_invalid: "إجمالي الاسترداد غير صالح", refund_currency_mismatch: "عملة الاسترداد لا تطابق الدفعة",
+  refund_total_conflict: "حقلا إجمالي الاسترداد (refunded و refunded_amount) مختلفان",
+};
+const holdOut = (h) => ({
+  id: h.id, kind: h.kind, reason: h.reason, reasonLabel: HOLD_LABELS[h.reason] || h.reason, source: h.source,
+  eventType: h.event_type, providerPaymentId: h.provider_payment_id, invoiceId: h.invoice_id, webhookEventId: h.webhook_event_id,
+  expected: h.expected, received: h.received, status: h.status, resolution: h.resolution, seenCount: h.seen_count,
+  createdAt: h.created_at, updatedAt: h.updated_at, resolvedAt: h.resolved_at,
+  nextStep: h.status !== "open" ? null
+    : !h.provider_payment_id ? "لا معرّف دفعة: لا قبول ممكن — افحص لدى المزوّد ثم أغلق بسبب"
+    : h.kind === "verification_unavailable" ? "أعد الفحص لاحقاً: يقرأ الدفعة من المزوّد الآن"
+    : "«إعادة الفحص» تقرأ الدفعة من المزوّد الآن؛ تُقبل فقط إن طابقت الفاتورة",
+});
+
+billingRouter.get("/payment-holds", requireAdminAuth, requirePermission("payments:view"), async (req, res) => {
+  try {
+    const status = ["open", "resolved", "dismissed", "all"].includes(req.query.status) ? req.query.status : "open";
+    const { rows } = await query(
+      `SELECT * FROM payment_event_holds ${status === "all" ? "" : "WHERE status = $1"} ORDER BY created_at DESC LIMIT 200`,
+      status === "all" ? [] : [status]);
+    res.json({ holds: rows.map(holdOut) });
+  } catch (err) {
+    console.error("[admin/billing] holds list failed:", err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+const holdOwner = async (req) => {
+  const { rows } = await query(
+    `SELECT i.user_id FROM payment_event_holds h JOIN invoices i ON i.id = h.invoice_id WHERE h.id = $1`, [req.params.id]);
+  return rows[0]?.user_id || null;
+};
+
+billingRouter.post(
+  "/payment-holds/:id/recheck",
+  requireAdminAuth, requirePermission("payments:reconcile"), requireUuidParam("id"),
+  requireReasonAndLog("payment_hold_recheck", { resolveTargetUserId: holdOwner }),
+  async (req, res) => {
+    try {
+      const { rows } = await query(`SELECT * FROM payment_event_holds WHERE id = $1`, [req.params.id]);
+      const h = rows[0];
+      if (!h) return res.status(404).json({ error: "not_found" });
+      if (h.status !== "open") return res.status(409).json({ error: "hold_not_open", status: h.status });
+      let body = null, providerData = null;
+      const { rows: ev } = h.webhook_event_id
+        ? await query(`SELECT payload FROM webhook_events WHERE id = $1`, [h.webhook_event_id]) : { rows: [] };
+      if (h.provider_payment_id) {
+        const f = await fetchProviderPayment(fetchPayment, h.provider_payment_id);
+        if (!f.ok) {
+          await logAdminAction({
+            adminUserId: req.admin.id, action: "payment_hold_recheck",
+            oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: "provider_unavailable", held: true },
+            reason: String(req.body?.reason || req.query?.reason), metadata: { hold_id: h.id, provider_checked: false, provider_error: f.error }, ipAddress: req.ip,
+          });
+          return res.status(503).json({ error: "provider_unavailable", held: true, detail: f.error });
+        }
+        providerData = f.data;
+        body = { id: null, type: h.event_type, data: f.data };
+      } else if (ev[0]) {
+        body = ev[0].payload;
+      } else {
+        return res.status(409).json({ error: "no_provider_payment_id" });
+      }
+      const { result } = await settlePaymentEvent({ eventType: h.event_type, body, source: "recheck", providerData, webhookEventId: h.webhook_event_id });
+      /* الحكم من حالة الحجز بعد التسوية لا من غياب held في النتيجة: دليل لا يرتبط بالفاتورة
+         (unmatched_invoice مثلاً) لا يُحجز من جديد ولا يحل الحجز — فهو «ما زال محجوزاً» لا «طابق». */
+      const { rows: [after] } = await query(`SELECT status FROM payment_event_holds WHERE id = $1`, [h.id]);
+      const stillHeld = after?.status === "open" || Boolean(result.held);
+      await logAdminAction({
+        adminUserId: req.admin.id, action: "payment_hold_recheck",
+        oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: result.outcome, held: stillHeld, holdStatus: after?.status || null },
+        reason: String(req.body?.reason || req.query?.reason), metadata: { hold_id: h.id, provider_checked: Boolean(providerData) }, ipAddress: req.ip,
+      });
+      res.json({ ok: !stillHeld, outcome: result.outcome, held: stillHeld, holdStatus: after?.status || null,
+        holdReason: result.holdReason || (stillHeld ? result.outcome : null), providerChecked: Boolean(providerData) });
+    } catch (err) {
+      console.error("[admin/billing] hold recheck failed:", err);
+      res.status(500).json({ error: "recheck_failed" });
+    }
+  }
+);
+
+billingRouter.post(
+  "/payment-holds/:id/dismiss",
+  requireAdminAuth, requirePermission("payments:reconcile"), requireUuidParam("id"),
+  requireReasonAndLog("payment_hold_dismiss", { resolveTargetUserId: holdOwner }),
+  async (req, res) => {
+    try {
+      const reason = String(req.body?.reason || req.query?.reason);
+      const { rows } = await query(
+        `UPDATE payment_event_holds SET status = 'dismissed', resolution = $2::jsonb, resolved_at = now(), updated_at = now()
+          WHERE id = $1 AND status = 'open' RETURNING id`,
+        [req.params.id, JSON.stringify({ by: req.admin.id, action: "dismissed_without_money_effect", reason })]);
+      if (!rows[0]) return res.status(409).json({ error: "hold_not_open" });
+      await logAdminAction({
+        adminUserId: req.admin.id, action: "payment_hold_dismiss", oldValue: { status: "open" }, newValue: { status: "dismissed" },
+        reason, metadata: { hold_id: req.params.id }, ipAddress: req.ip,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[admin/billing] hold dismiss failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
+
 billingRouter.get("/integrity", requireAdminAuth, requirePermission("reports:view_integrity"), async (req, res) => {
   try {
     const [
@@ -697,6 +825,7 @@ billingRouter.get("/integrity", requireAdminAuth, requirePermission("reports:vie
       { rows: refundsNoCreditNote },
       { rows: paidNoZatca },
       { rows: orphanPayments },
+      { rows: openHolds },
     ] = await Promise.all([
       // اشتراك فعّال بلا أي دفعة ناجحة، وسعره أكبر من صفر.
       query(
@@ -752,6 +881,11 @@ billingRouter.get("/integrity", requireAdminAuth, requirePermission("reports:vie
         `SELECT p.id, p.invoice_id FROM payments p
          WHERE NOT EXISTS (SELECT 1 FROM invoices i WHERE i.id = p.invoice_id) LIMIT 100`
       ),
+      // حدث دفع محجوز لم يُفصل فيه (ORD-0003 N-02): مال قد يكون حُصِّل بلا تفعيل.
+      query(
+        `SELECT id, kind, reason, source, event_type, provider_payment_id, invoice_id, seen_count, created_at
+         FROM payment_event_holds WHERE status = 'open' ORDER BY created_at LIMIT 100`
+      ),
     ]);
 
     const checks = [
@@ -782,6 +916,9 @@ billingRouter.get("/integrity", requireAdminAuth, requirePermission("reports:vie
       { key: "payment_pointing_to_missing_invoice", severity: "high",
         description: "دفعة تشير إلى فاتورة غير موجودة.",
         count: orphanPayments.length, samples: orphanPayments },
+      { key: "open_payment_event_holds", severity: "high",
+        description: "حدث دفع محجوز (عدم مطابقة أو تعذّر تحقق) بلا فصل. افتحه من «أحداث الدفع المحجوزة».",
+        count: openHolds.length, samples: openHolds },
     ];
 
     const totalIssues = checks.reduce((sum, c) => sum + c.count, 0);
@@ -824,6 +961,10 @@ billingRouter.put(
               invoiceNumberPrefix, creditNoteNumberPrefix } = req.body || {};
 
       if (vatRate !== undefined) {
+        // Number("") = 0 — حقل فارغ كان يحفظ ضريبة 0% لكل فاتورة قادمة (KANAF-ORD-0001، تدقيق البطاقات)
+        if (vatRate === null || (typeof vatRate === "string" && vatRate.trim() === "")) {
+          return res.status(400).json({ error: "vat_rate_required", message: "النسبة مطلوبة: 0.15 لخمسة عشر بالمئة." });
+        }
         const r = Number(vatRate);
         if (!Number.isFinite(r) || r < 0 || r >= 1) {
           return res.status(400).json({

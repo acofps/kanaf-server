@@ -77,9 +77,14 @@ export async function sweepDueCampaigns({ log = () => {} } = {}) {
     if (!locked) return { skipped: true, reason: "sweep_already_running" };
 
     const { rows: due } = await query(
+      /* + الحملات العالقة في sending أكثر من 15 دقيقة (انقطع الخادم في
+         منتصف الإرسال) — تُستأنف تلقائياً بدل انتظار ضغطة يدوية
+         (KANAF-ORD-0001 R15-13). حملة ما زالت تُرسَل فعلاً تحمل قفلها
+         الاستشاري، فيعود الاستئناف «already_dispatching» بلا أثر. */
       `SELECT id, title, scheduled_at FROM notification_campaigns
-       WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= now()
-       ORDER BY scheduled_at
+       WHERE (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= now())
+          OR (status = 'sending' AND started_at < now() - interval '15 minutes')
+       ORDER BY scheduled_at NULLS LAST
        LIMIT 20`
     );
 

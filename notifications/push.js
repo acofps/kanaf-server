@@ -20,7 +20,8 @@ import { query } from "../db/pool.js";
    ------------------------------------------------------------
    VAPID_PUBLIC_KEY  — يُرسل للمتصفح، ليس سراً.
    VAPID_PRIVATE_KEY — سر. على Render فقط.
-   VAPID_SUBJECT     — mailto: أو https:// لصاحب الخدمة (يطلبه المعيار).
+   VAPID_SUBJECT     — mailto: أو https:// لصاحب الخدمة (يطلبه المعيار)،
+                       مثل mailto:support@tanfs.net. يُفحص بصرامة (أدناه).
 
    للتوليد مرة واحدة:
      node -e "console.log(require('web-push').generateVAPIDKeys())"
@@ -33,6 +34,30 @@ import { query } from "../db/pool.js";
 
 let configured = null;
 
+/* ------------------------------------------------------------
+   موضوع VAPID — KANAF-ORD-0010 §2
+
+   كان: VAPID_SUBJECT || `mailto:${EMAIL_FROM || "support@kanaf.me"}`.
+   وVAPID_SUBJECT لم يكن موثَّقاً في .env.example، فالعامل فعلياً هو
+   الاحتياطي. وEMAIL_FROM حقل عرض («تنفس <noreply@…>»)، فيخرج
+   «mailto:تنفس <noreply@…>». ومكتبة web-push **تقبله بصمت** وتوقّع به
+   كل إشعار (تحقّقتُ: الـJWT يحمل sub بهذا النص حرفياً)، ثم يرفضه مزوّد
+   الإشعار عند التسليم. أي أن العطل لا يظهر عند الإقلاع بل كإشعارات لا تصل.
+
+   الآن: لا اشتقاق من حقل عرض. الموضوع من VAPID_SUBJECT وحده، ويُفحص
+   بصرامة. غيابه أو فساده = لا إرسال، مع سطر واضح في السجل — نفس مبدأ
+   هذا الملف: لا يُدّعى إرسال لم يحدث.
+   ------------------------------------------------------------ */
+export function validVapidSubject(s) {
+  const v = String(s || "").trim();
+  if (/^mailto:[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(v)) return v;
+  try {
+    const u = new URL(v);
+    if (u.protocol === "https:" && u.hostname !== "localhost" && !/\s/.test(v)) return v;
+  } catch { /* ليس رابطاً */ }
+  return null;
+}
+
 export function isPushConfigured() {
   if (configured !== null) return configured;
   const pub = process.env.VAPID_PUBLIC_KEY;
@@ -41,11 +66,14 @@ export function isPushConfigured() {
     configured = false;
     return false;
   }
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || `mailto:${process.env.EMAIL_FROM || "support@kanaf.me"}`,
-    pub,
-    priv
-  );
+  const subject = validVapidSubject(process.env.VAPID_SUBJECT);
+  if (!subject) {
+    console.error("[push] مفتاحا VAPID مضبوطان لكن VAPID_SUBJECT غائب أو غير صالح — " +
+      "إشعارات الجهاز معطّلة حتى يُضبط بقيمة mailto: نظيفة (مثل mailto:support@tanfs.net) أو https://.");
+    configured = false;
+    return false;
+  }
+  webpush.setVapidDetails(subject, pub, priv);
   configured = true;
   return true;
 }

@@ -22,6 +22,10 @@ function authHeader() {
   return "Basic " + Buffer.from(`${key}:`).toString("base64");
 }
 
+// مهلة لكل طلب إلى المزود (ORD-0003 N-02 ب): طلب معلّق لا يبقي معالجة الحدث أو طلب الإدارة
+// مفتوحاً بلا حد. الخطأ هنا «تعذّر تحقق مؤقت» عند المستدعي، لا رفض للدفعة.
+const MOYASAR_TIMEOUT_MS = Number(process.env.KANAF_PAYMENT_PROVIDER_TIMEOUT_MS) || 10000;
+
 async function moyasarRequest(path, { method = "GET", body } = {}) {
   const res = await fetch(`${MOYASAR_API_BASE}${path}`, {
     method,
@@ -30,6 +34,7 @@ async function moyasarRequest(path, { method = "GET", body } = {}) {
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(MOYASAR_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) {

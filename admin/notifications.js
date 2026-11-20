@@ -2,7 +2,7 @@ import express from "express";
 import { query } from "../db/pool.js";
 import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction } from "./middleware.js";
 import {
-  countAudience, dispatchCampaign, VALID_CHANNELS, isPushConfigured,
+  countAudience, countAudienceOptedOut, dispatchCampaign, VALID_CHANNELS, isPushConfigured, MARKETING_AUDIENCES,
 } from "../notifications/service.js";
 import { sweepDueCampaigns, schedulerStatus } from "../notifications/scheduler.js";
 
@@ -45,8 +45,12 @@ adminNotificationsRouter.get(
       const filter = {};
       if (req.query.status) filter.status = req.query.status;
       if (req.query.userIds) filter.userIds = String(req.query.userIds).split(",").map((s) => s.trim()).filter(Boolean);
+      if (req.query.days) filter.days = Number(req.query.days); // فئة inactive (KANAF-ORD-0008 §5.2)
       const count = await countAudience(req.query.audience, filter);
-      res.json({ count });
+      const marketing = MARKETING_AUDIENCES.includes(req.query.audience) || req.query.marketing === "1";
+      // التسويق لا يصل من أوقفه — يُعرض عددهم قبل الإرسال، ويُسجَّلون skipped عند الإرسال.
+      const optedOut = marketing ? await countAudienceOptedOut(req.query.audience, filter) : null;
+      res.json({ count, marketing, optedOut });
     } catch (err) {
       if (err.status) return res.status(err.status).json({ error: err.message });
       console.error("[admin/notifications] audience count failed:", err);
@@ -159,6 +163,13 @@ adminNotificationsRouter.get(
 adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermission("notifications:create"), async (req, res) => {
   const { title, body, audience, audienceFilter, channels, scheduledAt, sendNow } = req.body || {};
 
+  /* الإرسال صلاحية مستقلة (KANAF-ORD-0002 B-08): sendNow يرسل فوراً، والجدولة ترسل
+     لاحقاً بلا تدخل بشري — كلاهما تنفيذ إرسال لا «إنشاء». يُفحص قبل أي كتابة فلا
+     تبقى حملة منشأة نصف تنفيذ. مسودة بلا إرسال ولا موعد تكفيها notifications:create. */
+  if ((sendNow === true || scheduledAt) && !req.admin.can("notifications:send")) {
+    return res.status(403).json({ error: "insufficient_permission", required: "notifications:send" });
+  }
+
   if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: "title_and_body_required" });
 
   const chans = Array.isArray(channels) && channels.length ? channels : ["in_app"];
@@ -184,7 +195,12 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     // العدد يُحسب قبل الإنشاء ليُرفض جمهور فارغ — إرسال إلى صفر
     // مستلم يعني غالباً فلتراً خاطئاً، وتمريره ينتج حملة "ناجحة"
     // بلا أثر يربك من يقرأ السجل لاحقاً.
-    const count = await countAudience(audience, audienceFilter || {});
+    /* KANAF-ORD-0008 §5: علامة «تسويقية» تجعل منع التسويق يسري في كل قناة.
+       الفئتان التسويقيتان تُفرض عليهما دائماً؛ وغيرهما باختيار المرسِل. */
+    const filter = { ...(audienceFilter && typeof audienceFilter === "object" ? audienceFilter : {}) };
+    if (MARKETING_AUDIENCES.includes(audience)) filter.marketing = true;
+    else if (filter.marketing !== true) delete filter.marketing;
+    const count = await countAudience(audience, filter);
     if (count === 0) return res.status(422).json({ error: "no_recipients_in_audience" });
 
     const status = scheduled ? "scheduled" : "draft";
@@ -194,7 +210,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
        VALUES ($1, $2, $3, $4::jsonb, $5::text[], $6, $7, $8, $9)
        RETURNING id, status, scheduled_at, created_at`,
       [
-        title.trim(), body.trim(), audience, JSON.stringify(audienceFilter || {}),
+        title.trim(), body.trim(), audience, JSON.stringify(filter),
         chans, status, scheduled, count, req.admin.id,
       ]
     );
@@ -203,14 +219,14 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     await logAdminAction({
       adminUserId: req.admin.id,
       action: scheduled ? "notification_schedule" : "notification_create",
-      newValue: { title: title.trim(), audience, channels: chans, scheduled_at: scheduled, recipient_count: count },
+      newValue: { title: title.trim(), audience, channels: chans, scheduled_at: scheduled, recipient_count: count, marketing: filter.marketing === true },
       reason: "إنشاء إشعار",
       metadata: { campaign_id: campaign.id },
       ipAddress: req.ip,
     });
 
     if (sendNow === true && !scheduled) {
-      const result = await dispatchCampaign(campaign.id, { trigger: "manual" });
+      const { done, result } = await dispatchWithBudget(campaign.id);
       await logAdminAction({
         adminUserId: req.admin.id,
         action: "notification_send",
@@ -219,7 +235,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
         metadata: { campaign_id: campaign.id },
         ipAddress: req.ip,
       });
-      return res.status(201).json({ ...campaign, dispatch: result, audienceCount: count });
+      return res.status(done ? 201 : 202).json({ ...campaign, dispatch: result, audienceCount: count });
     }
 
     res.status(201).json({ ...campaign, audienceCount: count });
@@ -231,6 +247,29 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
 });
 
 /* ------------------------------------------------------------
+   الإرسال بميزانية زمنية — KANAF-ORD-0001 R15-13
+
+   كان طلب «إرسال الآن» ينتظر الإرسال كاملاً: بالقياس ~0.2 ثانية لكل
+   مستلم بريد (خادم SMTP بتأخير 150ms)، أي ~100 ثانية لخمسمئة — أطول من
+   مهلة الوكلاء المعتادة. الآن: ينتظر حتى CAMPAIGN_SYNC_BUDGET_MS (8 ثوانٍ
+   افتراضياً). إن انتهى الإرسال قبلها فالرد كما كان تماماً؛ وإلا يرد 202
+   والإرسال مستمر في الخلفية، وحالته في قائمة الحملات وسجل التسليم.
+   المصدر الدائم هو notification_deliveries، والمسح يستأنف أي حملة عالقة.
+   ------------------------------------------------------------ */
+async function dispatchWithBudget(campaignId) {
+  const budgetMs = Number(process.env.CAMPAIGN_SYNC_BUDGET_MS || 8000);
+  let claimed = null;
+  const p = dispatchCampaign(campaignId, { trigger: "manual", onClaimed: (info) => { claimed = info; } });
+  let timer;
+  const first = await Promise.race([p, new Promise((r) => { timer = setTimeout(() => r("__budget"), budgetMs); })]);
+  clearTimeout(timer);
+  if (first !== "__budget") return { done: true, result: first };
+  p.then((r) => console.log(`[notifications] اكتملت الحملة ${campaignId} في الخلفية: ${JSON.stringify({ sent: r?.sent, failed: r?.failed, skipped: r?.skipped })}`))
+   .catch((e) => console.error(`[notifications] فشلت الحملة ${campaignId} في الخلفية:`, e.message));
+  return { done: false, result: { accepted: true, status: "sending", campaignId, recipients: claimed?.recipients ?? null } };
+}
+
+/* ------------------------------------------------------------
    POST /admin/notifications/:id/send — إرسال مسودة أو إعادة محاولة.
 
    إعادة الاستدعاء آمنة: صفوف التسليم الناجحة محمية بالقيد الفريد
@@ -238,7 +277,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
    ------------------------------------------------------------ */
 adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requirePermission("notifications:send"), requireUuidParam("id"), async (req, res) => {
   try {
-    const result = await dispatchCampaign(req.params.id, { trigger: "manual" });
+    const { done, result } = await dispatchWithBudget(req.params.id);
     await logAdminAction({
       adminUserId: req.admin.id,
       action: "notification_send",
@@ -247,7 +286,7 @@ adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requi
       metadata: { campaign_id: req.params.id },
       ipAddress: req.ip,
     });
-    res.json(result);
+    res.status(done ? 200 : 202).json(result);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error("[admin/notifications] send failed:", err);
@@ -379,7 +418,8 @@ adminNotificationsRouter.get("/broadcasts", requireAdminAuth, requirePermission(
   }
 });
 
-adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requirePermission("notifications:create"), async (req, res) => {
+/* هذا المسار ينشئ الحملة ويرسلها فوراً، فيحتاج صلاحية الإرسال أيضاً كما في sendNow (B-08). */
+adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requirePermission("notifications:create"), requirePermission("notifications:send"), async (req, res) => {
   const { subject, message, audience } = req.body || {};
   if (!subject?.trim() || !message?.trim()) {
     return res.status(400).json({ error: "subject_message_and_valid_audience_required" });

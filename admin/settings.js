@@ -1,10 +1,11 @@
 import express from "express";
-import { query } from "../db/pool.js";
+import { query, withTransaction } from "../db/pool.js";
 import {
-  requireAdminAuth, requirePermission, requireReasonAndLog,
+  requireAdminAuth, requirePermission, requireAnyPermission, requireReasonAndLog,
   logAdminAction, fail, httpError,
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
+import { refreshAdminSessionMinutes } from "./auth.js";
 
 export const adminSettingsRouter = express.Router();
 
@@ -63,7 +64,9 @@ export const SETTINGS_REGISTRY = [
   {
     key: "vat_rate", label: "نسبة ضريبة القيمة المضافة",
     source: "billing_settings", editPerm: "billing_settings:edit", wired: true,
-    readBy: ["billing/config.js", "payments/webhook.js", "payments/refund.js", "invoicing/generate.js"],
+    // KANAF-ORD-0001 G2: القرّاء الفعليون (docs-check C6). webhook.js/refund.js
+    // يقرآن الإعداد المالي لكن لا يستعملان النسبة؛ splitVat يُستدعى في pdf.js.
+    readBy: ["billing/config.js", "invoicing/pdf.js"],
     note: "تُفكَّك مرة واحدة بـsplitVat، ونفس القيمة تدخل TLV الخاص بـQR ونص الوثيقة. الفواتير الصادرة لا تتأثر — نسبتها مجمّدة في invoice_state وقت إصدارها.",
   },
   {
@@ -93,7 +96,8 @@ export const SETTINGS_REGISTRY = [
   {
     key: "credit_note_number_prefix", label: "بادئة رقم الإشعار الدائن",
     source: "billing_settings", editPerm: "billing_settings:edit", wired: true,
-    readBy: ["payments/refund.js"],
+    // كان ["payments/refund.js"]؛ الترقيم الفعلي في generateAndStoreCreditNote (docs-check C6)
+    readBy: ["billing/config.js", "invoicing/generate.js"],
   },
 
   /* ---------- البيانات الضريبية ---------- */
@@ -146,14 +150,14 @@ export const SETTINGS_REGISTRY = [
   {
     key: "app_public_name", label: "الاسم التجاري المعروض",
     source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: ["index.js (/api/support-info)"],
-    note: "نصوص الرسائل الحالية تكتب «كنف» حرفياً. توحيدها على هذا الإعداد بند مفتوح.",
+    readBy: ["index.js (/api/support-info) — يُرسَل ولا يقرؤه التطبيق"],
+    note: "KANAF-ORD-0001 R15-19: غير مربوط عمداً. التطبيق لا يقرأ appName، و«تنفس» (كنف سابقاً) مكتوبة حرفياً في نصوص التطبيق والرسائل والفواتير. ربطه = قرار منتج بتغيير الاسم المعروض في كل تلك المواضع (لا يمسّ الاسم النظامي للبائع ولا معرّفات الترحيلات). حتى ذلك: تعديله لا يغيّر شيئاً.",
   },
   {
     key: "marketing_email_footer", label: "تذييل رسائل البث",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: [],
-    note: "notifications/service.js يبني تذييله حرفياً اليوم. ربطه بهذا الإعداد بند مفتوح.",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/service.js (deliverEmail)"],
+    note: "KANAF-ORD-0001 R15-19: يُلحق بنص رسائل البث البريدية (النصية وHTML مهرَّباً) فوق رابط إلغاء الاشتراك. القيمة الفارغة = بلا تذييل. لا يمسّ رسائل التحقق والاستعادة.",
   },
   /* ---------- إعدادات المرحلة 6 ----------
 
@@ -168,6 +172,9 @@ export const SETTINGS_REGISTRY = [
        daily_reminder_time      → **باقٍ false — انظر سببه أدناه**
 
      الخامس ليس متأخراً عن النشر: **لا قارئ له في المنتج كله.**
+     (تحديث KANAF-ORD-0001 R15-19: صار له قارئ — PATCH /api/me/preferences
+     في userdata/routes.js — فهو الآن wired: true؛ انظر مدخله أدناه.
+     ما يلي يبقى سجلاً لسبب إبقائه false حينها.)
 
      وهذا ليس تشدداً: البند 6 من المرحلة 5 كُتب بعد أن بُذرت أربعة
      إعدادات قبل أن يقرأها كود. الإعداد الذي يظهر في شاشة ويقول
@@ -198,18 +205,44 @@ export const SETTINGS_REGISTRY = [
     readBy: ["index.js (/api/support-info)"],
     note: "كسابقه. كان @marsah.app في الكود.",
   },
+  /* KANAF-ORD-0008 §9.2 — روابط تذييل البريد. فارغة حتى يضبطها المالك؛ والزر مخفيّ ما دامت فارغة. */
+  {
+    key: "social_tiktok_handle", label: "حساب تيك توك",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/email-template.js (تذييل البريد)"],
+    note: "المعرّف وحده بالقائمة البيضاء نفسها لحسابي X وإنستقرام. فارغ = لا يظهر في التذييل. لمسحه أرسل null.",
+  },
+  {
+    key: "app_store_url", label: "رابط App Store",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/email-template.js (تذييل البريد)"],
+    note: "https://apps.apple.com/… فقط — أي نطاق آخر يُرفض. فارغ = الزر مخفيّ في البريد.",
+  },
+  {
+    key: "google_play_url", label: "رابط Google Play",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["notifications/email-template.js (تذييل البريد)"],
+    note: "https://play.google.com/… فقط — أي نطاق آخر يُرفض. فارغ = الزر مخفيّ في البريد.",
+  },
   {
     key: "daily_reminder_time", label: "الوقت الافتراضي لتذكير التسجيل اليومي",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: ["index.js (/api/support-info)"],
-    note: "🔴 لا قارئ له. كُتب هنا أنه «الافتراضي لمن لم يختر وقتاً» — وليس كذلك: الافتراضي مكتوب حرفياً '20:00'::time في userdata/routes.js عند إنشاء صف user_reminder_prefs، والتطبيق يعرض profile.reminder.localTime مع بديل '20:00' ثابت في الكود، ومسح التذكيرات يقرأ user_reminder_prefs وحده. فتغيير هذه القيمة اليوم لا يغيّر شيئاً لأي مستخدم. اكتُشف في مراجعة 10 أغسطس 2026 ومقيَّد بنداً مفتوحاً في تقرير المرحلة 6. ربطه ثلاثة أسطر: يُقرأ الإعداد بدل الثابت في الموضعين.",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["userdata/routes.js (PATCH /api/me/preferences)"],
+    note: "KANAF-ORD-0001 R15-19: الوقت الافتراضي لمن يفعّل التذكير **أول مرة** بلا وقت محدد. لا يغيّر وقت أي مستخدم له صف جدولة محفوظ (لا تُلغى تفضيلات قائمة). التطبيق لا يعرض هذه القيمة؛ يعرض وقت المستخدم المحفوظ.",
   },
 
   {
-    key: "admin_session_minutes", label: "عمر جلسة الإدارة (عرض فقط)",
-    source: "app_settings", editPerm: "app_settings:edit", wired: false,
-    readBy: [],
-    note: "⚠️ للعرض وحده ولا يمكن ربطه: القيمة السارية من متغيّر البيئة ADMIN_JWT_EXPIRES_IN، والرمز يُوقَّع بمدته عند الإصدار. تعديله هنا لا يفعل شيئاً — وهذا مكتوب في الشاشة أيضاً.",
+    key: "assistant_access_policy", label: "من يصل إلى سند والخطة الأسبوعية",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["assistant/guard.js (/api/chat و /api/plan)"],
+    note: "all_verified = أي حساب موثّق (السلوك الحالي، الافتراضي). plus_only = مشترك تنفس+ مستحق فقط؛ غيره يأخذ 402. مسار الأمان العام لا يمر بهذا الإعداد إطلاقاً. اختيار القيمة قرار تجاري للمالك (D-02 في KANAF-ORD-0001) — وتحذير موثق: ربط التجربة بتاريخ التسجيل ينزع سند فجأة ممن تجاوز 14 يوماً.",
+  },
+
+  {
+    key: "admin_session_minutes", label: "عمر جلسة الإدارة (بالدقائق)",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["admin/auth.js (issueAccessToken + كوكي الوصول)"],
+    note: "KANAF-ORD-0001 R15-19: مدة رمز الوصول الإداري وكوكيه عند كل دخول أو تجديد، من 5 إلى 60 دقيقة. الرموز القائمة تبقى بمدتها حتى تجديدها. رمز التجديد لا يتأثر. قيمة خارج الحد مرفوضة؛ تعذّر القراءة = ADMIN_JWT_EXPIRES_IN.",
   },
 ];
 
@@ -231,6 +264,12 @@ const REGISTRY_BY_KEY = Object.fromEntries(SETTINGS_REGISTRY.map((s) => [s.key, 
    طوله ويُكتب.
    ------------------------------------------------------------ */
 const APP_SETTING_VALIDATORS = {
+  admin_session_minutes: (v) =>
+    Number.isInteger(v) && v >= 5 && v <= 60 ? { value: v } : { error: "session_minutes_must_be_5_to_60" },
+
+  assistant_access_policy: (v) =>
+    v === "all_verified" || v === "plus_only" ? { value: v } : { error: "invalid_assistant_policy" },
+
   whatsapp_enabled: (v) =>
     typeof v === "boolean" ? { value: v } : { error: "value_must_be_boolean" },
 
@@ -247,6 +286,9 @@ const APP_SETTING_VALIDATORS = {
 
   social_x_handle: (v) => normalizeHandle(v),
   social_instagram_handle: (v) => normalizeHandle(v),
+  social_tiktok_handle: (v) => (v === null ? { value: null } : normalizeHandle(v)),
+  app_store_url: (v) => storeUrl(v, "apps.apple.com"),
+  google_play_url: (v) => storeUrl(v, "play.google.com"),
 
   daily_reminder_time: (v) => {
     if (typeof v !== "string" || !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(v.trim())) {
@@ -256,12 +298,22 @@ const APP_SETTING_VALIDATORS = {
   },
 };
 
+/* رابط متجر رسمي وحده: https والمضيف بعينه — فلا يصير الإعداد رابطاً لموقع آخر في بريد العملاء. */
+function storeUrl(v, host) {
+  if (v === null) return { value: null };
+  if (typeof v !== "string") return { error: "value_must_be_string_or_null" };
+  let u;
+  try { u = new URL(v.trim()); } catch { return { error: "invalid_url" }; }
+  if (u.protocol !== "https:" || u.hostname !== host) return { error: `url_must_be_https_${host}` };
+  return { value: u.toString() };
+}
+
 function normalizeHandle(v) {
   if (typeof v !== "string") return { error: "value_must_be_string" };
   const handle = v.trim().replace(/^@+/, "");
   /* نفس القائمة البيضاء المستعملة في بناء الرابط في index.js.
      بدونها تقدر قيمة مثل "x.com/other" أو "../evil" أن تصنع رابطاً
-     لموقع آخر يظهر للمستخدم داخل تطبيق كنف. */
+     لموقع آخر يظهر للمستخدم داخل تطبيق تنفس. */
   if (!/^[A-Za-z0-9._]{1,30}$/.test(handle)) return { error: "invalid_handle" };
   return { value: `@${handle}` };
 }
@@ -302,12 +354,8 @@ adminSettingsRouter.get(
   "/settings/overview",
   requireAdminAuth,
   // يكفي أن يملك القارئ صلاحية قراءة قسم واحد؛ الأقسام تُرشَّح أدناه.
-  (req, res, next) => {
-    const any = ["billing_settings:view", "tax_settings:view", "app_settings:view"]
-      .some((p) => req.admin.can(p));
-    if (!any) return res.status(403).json({ error: "insufficient_permission" });
-    next();
-  },
+  // (R15-24: صريحة بدل دالة مجهولة حتى تراها مصفوفة الصلاحيات المولّدة)
+  requireAnyPermission("billing_settings:view", "tax_settings:view", "app_settings:view"),
   async (req, res) => {
     try {
       const sections = {};
@@ -430,20 +478,33 @@ adminSettingsRouter.put(
       }
       // النص الفارغ ليس قيمة صالحة لإعداد معروض للمستخدم — يترك
       // شاشة فيها فراغ بلا أن يقول أحد إن الإعداد ناقص.
+      /* استثناء صريح (KANAF-ORD-0002 B-11): تذييل البث التسويقي اختياري — الفارغ = بلا تذييل
+         (كما يقول سجل الإعدادات أعلاه). رابط إلغاء الاشتراك لا يمر من هنا: deliverEmail يلحقه
+         دائماً مستقلاً عن التذييل، فمسح التذييل لا يمس الالتزام. */
+      if (key === "marketing_email_footer" && (value === null || (typeof value === "string" && !value.trim()))) value = null;
+      /* إعداد بلا مدقق خاص (support_email، support_hours، app_public_name، التذييل) نصي دائماً:
+         كان null أو رقم أو كائن يُقبل ويُكتب كما هو فيُعرض للمستخدم «null» (KANAF-ORD-0002، تحصين مدخل). */
+      else if (!validate && typeof value !== "string") throw httpError(400, "value_must_be_string");
       if (typeof value === "string" && !value.trim()) throw httpError(400, "value_cannot_be_empty");
       // حدّ طول معقول: هذه إعدادات عرض لا مقالات.
       if (typeof value === "string" && value.length > 500) throw httpError(400, "value_too_long");
 
-      const { rows: before } = await query(`SELECT value FROM app_settings WHERE key = $1`, [key]);
-      if (!before[0]) throw httpError(404, "unknown_setting");
+      /* القيمة «قبل» تُقرأ تحت قفل الصف في نفس معاملة التحديث
+         (KANAF-ORD-0001 R15-22): بدونها كان حفظان متزامنان يسجّلان
+         نفس القيمة القديمة، فيكذب سطر التدقيق على أحدهما. */
+      const { before, rows } = await withTransaction(async (client) => {
+        const { rows: b } = await client.query(`SELECT value FROM app_settings WHERE key = $1 FOR UPDATE`, [key]);
+        if (!b[0]) throw httpError(404, "unknown_setting");
+        const { rows: r } = await client.query(
+          `UPDATE app_settings SET value = $2::jsonb, updated_by = $3, updated_at = now()
+            WHERE key = $1
+            RETURNING key, value, category, description, updated_at`,
+          [key, JSON.stringify(value), req.admin.id]
+        );
+        return { before: b, rows: r };
+      });
 
-      const { rows } = await query(
-        `UPDATE app_settings SET value = $2::jsonb, updated_by = $3, updated_at = now()
-          WHERE key = $1
-          RETURNING key, value, category, description, updated_at`,
-        [key, JSON.stringify(value), req.admin.id]
-      );
-
+      if (key === "admin_session_minutes") await refreshAdminSessionMinutes();
       await logAdminAction({
         adminUserId: req.admin.id, action: "app_setting_updated",
         entity: "app_setting", entityId: key,
@@ -460,5 +521,38 @@ adminSettingsRouter.put(
         },
       });
     } catch (err) { fail(res, err, "admin/settings:app-update", req); }
+  }
+);
+
+
+/* ============================================================
+   GET /admin/diagnostics/client-ip — KANAF-ORD-0001 R15-07 (للمالك)
+
+   يجيب عن سؤال واحد بدليل لا بتخمين: كم وكيلاً بين العميل والخادم؟
+   يعرض لطلب المالك نفسه: req.ip بالإعداد الحالي، وعدد عناوين
+   X-Forwarded-For، والعنوان الذي يُختار لو كان عدد الوكلاء الموثوقين
+   0..3، ووجود ترويسة CF-Connecting-IP وهل تطابق أحدها. لا يعرض كوكي
+   ولا رمزاً ولا ترويسة مصادقة، ولا يكتب شيئاً.
+   الاستعمال: افتحه من شبكتين (جوال وواي فاي) بعد نشر مأذون؛ العدد
+   الصحيح هو الذي يعطي عنوانك الحقيقي في الحالتين.
+   ============================================================ */
+adminSettingsRouter.get(
+  "/diagnostics/client-ip",
+  requireAdminAuth, requirePermission("system:diagnostics"),
+  (req, res) => {
+    const xff = String(req.headers["x-forwarded-for"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const chain = [...xff, req.socket.remoteAddress];
+    const pick = (hops) => chain[Math.max(0, chain.length - 1 - hops)];
+    const cf = req.headers["cf-connecting-ip"] || null;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      trustProxySetting: req.app.settings["trust proxy"],
+      reqIp: req.ip,
+      forwardedForCount: xff.length,
+      candidateByHops: { 0: pick(0), 1: pick(1), 2: pick(2), 3: pick(3) },
+      cfConnectingIpPresent: Boolean(cf),
+      cfConnectingIpMatchesHops: cf ? [0, 1, 2, 3].filter((h) => pick(h) === cf) : [],
+      note: "الرقم الصحيح لـTRUST_PROXY_HOPS هو الذي يعطي عنوانك الحقيقي من شبكتين مختلفتين.",
+    });
   }
 );

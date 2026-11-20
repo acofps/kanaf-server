@@ -15,6 +15,7 @@ import {
 
 const ACTION_LABEL = {
   view_sensitive_data: "عرض بيانات متابعة",
+  view_sent_messages: "عرض الرسائل المرسلة",
   update_tax_settings: "تعديل البيانات الضريبية",
   update_billing_settings: "تعديل الإعداد المالي",
   update_app_setting: "تعديل إعداد تشغيل",
@@ -29,7 +30,7 @@ const ACTION_LABEL = {
   restore_account: "إعادة تفعيل حساب",
 };
 
-const SENSITIVE = new Set(["view_sensitive_data", "break_glass_request", "break_glass_approve"]);
+const SENSITIVE = new Set(["view_sensitive_data", "view_sent_messages", "break_glass_request", "break_glass_approve"]);
 
 export default function AccessLog() {
   const [targetUserId, setTargetUserId] = useState("");

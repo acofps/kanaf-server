@@ -1,7 +1,9 @@
 import { withTransaction } from "../db/pool.js";
 import { refundPayment } from "./moyasar.js";
 import { generateAndStoreCreditNote } from "../invoicing/generate.js";
+import { withDocumentSlot } from "../invoicing/slot.js";
 import { getBillingSettings } from "../billing/config.js";
+import { providerRefundedTotal } from "./verify.js";
 
 /* ============================================================
    الاسترداد — كامل وجزئي، منفَّذ لدى المزوّد فعلاً
@@ -34,14 +36,25 @@ import { getBillingSettings } from "../billing/config.js";
 
 /** يحسب المتاح للاسترداد على دفعة، مع احتساب الحجوزات المعلّقة. */
 async function lockAndComputeAvailable(client, paymentId) {
+  /* KANAF-ORD-0001 R15-11 — القفل أولاً ثم جمع الحجوزات في عبارة مستقلة.
+     كان المجموع استعلاماً فرعياً داخل نفس عبارة FOR UPDATE: في READ COMMITTED
+     تأخذ العبارة لقطتها قبل انتظار القفل، فإن بدأ طلب ثانٍ قبل أن يثبّت الأول
+     حجزه، رأى بعد فك القفل مجموع حجوزات قديماً (0) فحجز مرة ثانية ونادى
+     المزوّد مرتين. العبارة الثانية تأخذ لقطة جديدة بعد القفل فترى الحجز. */
   const { rows } = await client.query(
     `SELECT p.id, p.user_id, p.invoice_id, p.subscription_id, p.amount,
-            p.refunded_amount, p.status, p.currency, p.provider, p.provider_payment_id,
-            COALESCE((SELECT SUM(r.amount) FROM refunds r
-                      WHERE r.payment_id = p.id AND r.status = 'pending'), 0) AS pending_amount
+            p.refunded_amount, p.status, p.currency, p.provider, p.provider_payment_id
      FROM payments p WHERE p.id = $1 FOR UPDATE`,
     [paymentId]
   );
+  if (rows[0]) {
+    const { rows: [h] } = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS pending_amount FROM refunds
+        WHERE payment_id = $1 AND status = 'pending'`,
+      [paymentId]
+    );
+    rows[0].pending_amount = h.pending_amount;
+  }
   const payment = rows[0];
   if (!payment) return null;
   const available = Number(
@@ -174,7 +187,8 @@ export async function recordRefund(client, {
 export async function issueCreditNoteDocument(refundId) {
   if (!refundId) return null;
   try {
-    return await withTransaction(async (client) => {
+    // X09: البوابة قبل المعاملة — المنتظر لا يمسك اتصالاً من المجمّع
+    return await withDocumentSlot(() => withTransaction(async (client) => {
       const { rows } = await client.query(
         `SELECT r.id, r.user_id, r.invoice_id, r.amount, r.reason, r.provider_refund_id,
                 r.credit_note_id, i.plan_id, u.name AS user_name, u.email AS user_email
@@ -210,7 +224,7 @@ export async function issueCreditNoteDocument(refundId) {
         );
       }
       return creditNote?.creditNoteNumber || null;
-    });
+    }));
   } catch (err) {
     console.error(
       `[refund] تعذّر إصدار الإشعار الدائن للاسترداد ${refundId}. ` +
@@ -280,13 +294,33 @@ export async function executeRefund({ paymentId, amountSar, reason, adminUserId 
       fullRemaining ? undefined : reservation.requested
     );
   } catch (err) {
+    /* KANAF-ORD-0001 R15-11 — رفض مؤكد أم نتيجة مجهولة؟
+       رد 4xx من المزوّد = رفض مؤكد: لم يُسترد شيء، يُحرَّر الحجز.
+       انقطاع الشبكة أو مهلة أو 5xx = **لا نعرف**: قد يكون الاسترداد نُفّذ
+       لدى المزوّد ثم ضاع الرد. كان الحالتان تُعاملان رفضاً فيُحرَّر الحجز،
+       فتسمح إعادة المحاولة باسترداد ثانٍ لمبلغ رُدّ فعلاً. الآن يبقى الصف
+       pending (المبلغ محجوز فلا يتكرر) حتى تحسمه المطابقة أو حدث المزوّد
+       (releaseStaleRefundHolds أدناه). */
+    const definite = Number(err?.status) >= 400 && Number(err?.status) < 500;
+    if (definite) {
+      await withTransaction((client) =>
+        client.query(
+          `UPDATE refunds SET status = 'failed', error = $1, updated_at = now() WHERE id = $2`,
+          [String(err?.message || err).slice(0, 2000), reservation.refundId]
+        )
+      );
+      throw Object.assign(new Error("provider_refund_failed"), {
+        status: 502,
+        detail: String(err?.message || err),
+      });
+    }
     await withTransaction((client) =>
       client.query(
-        `UPDATE refunds SET status = 'failed', error = $1, updated_at = now() WHERE id = $2`,
-        [String(err?.message || err).slice(0, 2000), reservation.refundId]
+        `UPDATE refunds SET error = $1, updated_at = now() WHERE id = $2 AND status = 'pending'`,
+        [`outcome_unknown: ${String(err?.message || err)}`.slice(0, 2000), reservation.refundId]
       )
     );
-    throw Object.assign(new Error("provider_refund_failed"), {
+    throw Object.assign(new Error("provider_outcome_unknown"), {
       status: 502,
       detail: String(err?.message || err),
     });
@@ -297,10 +331,12 @@ export async function executeRefund({ paymentId, amountSar, reason, adminUserId 
     const found = await lockAndComputeAvailable(client, paymentId);
     const payment = found.payment;
 
-    // إجمالي المسترد كما يراه المزوّد هو المرجع؛ وإن لم يرجعه نجمع
-    // ما لدينا مع المبلغ المطلوب.
-    const providerTotal = providerResponse?.refunded_amount !== undefined
-      ? Number((Number(providerResponse.refunded_amount) / 100).toFixed(2))
+    // إجمالي المسترد كما يراه المزوّد هو المرجع (providerRefundedTotal: `refunded` الموثق، أو
+    // `refunded_amount` البديل — COR-02). إن لم يرجعه بقيمة صالحة لا تتجاوز الدفعة، نجمع ما لدينا مع
+    // المبلغ الذي طلبناه نحن ونجح طلبه (مصدره طلبنا لا قيمة مفقودة).
+    const pt = providerRefundedTotal(providerResponse);
+    const providerTotal = pt.ok && pt.halalas <= Math.round(Number(payment.amount) * 100)
+      ? Number((pt.halalas / 100).toFixed(2))
       : Number((Number(payment.refunded_amount) + reservation.requested).toFixed(2));
 
     return recordRefund(client, {
@@ -320,4 +356,34 @@ export async function executeRefund({ paymentId, amountSar, reason, adminUserId 
     delete settled.needsCreditNote;
   }
   return settled;
+}
+
+
+/* ============================================================
+   تحرير الحجوزات المعلّقة بعد أن يُحسم الإجمالي — KANAF-ORD-0001 R15-11
+
+   يُنادى داخل معاملة بعد أن نعرف إجمالي المسترد **كما يراه المزوّد**
+   (حدث payment_refunded أو مطابقة). إن طابق المسجَّل عندنا، فكل صف
+   pending أقدم من STALE_MINUTES لا يمثّل مالاً لم يُسجَّل:
+     • إما أن المزوّد لم ينفّذه أصلاً،
+     • أو نفّذه وسُجّل عبر حدث المزوّد في صف آخر.
+   فيُعلَّم failed ويتحرّر حجزه. لا يمسّ صفاً أحدث (نداء جارٍ الآن)،
+   ولا يحرّر شيئاً إن كان إجمالي المزوّد يختلف (يبقى للمراجعة).
+   ============================================================ */
+const STALE_MINUTES = 10;
+export async function releaseStaleRefundHolds(client, paymentId, providerTotalRefundedSar) {
+  if (providerTotalRefundedSar === undefined || providerTotalRefundedSar === null) return 0;
+  const { rows } = await client.query(`SELECT refunded_amount FROM payments WHERE id = $1 FOR UPDATE`, [paymentId]);
+  if (!rows[0]) return 0;
+  if (Math.abs(Number(rows[0].refunded_amount) - Number(providerTotalRefundedSar)) >= 0.005) return 0;
+  const { rowCount } = await client.query(
+    `UPDATE refunds
+        SET status = 'failed',
+            error = COALESCE(error || ' | ', '') || 'released: provider total equals recorded refunds',
+            updated_at = now()
+      WHERE payment_id = $1 AND status = 'pending'
+        AND updated_at < now() - ($2 || ' minutes')::interval`,
+    [paymentId, String(STALE_MINUTES)]
+  );
+  return rowCount;
 }

@@ -1,3 +1,4 @@
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
 import { authRouter } from "./auth/routes.js";
 import { query } from "./db/pool.js";

@@ -53,4 +53,4 @@ const webhook = await createWebhook({
 console.log("تم تسجيل الـwebhook:", webhook);
 console.log("الأحداث المسجَّلة:", events.join(", "));
 console.log("\nتأكّد من هذا في لوحة Moyasar تحت Developers → Webhooks.");
-console.log("وبعدها افتح صفحة «سجل أحداث الدفع» في لوحة كنف — أول حدث حقيقي لازم يظهر فيها.");
+console.log("وبعدها افتح صفحة «سجل أحداث الدفع» في لوحة تنفس — أول حدث حقيقي لازم يظهر فيها.");

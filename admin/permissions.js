@@ -110,7 +110,7 @@ export const PERMISSION_CATALOG = {
   "content:review":           "الاعتماد السريري أو الرفض",
   "content:toggle_launch":    "مفتاح الإطلاق — إيقاف محتوى حيّ فوراً أو إعادته",
   "content:schedule":         "جدولة النشر والإيقاف",
-  "content:change_tier":      "تحويل محتوى بين مجاني وكنف+ — قرار مالي",
+  "content:change_tier":      "تحويل محتوى بين مجاني وتنفس+ — قرار مالي",
   "content:bulk_publish":     "النشر الجماعي",
 
   /* --- الإشعارات --- */
@@ -119,6 +119,11 @@ export const PERMISSION_CATALOG = {
   "notifications:send":       "تنفيذ الإرسال",
   "notifications:cancel":     "إلغاء حملة مسودة أو مجدولة",
   "notifications:sweep":      "تشغيل المسح الدوري يدوياً",
+  "discounts:view":           "أكواد الخصم وفحصها (غير مربوطة بالدفع بعد)",
+  "discounts:edit":           "إنشاء كود خصم أو إيقافه — بسبب مكتوب",
+  "integrations:manage":      "اعتمادات التكاملات: حفظ مفتاح مشفَّر واستبداله وحذفه وفحص الاتصال — للمالك وحده",
+  "carts:view":               "السلات المتروكة: فواتير معلّقة لم تُدفع بعد 20 دقيقة (العميل مقنَّع)",
+  "notifications:view_sent":  "سجل الرسائل المرسلة إلى المستخدمين — قراءة حساسة تُسجَّل بسبب (المستلم مقنَّع، ورسائل التحقق بلا نص)",
 
   /* --- الباقات والإعدادات --- */
   "plans:view":               "عرض الباقات وأسعارها",
@@ -166,6 +171,8 @@ export const PERMISSION_CATALOG = {
   "break_glass:request":      "طلب وصول طارئ",
   "break_glass:view":         "عرض طلبات الوصول الطارئ المعلّقة",
   "break_glass:approve":      "اعتماد طلب وصول طارئ",
+  /* --- التشغيل — KANAF-ORD-0001 R15-07: للمالك وحده (ALL_PERMISSIONS) --- */
+  "system:diagnostics":       "تشخيص سلسلة الوكلاء وعنوان العميل كما يراه الخادم (بلا أسرار ولا رموز)",
 };
 
 export const ALL_PERMISSIONS = Object.freeze(Object.keys(PERMISSION_CATALOG));
@@ -253,6 +260,7 @@ const MATRIX = {
     "plans:view", "tax_settings:view", "billing_settings:view",
     "webhooks:view",
     "exports:billing",
+    "discounts:view",
   ],
 
   /* المدير — التشغيل. الممنوع عنه أدناه ليس نسياناً:
@@ -273,7 +281,7 @@ const MATRIX = {
     "messages:view", "messages:update_status",
     "content:view", "content:edit_presentation", "content:review",
     "content:toggle_launch", "content:schedule", "content:change_tier",
-    "notifications:view", "notifications:create", "notifications:send",
+    "notifications:view", "notifications:create", "notifications:send", "notifications:view_sent", "carts:view", "discounts:view", "discounts:edit",
     "notifications:cancel", "notifications:sweep",
     "plans:view", "plans:edit",
     "tax_settings:view", "billing_settings:view", "app_settings:view",

@@ -1,7 +1,9 @@
 import { withTransaction } from "../db/pool.js";
-import { isGenuineWebhook, HANDLED_WEBHOOK_EVENTS } from "./moyasar.js";
+import { isGenuineWebhook, HANDLED_WEBHOOK_EVENTS, fetchPayment } from "./moyasar.js";
+import { verifyPaymentEvent, verifyRefundEvent, providerRefundedTotal, recordHold, resolveHoldsFor, providerVerifyEnabled, fetchProviderPayment, receivedSummary } from "./verify.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
-import { recordRefund, issueCreditNoteDocument } from "./refund.js";
+import { withDocumentSlot } from "../invoicing/slot.js";
+import { recordRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "./refund.js";
 import { activateOrExtendSubscription, markPastDueIfEntitled } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
 
@@ -72,52 +74,14 @@ function buildDedupKey(body) {
   const type = body?.type || "unknown";
   const objectId = body?.data?.id || "unknown";
   const objectStatus = body?.data?.status || "";
-  const refunded = body?.data?.refunded_amount ?? "";
+  // إجمالي المسترد من المصدر الموحد (refunded الموثق أو refunded_amount البديل) — COR-02
+  const rt = providerRefundedTotal(body?.data);
+  const refunded = rt.ok ? rt.halalas : (body?.data?.refunded ?? body?.data?.refunded_amount ?? "");
   return `${provider}:${type}:${objectId}:${objectStatus}:${refunded}`;
 }
 
-/**
- * يجد فاتورتنا المقابلة للدفعة، بثلاث طرق مرتّبة بحسب الوثوق:
- *   1. invoice_id من المزوّد ↔ provider_invoice_id عندنا
- *   2. metadata.kanaf_invoice_id الذي نضعه نحن وقت الإنشاء
- *   3. رقم الدفعة نفسه لو كانت الفاتورة قد رُبطت به سابقاً
- *
- * الطريقة الثانية موجودة لأن حمولات بعض الأحداث (الاسترداد مثلاً)
- * لا تحمل invoice_id بالضرورة — وقد كانت النسخة السابقة تعتمد على
- * وجوده وتتجاهل الحدث بصمت حين يغيب.
- */
-async function findInvoiceForPayment(client, payment) {
-  const providerInvoiceId = payment?.invoice_id;
-  if (providerInvoiceId) {
-    const { rows } = await client.query(
-      `SELECT id, user_id, plan_id, amount_sar, status, zatca_invoice_number
-       FROM invoices WHERE provider_invoice_id = $1 FOR UPDATE`,
-      [providerInvoiceId]
-    );
-    if (rows[0]) return rows[0];
-  }
-
-  const metaInvoiceId = payment?.metadata?.kanaf_invoice_id;
-  if (metaInvoiceId) {
-    const { rows } = await client.query(
-      `SELECT id, user_id, plan_id, amount_sar, status, zatca_invoice_number
-       FROM invoices WHERE id = $1 FOR UPDATE`,
-      [metaInvoiceId]
-    );
-    if (rows[0]) return rows[0];
-  }
-
-  if (payment?.id) {
-    const { rows } = await client.query(
-      `SELECT id, user_id, plan_id, amount_sar, status, zatca_invoice_number
-       FROM invoices WHERE provider_payment_id = $1 FOR UPDATE`,
-      [payment.id]
-    );
-    if (rows[0]) return rows[0];
-  }
-
-  return null;
-}
+/* ربط الحدث بالفاتورة صار في payments/verify.js (resolveInvoice): الطرق الثلاث تُحل كلها ويُكشف تعارضها
+   بدل أخذ أول تطابق (KANAF-ORD-0003 N-02). */
 
 /**
  * يسجّل صف الدفعة أو يحدّثه.
@@ -128,9 +92,10 @@ async function findInvoiceForPayment(client, payment) {
  */
 async function upsertPayment(client, { invoice, providerPayment, status }) {
   const providerPaymentId = providerPayment.id;
-  const amountSar = providerPayment.amount !== undefined
-    ? halalasToSar(providerPayment.amount)
-    : Number(invoice.amount_sar);
+  /* حدث «مدفوع» وصل هنا بعد verifyPaymentEvent: مبلغه مطابق للمتوقع بالهللة. حدث الفشل لا ينقل
+     مالاً؛ مبلغه يُسجَّل إن كان صالحاً وإلا مبلغ الفاتورة المحلي (للعرض فقط، بلا استحقاق). */
+  const validHalalas = typeof providerPayment.amount === "number" && Number.isInteger(providerPayment.amount) && providerPayment.amount > 0;
+  const amountSar = validHalalas ? halalasToSar(providerPayment.amount) : Number(invoice.amount_sar);
 
   const { rows: existingRows } = await client.query(
     `SELECT id, status, amount, refunded_amount FROM payments
@@ -177,7 +142,8 @@ async function upsertPayment(client, { invoice, providerPayment, status }) {
              CASE WHEN $9 = 'paid' THEN now() ELSE NULL END)
      RETURNING id, status, amount, refunded_amount`,
     [
-      invoice.user_id, invoice.id, providerPaymentId, amountSar, settings.currency,
+      invoice.user_id, invoice.id, providerPaymentId, amountSar,
+      /^[A-Z]{3}$/.test(String(providerPayment.currency || "")) ? providerPayment.currency : settings.currency,
       source.type || null, source.company || source.brand || null,
       source.number ? String(source.number).slice(-4) : null,
       status, failureReason,
@@ -190,9 +156,30 @@ async function upsertPayment(client, { invoice, providerPayment, status }) {
    معالجات الأحداث — كل واحد يعمل داخل معاملة واحدة
    ------------------------------------------------------------ */
 
-async function handlePaymentPaid(client, providerPayment) {
-  const invoice = await findInvoiceForPayment(client, providerPayment);
-  if (!invoice) return { outcome: "unmatched_invoice" };
+/* نتيجة «معلّق»: حدث لم يُقبل — يُحفظ للفحص بلا تفعيل ولا وثيقة ولا استرداد (N-02). */
+async function heldOutcome(client, v, ctx, eventType, providerPayment) {
+  const holdId = await recordHold(client, {
+    reason: v.reason, source: ctx.source || "webhook", eventType, webhookEventId: ctx.webhookEventId || null,
+    data: providerPayment, invoice: v.invoice || null, expected: v.expected || null, received: v.received || receivedSummary(providerPayment),
+  });
+  return { outcome: `held:${v.reason}`, held: true, holdReason: v.reason, holdId, invoiceId: v.invoice?.id || null };
+}
+
+async function handlePaymentPaid(client, providerPayment, ctx = {}) {
+  const settings0 = await getBillingSettings(client);
+  const v = await verifyPaymentEvent(client, { eventType: "payment_paid", data: providerPayment, currency: settings0.currency, provider: ctx.provider || null });
+  if (v.unmatched) return { outcome: "unmatched_invoice" };
+  if (v.hold) return heldOutcome(client, v, ctx, "payment_paid", providerPayment);
+  if (v.duplicate) {
+    await resolveHoldsFor(client, providerPayment.id, { by: ctx.source || "webhook", outcome: "payment_already_recorded" });
+    return {
+      outcome: "payment_already_recorded",
+      invoiceId: v.invoice.id,
+      invoiceNumber: v.invoice.zatca_invoice_number || null,
+      needsInvoiceDocument: v.invoice.status === "paid" && !v.invoice.zatca_invoice_number,
+    };
+  }
+  const invoice = v.invoice;
 
   const { payment, alreadyTerminal } = await upsertPayment(client, {
     invoice, providerPayment, status: "paid",
@@ -240,6 +227,7 @@ async function handlePaymentPaid(client, providerPayment) {
     invoiceId: invoice.id,
     paymentId: payment.id,
   });
+  await resolveHoldsFor(client, providerPayment.id, { by: ctx.source || "webhook", outcome: activation.isRenewal ? "renewal_activated" : "subscription_activated" });
 
   /* --------------------------------------------------------
      🔴 الفاتورة الضريبية **لا** تُولَّد هنا. كانت تُولَّد داخل هذه
@@ -276,9 +264,11 @@ async function handlePaymentPaid(client, providerPayment) {
   };
 }
 
-async function handlePaymentFailed(client, providerPayment) {
-  const invoice = await findInvoiceForPayment(client, providerPayment);
-  if (!invoice) return { outcome: "unmatched_invoice" };
+async function handlePaymentFailed(client, providerPayment, ctx = {}) {
+  const v = await verifyPaymentEvent(client, { eventType: "payment_failed", data: providerPayment });
+  if (v.unmatched) return { outcome: "unmatched_invoice" };
+  if (v.hold) return heldOutcome(client, v, ctx, "payment_failed", providerPayment);
+  const invoice = v.invoice;
 
   const { payment, alreadyTerminal } = await upsertPayment(client, {
     invoice, providerPayment, status: "failed",
@@ -309,7 +299,7 @@ async function handlePaymentFailed(client, providerPayment) {
   };
 }
 
-async function handlePaymentRefunded(client, providerPayment, eventId) {
+async function handlePaymentRefunded(client, providerPayment, eventId, ctx = {}) {
   const { rows: paymentRows } = await client.query(
     `SELECT id, user_id, invoice_id, subscription_id, amount, refunded_amount, status
      FROM payments WHERE provider = 'moyasar' AND provider_payment_id = $1 FOR UPDATE`,
@@ -317,18 +307,26 @@ async function handlePaymentRefunded(client, providerPayment, eventId) {
   );
   const payment = paymentRows[0];
   if (!payment) return { outcome: "unmatched_payment" };
+  /* N-02: الإجمالي المسترد الغائب كان يُعامَل استرداداً كاملاً (Number(payment.amount)). الآن يُعلَّق
+     الحدث: قيمة مفقودة لا تتحول إلى مبلغ. والإجمالي يجب أن يكون صحيحاً غير سالب ولا يتجاوز الدفعة. */
+  const { rows: payCur } = await client.query(`SELECT currency FROM payments WHERE id = $1`, [payment.id]);
+  const rv = verifyRefundEvent({ ...payment, currency: payCur[0]?.currency }, providerPayment);
+  if (rv.hold) return heldOutcome(client, { ...rv, invoice: payment.invoice_id ? { id: payment.invoice_id } : null }, ctx, "payment_refunded", providerPayment);
 
   // المزوّد يرسل **إجمالي** المبلغ المسترد على الدفعة، لا الفرق.
   // الطرح هو ما يجعل هذا المسار صحيحاً مع الاسترداد الجزئي المتعدد
   // وآمناً تماماً أمام التسليم المكرر في آن واحد: الحدث المكرر
   // يعطي فرقاً صفراً فلا يفعل شيئاً.
-  const providerTotalRefunded = providerPayment.refunded_amount !== undefined
-    ? halalasToSar(providerPayment.refunded_amount)
-    : Number(payment.amount);
+  const providerTotalRefunded = halalasToSar(rv.totalHalalas);
   const delta = Number((providerTotalRefunded - Number(payment.refunded_amount)).toFixed(2));
 
+  /* حدث استرداد سليم يحل حجوزات الاسترداد المفتوحة لهذه الدفعة (ومنها ما حُجز قبل COR-02 لأن الحقل
+     الموثق refunded لم يكن يُقرأ) — يحدث في كل منفذ: webhook، replay، reconcile، recheck. */
+  const refundHoldsResolved = await resolveHoldsFor(client, providerPayment.id, { by: ctx.source || "webhook", outcome: "refund_verified" }, "payment_refunded");
   if (delta <= 0) {
-    return { outcome: "refund_already_recorded", paymentId: payment.id };
+    // الإجمالي مسجَّل كاملاً — حجز معلّق قديم لا يمثّل مالاً إضافياً (R15-11).
+    const released = await releaseStaleRefundHolds(client, payment.id, providerTotalRefunded);
+    return { outcome: "refund_already_recorded", paymentId: payment.id, ...(released ? { releasedHolds: released } : {}), ...(refundHoldsResolved ? { refundHoldsResolved } : {}) };
   }
 
   const result = await recordRefund(client, {
@@ -339,21 +337,25 @@ async function handlePaymentRefunded(client, providerPayment, eventId) {
     initiatedBy: "provider",
     providerRefundId: eventId || null,
   });
+  await releaseStaleRefundHolds(client, payment.id, providerTotalRefunded);
 
   return {
     outcome: result.kind === "full" ? "refunded_full" : "refunded_partial",
     paymentId: payment.id,
     creditNoteNumber: result.creditNoteNumber || null,
     refundedTotal: providerTotalRefunded,
+    ...(refundHoldsResolved ? { refundHoldsResolved } : {}),
     // يُصدره المُنادي بعد تثبيت المعاملة، لا داخلها.
     refundId: result.refundId || null,
     needsCreditNote: Boolean(result.needsCreditNote),
   };
 }
 
-async function handlePaymentVoided(client, providerPayment) {
-  const invoice = await findInvoiceForPayment(client, providerPayment);
-  if (!invoice) return { outcome: "unmatched_invoice" };
+async function handlePaymentVoided(client, providerPayment, ctx = {}) {
+  const v = await verifyPaymentEvent(client, { eventType: "payment_voided", data: providerPayment });
+  if (v.unmatched) return { outcome: "unmatched_invoice" };
+  if (v.hold) return heldOutcome(client, v, ctx, "payment_voided", providerPayment);
+  const invoice = v.invoice;
 
   const { payment, alreadyTerminal } = await upsertPayment(client, {
     invoice, providerPayment, status: "voided",
@@ -382,7 +384,8 @@ async function handlePaymentVoided(client, providerPayment) {
 export async function issueInvoiceDocument(invoiceId) {
   if (!invoiceId) return null;
   try {
-    return await withTransaction(async (client) => {
+    // X09: البوابة قبل المعاملة — المنتظر لا يمسك اتصالاً من المجمّع
+    return await withDocumentSlot(() => withTransaction(async (client) => {
       const { rows } = await client.query(
         `SELECT i.id, i.user_id, i.plan_id, i.amount_sar, i.zatca_invoice_number,
                 u.name AS user_name, u.email AS user_email,
@@ -417,7 +420,7 @@ export async function issueInvoiceDocument(invoiceId) {
       }, client);
 
       return generated?.invoiceNumber || null;
-    });
+    }));
   } catch (err) {
     console.error(
       `[invoice] تعذّر إصدار الفاتورة الضريبية للفاتورة ${invoiceId}. ` +
@@ -431,16 +434,61 @@ export async function issueInvoiceDocument(invoiceId) {
    الموزّع
    ------------------------------------------------------------ */
 
-export async function processWebhookEvent(client, { eventType, body }) {
+/* ctx: { source: 'webhook'|'replay'|'reconcile'|'recheck', webhookEventId, provider }
+   provider = بيانات المزوّد المقروءة خارج المعاملة (عند تفعيل التحقق منه)؛ تُطابَق تحت القفل. */
+export async function processWebhookEvent(client, { eventType, body, ctx = {} }) {
   const providerPayment = body?.data || {};
   switch (eventType) {
-    case "payment_paid":     return handlePaymentPaid(client, providerPayment);
-    case "payment_failed":   return handlePaymentFailed(client, providerPayment);
-    case "payment_refunded": return handlePaymentRefunded(client, providerPayment, body?.id);
-    case "payment_voided":   return handlePaymentVoided(client, providerPayment);
+    case "payment_paid":     return handlePaymentPaid(client, providerPayment, ctx);
+    case "payment_failed":   return handlePaymentFailed(client, providerPayment, ctx);
+    case "payment_refunded": return handlePaymentRefunded(client, providerPayment, body?.id, ctx);
+    case "payment_voided":   return handlePaymentVoided(client, providerPayment, ctx);
     default:
       return { outcome: `unhandled_event_type:${eventType}` };
   }
+}
+
+/* نتائج تُسجَّل ignored: لا أثر مالي جديد (تكرار صحيح، عدم ربط، حدث متأخر) أو معلّق للفحص. */
+const IGNORED_OUTCOMES = [
+  "unmatched_invoice", "unmatched_payment", "payment_already_recorded",
+  "refund_already_recorded", "ignored_out_of_order_after_success",
+];
+
+/**
+ * المنافذ الثلاثة (webhook، replay، reconcile/recheck) تمر من هنا — KANAF-ORD-0003 N-02/ج.
+ * 1) تحقق المزوّد إن فُعّل (KANAF_PAYMENT_PROVIDER_VERIFY=1): قراءة خارج أي معاملة وبلا قفل، بمهلة
+ *    ومحاولتين. تعذّره ← معلّق مؤقت (verification_unavailable)، لا سقوط إلى الثقة بالحمولة.
+ * 2) المعالجة تحت القفل في معاملة المال، والتحقق المحلي يعاد فيها دائماً (والمزوّد إن قُرئ).
+ * 3) المستند بعد التثبيت (كما كان). النتائج الخمس: معلّق لعدم المطابقة؛ معلّق مؤقت؛ عولج؛ تكرار صحيح
+ *    بلا أثر مالي؛ عولج ولم يصدر المستند (documentIssued=false — يُستكمل بالإعادة أو زر إعادة التوليد).
+ * providerData: بيانات مزوّد قُرئت سلفاً (reconcile) — تُستعمل بدل قراءة ثانية.
+ */
+export async function settlePaymentEvent({ eventType, body, source, webhookEventId = null, providerData = null }) {
+  let provider = providerData;
+  if (!provider && eventType === "payment_paid" && providerVerifyEnabled() && body?.data?.id) {
+    const f = await fetchProviderPayment(fetchPayment, body.data.id);
+    if (!f.ok) {
+      const holdId = await withTransaction((c) => recordHold(c, {
+        kind: "verification_unavailable", reason: "provider_unverified", source, eventType, webhookEventId,
+        data: body.data, received: { ...receivedSummary(body.data), provider_error: f.error },
+      }));
+      return { result: { outcome: "held:provider_unverified", held: true, temporary: true, holdReason: "provider_unverified", holdId }, eventStatus: "failed" };
+    }
+    provider = f.data;
+  }
+  const result = await withTransaction((client) => processWebhookEvent(client, { eventType, body, ctx: { source, webhookEventId, provider } }));
+  // بعد التثبيت لا قبله: إصدار المستند لا يشارك معاملة المال.
+  if (result.needsInvoiceDocument) {
+    result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
+    result.documentIssued = Boolean(result.invoiceNumber);
+    delete result.needsInvoiceDocument;
+  }
+  if (result.needsCreditNote) {
+    result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
+    delete result.needsCreditNote;
+  }
+  const eventStatus = result.held || IGNORED_OUTCOMES.includes(result.outcome) ? "ignored" : "processed";
+  return { result, eventStatus };
 }
 
 /**
@@ -506,32 +554,19 @@ export async function handleMoyasarWebhook(req, res) {
   }
 
   try {
-    const result = await withTransaction((client) => processWebhookEvent(client, { eventType, body }));
-
-    // بعد التثبيت لا قبله: إصدار المستند لا يشارك معاملة المال.
-    if (result.needsInvoiceDocument) {
-      result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
-      delete result.needsInvoiceDocument;
-    }
-    if (result.needsCreditNote) {
-      result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);
-      delete result.needsCreditNote;
-    }
-
-    const ignoredOutcomes = [
-      "unmatched_invoice", "unmatched_payment", "payment_already_recorded",
-      "refund_already_recorded", "ignored_out_of_order_after_success",
-    ];
-    const finalStatus = ignoredOutcomes.includes(result.outcome) ? "ignored" : "processed";
+    const { result, eventStatus } = await settlePaymentEvent({ eventType, body, source: "webhook", webhookEventId: eventRow.id });
 
     await withTransaction(async (client) =>
       client.query(
-        `UPDATE webhook_events SET status = $1, outcome = $2, error = NULL, processed_at = now() WHERE id = $3`,
-        [finalStatus, JSON.stringify(result), eventRow.id]
+        `UPDATE webhook_events SET status = $1, outcome = $2, error = $3, processed_at = now() WHERE id = $4`,
+        [eventStatus, JSON.stringify(result), result.temporary ? "provider verification unavailable" : null, eventRow.id]
       )
     );
 
     console.log(`[webhook] ${eventType} → ${result.outcome}`);
+    /* 200 = استلام فقط، لا تفعيل. المعلّق بوعي (عدم مطابقة) يُرد 200 فلا عاصفة إعادة محاولات؛
+       تعذّر التحقق المؤقت يُرد 500 ليعيد المزوّد المحاولة، والحدث محفوظ بحالة failed. */
+    if (result.temporary) return res.status(500).json({ error: "verification_unavailable" });
     return res.status(200).json({ ok: true, outcome: result.outcome });
   } catch (err) {
     console.error(`[webhook] فشلت معالجة ${eventType}:`, err);

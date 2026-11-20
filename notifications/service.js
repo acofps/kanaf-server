@@ -1,8 +1,10 @@
 import { query, withTransaction } from "../db/pool.js";
 import { entitledSql } from "../billing/subscription.js";
+import { abandonedWhere, purchasedLaterSql } from "../billing/abandoned.js";
 import { sendEmail } from "../mail/send.js";
 import { generateUnsubscribeToken } from "./unsubscribe.js";
 import { sendPushToUser, isPushConfigured } from "./push.js";
+import { renderEmail, footerLinks } from "./email-template.js";
 
 /* ============================================================
    طبقة تسليم الإشعارات — ثلاث قنوات، وحالة حقيقية لكل مستلم.
@@ -80,7 +82,35 @@ export const AUDIENCE_SQL = {
             WHEN u.email_verified_at IS NULL THEN 'pending_verification'
             ELSE 'active'
           END = $1`,
+
+  /* ---- KANAF-ORD-0008 §4.4 و§5.2: فئتان تسويقيتان، مشتقّتان عند القراءة ---- */
+
+  // أصحاب السلات المتروكة: فاتورة معلّقة متروكة، لم يشترِ بعدها، وليس مشتركاً الآن.
+  // «فلا يُطارَد من اشترى» — شرطان لا واحد.
+  abandoned_carts: `
+    SELECT DISTINCT u.id AS user_id, u.email, u.marketing_opt_out FROM users u
+    JOIN invoices i ON i.user_id = u.id
+    LEFT JOIN (${LATEST_SUB}) s ON s.user_id = u.id
+    WHERE u.deleted_at IS NULL AND ${abandonedWhere("i")} AND NOT ${purchasedLaterSql("i")}
+      AND (s.id IS NULL OR NOT ${entitledSql("s")})`,
+
+  // من لم يدخل منذ $1 يوماً: آخر نشاط = أحدث دخول أو استعمال جلسة، وإن لم يوجد فتاريخ التسجيل.
+  inactive: `
+    SELECT u.id AS user_id, u.email, u.marketing_opt_out FROM users u
+    LEFT JOIN user_auth_state st ON st.user_id = u.id
+    WHERE u.deleted_at IS NULL AND u.email_verified_at IS NOT NULL
+      AND COALESCE(GREATEST(st.last_login_at,
+            (SELECT max(GREATEST(ss.created_at, ss.last_used_at)) FROM user_sessions ss WHERE ss.user_id = u.id)),
+          u.created_at) < now() - make_interval(days => $1::int)`,
 };
+
+/* الحملة التسويقية تحترم marketing_opt_out في **كل** قناة (KANAF-ORD-0008 §5.3).
+   الحملات القائمة بلا العلامة باقية على سلوكها الموثّق أعلاه (البريد وحده).
+   الفئتان التسويقيتان تسويق دائماً، وتُفرض العلامة عليهما عند الإنشاء. */
+export const MARKETING_AUDIENCES = ["abandoned_carts", "inactive"];
+export function isMarketingCampaign(campaign) {
+  return MARKETING_AUDIENCES.includes(campaign?.audience) || campaign?.audience_filter?.marketing === true;
+}
 
 export const VALID_CHANNELS = ["in_app", "email", "push"];
 
@@ -97,6 +127,13 @@ function audienceParams(audience, filter = {}) {
     }
     return [s];
   }
+  if (audience === "inactive") {
+    const days = Number(filter.days);
+    if (!Number.isInteger(days) || days < 7 || days > 365) {
+      throw Object.assign(new Error("invalid_inactive_days"), { status: 400 });
+    }
+    return [days];
+  }
   return [];
 }
 
@@ -105,6 +142,14 @@ export async function resolveAudience(audience, filter = {}) {
   if (!sql) throw Object.assign(new Error("invalid_audience"), { status: 400 });
   const { rows } = await query(sql, audienceParams(audience, filter));
   return rows;
+}
+
+/** كم من الجمهور أوقف التسويق — يُعرض قبل الإرسال لأنهم سيُسجَّلون skipped (§5.3). */
+export async function countAudienceOptedOut(audience, filter = {}) {
+  const sql = AUDIENCE_SQL[audience];
+  if (!sql) throw Object.assign(new Error("invalid_audience"), { status: 400 });
+  const { rows } = await query(`SELECT count(*)::int AS n FROM (${sql}) a WHERE a.marketing_opt_out`, audienceParams(audience, filter));
+  return rows[0].n;
 }
 
 export async function countAudience(audience, filter = {}) {
@@ -172,7 +217,12 @@ async function withCampaignLock(campaignId, fn) {
    فيتحوّل COMMIT إلى ROLLBACK صامت — وهو ما أضاع أول دفعة حقيقية.
    الطبقة المالية أُعيد تشكيلها لهذا السبب، وهذه الطبقة تُولد به.
    ------------------------------------------------------------ */
-export async function dispatchCampaign(campaignId, { trigger = "manual" } = {}) {
+/* onClaimed (KANAF-ORD-0001 R15-13): يُنادى بعد حجز الحملة وإنشاء صفوف
+   التسليم وقبل الإرسال الفعلي. يسمح لمسار اللوحة أن يرد 202 فوراً
+   ويكمل الإرسال في الخلفية — والسجل الدائم (notification_deliveries)
+   هو مصدر الحقيقة لا الذاكرة: لو أُعيد تشغيل الخادم في المنتصف، يستأنف
+   المسح الحملة العالقة في sending بعد 15 دقيقة. */
+export async function dispatchCampaign(campaignId, { trigger = "manual", onClaimed = null } = {}) {
   return withCampaignLock(campaignId, async () => {
     // 1) الحجز
     const claim = await withTransaction(async (client) => {
@@ -233,7 +283,9 @@ export async function dispatchCampaign(campaignId, { trigger = "manual" } = {}) 
          WHERE id = $1`,
         [campaignId]
       );
-      return { campaign: c };
+      /* إعادة محاولة حملة فاشلة (KANAF-ORD-0002 B-11): الجمهور هو صفوف التسليم الموجودة
+         وحدها — لا يُعاد حساب الجمهور فيُضاف من صار يطابق الفلتر بعد الإرسال الأول. */
+      return { campaign: c, retryOnly: c.status === "failed" || c.status === "partially_failed" };
     });
 
     if (claim.alreadyHandled) return { skipped: true, reason: `status_${claim.status}` };
@@ -251,22 +303,28 @@ export async function dispatchCampaign(campaignId, { trigger = "manual" } = {}) 
 
     // صفوف التسليم queued — ON CONFLICT DO NOTHING يجعل إعادة
     // التشغيل آمنة: ما أُنشئ سابقاً لا يُنشأ ثانية.
-    for (const r of recipients) {
-      for (const channel of channels) {
-        await query(
-          `INSERT INTO notification_deliveries (campaign_id, user_id, channel)
-           VALUES ($1, $2, $3) ON CONFLICT (campaign_id, user_id, channel) DO NOTHING`,
-          [campaignId, r.user_id, channel]
-        );
-      }
+    /* إدراج دفعة واحدة بدل عبارة لكل (مستخدم × قناة) — R15-13. القيد
+       الفريد نفسه يمنع التكرار عند الاستئناف. في إعادة محاولة الفاشلة لا إدراج. */
+    if (!claim.retryOnly && recipients.length && channels.length) {
+      await query(
+        `INSERT INTO notification_deliveries (campaign_id, user_id, channel)
+         SELECT $1, u, ch FROM unnest($2::uuid[]) u CROSS JOIN unnest($3::text[]) ch
+         ON CONFLICT (campaign_id, user_id, channel) DO NOTHING`,
+        [campaignId, recipients.map((r) => r.user_id), channels]
+      );
     }
 
-    await query(
-      `UPDATE notification_campaigns SET recipient_count = $2, updated_at = now() WHERE id = $1`,
-      [campaignId, recipients.length]
-    );
+    if (!claim.retryOnly) {
+      await query(
+        `UPDATE notification_campaigns SET recipient_count = $2, updated_at = now() WHERE id = $1`,
+        [campaignId, recipients.length]
+      );
+    }
 
     // 2) الإرسال — خارج أي معاملة
+    if (typeof onClaimed === "function") {
+      try { onClaimed({ campaignId, recipients: recipients.length, channels }); } catch { /* المنادي لا يوقف الإرسال */ }
+    }
     const byUser = new Map(recipients.map((r) => [r.user_id, r]));
     const { rows: pending } = await query(
       `SELECT id, user_id, channel FROM notification_deliveries
@@ -297,7 +355,10 @@ async function deliverOne(delivery, user, campaign) {
 
   let result;
   try {
-    if (delivery.channel === "in_app") {
+    if (isMarketingCampaign(campaign) && user.marketing_opt_out) {
+      // §5.3: من أوقف التسويق لا يصله شيء تسويقي في أي قناة — skipped لا failed.
+      result = { status: "skipped", errorCode: "marketing_opt_out", errorDetail: "المستخدم ألغى اشتراكه في الرسائل التسويقية" };
+    } else if (delivery.channel === "in_app") {
       result = await deliverInApp(delivery, campaign);
     } else if (delivery.channel === "email") {
       result = await deliverEmail(delivery, user, campaign);
@@ -335,6 +396,18 @@ async function deliverInApp(delivery, campaign) {
   return { status: "delivered", providerMessageId: rows[0]?.id || null };
 }
 
+/* تذييل رسائل البث من app_settings.marketing_email_footer — KANAF-ORD-0001 R15-19.
+   كان الإعداد يظهر في اللوحة «لا يؤثر بعد» والتذييل غائباً. يُقرأ عند كل
+   رسالة (جدول صغير بمفتاح أساسي)؛ القيمة الفارغة أو غياب الصف = بلا تذييل.
+   النص يُهرَّب في HTML كبقية محتوى الحملة. */
+async function marketingFooter() {
+  try {
+    const { rows } = await query(`SELECT value FROM app_settings WHERE key = 'marketing_email_footer'`);
+    const v = rows[0]?.value;
+    return typeof v === "string" && v.trim() ? v.trim().slice(0, 500) : "";
+  } catch { return ""; }
+}
+
 async function deliverEmail(delivery, user, campaign) {
   if (user.marketing_opt_out) {
     return { status: "skipped", errorCode: "marketing_opt_out", errorDetail: "المستخدم ألغى اشتراكه في الرسائل التسويقية" };
@@ -345,8 +418,10 @@ async function deliverEmail(delivery, user, campaign) {
 
   // sendEmail يرمي في الإنتاج حين يغيب إعداد SMTP — وهذا مقصود:
   // الخطأ يظهر هنا كـfailed حقيقي بسبب واضح، بدل نجاح كاذب.
-  const result = await sendEmail(user.email, campaign.title, `${campaign.body}\n\nلإلغاء الاشتراك: ${unsubscribeUrl}`, {
-    html: wrapAsHtml(campaign.title, campaign.body, unsubscribeUrl),
+  const footer = await marketingFooter();
+  const result = await sendEmail(user.email, campaign.title, `${campaign.body}${footer ? `\n\n${footer}` : ""}\n\nلإلغاء الاشتراك: ${unsubscribeUrl}`, {
+    // القالب الموحّد (KANAF-ORD-0008 §9): تسويقية → رابط الإلغاء إلزامي فيها.
+    ...renderEmail({ title: campaign.title, text: campaign.body, kind: "marketing", unsubscribeUrl, footerNote: footer, links: await footerLinks() }),
   });
 
   /* ⚠️ خارج NODE_ENV=production لا يرمي sendEmail — يطبع سطراً في
@@ -413,24 +488,7 @@ async function failCampaign(campaignId, reason) {
   );
 }
 
-function escapeHtml(text) {
-  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
-function wrapAsHtml(subject, plainTextMessage, unsubscribeUrl) {
-  const escaped = escapeHtml(plainTextMessage).replace(/\n/g, "<br>");
-  return `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<body style="font-family: Arial, sans-serif; direction: rtl; text-align: right; background: #f4f6f6; padding: 24px;">
-  <div style="max-width: 480px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; border: 1px solid #e0e6e6;">
-    <h2 style="color: #0D5C6B; margin-top: 0;">${escapeHtml(subject)}</h2>
-    <p style="color: #333; line-height: 1.8; font-size: 14px;">${escaped}</p>
-  </div>
-  <p style="text-align: center; font-size: 11px; color: #999; margin-top: 16px;">
-    <a href="${unsubscribeUrl}" style="color: #999;">إلغاء الاشتراك من هذي الرسائل</a>
-  </p>
-</body></html>`;
-}
 
 /* ------------------------------------------------------------
    إشعار نظامي لمستخدم واحد — داخل التطبيق فقط.

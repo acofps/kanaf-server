@@ -11,6 +11,7 @@ import {
 } from "./middleware.js";
 import { permissionsFor, ROLE_LABEL } from "./permissions.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
+import { withDocumentSlot } from "../invoicing/slot.js";
 import { executeRefund } from "../payments/refund.js";
 import { billingRouter } from "./billing.js";
 import { entitledSql, effectiveStatusSql } from "../billing/subscription.js";
@@ -53,6 +54,10 @@ adminRouter.use("/billing", billingRouter);
    لكل عنوان تجعل التخمين المتصل غير عملي أصلاً.
 
    موثّق في 05_ADMIN_SECURITY_AUDIT.md كقيد معروف لا كثغرة مجهولة.
+
+   تحديث KANAF-ORD-0001 R15-23: أُضيفت تهدئة لكل حساب (جدول جانبي
+   admin_auth_state، الترحيل 013) — انظر verifyAdminCredentials في
+   admin/auth.js. هذا الحد بالعنوان باقٍ طبقةً ثانية.
    ------------------------------------------------------------ */
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 
@@ -984,7 +989,11 @@ function readPaging(req, { defaultSize = 50, maxSize = 200 } = {}) {
 
 /* بنّاء شرط سجل الإجراءات — يشاركه التصدير حرفياً، للسبب نفسه:
    ملف يقول غير ما تقوله الشاشة أسوأ من غياب الملف. */
-export function buildAuditFilter(reqQuery) {
+/* KANAF-ORD-0001 R15-22: حدود «من/إلى» يوم تقويمي بالمنطقة الزمنية
+   المحاسبية (billing_settings.reporting_timezone) كبقية التقارير — كانت
+   ::date بتوقيت جلسة القاعدة (UTC على Render)، فيسقط من يوم مختار ما
+   بين منتصف الليل والثالثة فجراً بتوقيت الرياض. */
+export function buildAuditFilter(reqQuery, tz = "Asia/Riyadh") {
   const where = [];
   const params = [];
   const p = (v) => `$${params.push(v)}`;
@@ -1000,8 +1009,9 @@ export function buildAuditFilter(reqQuery) {
   if (entity) where.push(`al.entity = ${p(entity)}`);
   if (entityId) where.push(`al.entity_id = ${p(entityId)}`);
   if (adminUserId && UUID_RE.test(adminUserId)) where.push(`al.admin_user_id = ${p(adminUserId)}`);
-  if (from) where.push(`al.created_at >= ${p(from)}::date`);
-  if (to) where.push(`al.created_at < (${p(to)}::date + interval '1 day')`);
+  const tzP = from || to ? p(tz) : null;
+  if (from) where.push(`al.created_at >= ((${p(from)}::date)::timestamp AT TIME ZONE ${tzP})`);
+  if (to) where.push(`al.created_at < (((${p(to)}::date + 1)::timestamp) AT TIME ZONE ${tzP})`);
 
   return {
     whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "",
@@ -1045,7 +1055,8 @@ adminRouter.get("/access-log", requireAdminAuth, requirePermission("audit_log:vi
 adminRouter.get("/audit-log", requireAdminAuth, requirePermission("audit_log:view_actions"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const { whereSql, params, next } = buildAuditFilter(req.query);
+    const { reportingTimezone } = await getBillingSettings();
+    const { whereSql, params, next } = buildAuditFilter(req.query, reportingTimezone);
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS n FROM admin_action_log al ${whereSql}`, params);
     const total = countRows[0].n;
@@ -1104,11 +1115,46 @@ adminRouter.get("/plans", requireAdminAuth, requirePermission("plans:view"), asy
 });
 
 // POST /admin/plans  { planKey, name, priceSar, durationDays, features, displayOrder, reason }
+/* تحقق واحد لحقول الباقة القابلة للتحرير — KANAF-ORD-0002 B-09.
+   كان التعديل (PATCH) بلا تحقق للاسم والمدة والترتيب والمزايا: الاسم الفارغ
+   يُحفظ، ومدة أو ترتيب غير رقمي يصل Postgres فيرد 500. القواعد هي قواعد
+   الإنشاء القائمة نفسها؛ partial=true للتعديل (الحقل الغائب لا يُمس).
+   يرمي httpError(400) قبل أي كتابة. */
+function validatePlanFields(body, { partial }) {
+  const out = {};
+  const has = (k) => body[k] !== undefined;
+  if (!partial || has("name")) {
+    if (typeof body.name !== "string" || !body.name.trim()) throw httpError(400, "invalid_name");
+    out.name = body.name.trim();
+  }
+  if (!partial || has("priceSar")) {
+    const v = body.priceSar;
+    if (v === null || v === undefined || String(v).trim() === "" || !Number.isFinite(Number(v)) || Number(v) < 0) throw httpError(400, "invalid_price");
+    out.price = Number(v);
+  }
+  if (!partial || has("durationDays")) {
+    const d = Number(body.durationDays);
+    if (body.durationDays === null || String(body.durationDays).trim() === "" || !Number.isInteger(d) || d <= 0) throw httpError(400, "invalid_duration");
+    out.days = d;
+  }
+  if (has("features")) {
+    if (!Array.isArray(body.features) || !body.features.every((f) => typeof f === "string")) throw httpError(400, "invalid_features");
+    out.features = body.features;
+  }
+  if (has("displayOrder")) {
+    const o = Number(body.displayOrder);
+    if (body.displayOrder === null || String(body.displayOrder).trim() === "" || !Number.isInteger(o)) throw httpError(400, "invalid_display_order");
+    out.order = o;
+  }
+  return out;
+}
+
 adminRouter.post("/plans", requireAdminAuth, requirePermission("plans:edit"), async (req, res) => {
   const reason = String(req.body?.reason || "").trim();
   try {
     const { planKey, name, priceSar, durationDays, features, displayOrder } = req.body || {};
-    if (!planKey || !name || priceSar === undefined || !durationDays) {
+    // priceSar فارغ = Number("") = 0 — كان يُنشئ باقة مجانية بلا قصد
+    if (!planKey || !name || priceSar === undefined || priceSar === null || String(priceSar).trim() === "" || !durationDays) {
       throw httpError(400, "planKey_name_priceSar_durationDays_required");
     }
     if (!reason) throw httpError(400, "reason_required");
@@ -1117,16 +1163,13 @@ adminRouter.post("/plans", requireAdminAuth, requirePermission("plans:edit"), as
       // Moyasar — يُحصر في مجموعة محارف آمنة متوقَّعة، لا نص حرّ.
       throw httpError(400, "planKey_must_be_lowercase_letters_numbers_underscores_only");
     }
-    const price = Number(priceSar);
-    if (!Number.isFinite(price) || price < 0) throw httpError(400, "invalid_price");
-    const days = Number(durationDays);
-    if (!Number.isInteger(days) || days <= 0) throw httpError(400, "invalid_duration");
+    const v = validatePlanFields(req.body || {}, { partial: false });
 
     const { rows } = await query(
       `INSERT INTO subscription_plans (plan_key, name, price_sar, duration_days, features, display_order, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, plan_key, name, price_sar, duration_days, features, is_active, display_order`,
-      [planKey, name, price, days, features || [], displayOrder || 0, req.admin.id]
+      [planKey, v.name, v.price, v.days, v.features || [], v.order ?? 0, req.admin.id]
     );
 
     await logAdminAction({
@@ -1155,10 +1198,8 @@ adminRouter.patch(
     const reason = String(req.body?.reason || "").trim();
     try {
       if (!reason) throw httpError(400, "reason_required");
-      const { name, priceSar, durationDays, features, displayOrder } = req.body || {};
-      if (priceSar !== undefined && (!Number.isFinite(Number(priceSar)) || Number(priceSar) < 0)) {
-        throw httpError(400, "invalid_price");
-      }
+      const v = validatePlanFields(req.body || {}, { partial: true });
+      if (!["name", "price", "days", "features", "order"].some((k) => v[k] !== undefined)) throw httpError(400, "nothing_to_update");
 
       /* القيمة القديمة تُقرأ داخل نفس المعاملة وتحت قفل الصف.
          قراءتها في استعلام منفصل قبل التحديث تجعل السجل يقول قيمة
@@ -1183,11 +1224,11 @@ adminRouter.patch(
            WHERE id = $7
            RETURNING id, plan_key, name, price_sar, duration_days, features, is_active, display_order`,
           [
-            name ?? null,
-            priceSar === undefined ? null : Number(priceSar),
-            durationDays === undefined ? null : Number(durationDays),
-            features ?? null,
-            displayOrder === undefined ? null : Number(displayOrder),
+            v.name ?? null,
+            v.price ?? null,
+            v.days ?? null,
+            v.features ?? null,
+            v.order ?? null,
             req.admin.id, req.params.id,
           ]
         );
@@ -1365,7 +1406,8 @@ adminRouter.post(
   async (req, res) => {
     const reason = String(req.body?.reason || "").trim() || "إعادة إصدار وثيقة فاتورة مدفوعة بلا رقم ضريبي";
     try {
-      const result = await withTransaction(async (client) => {
+      // X09: البوابة قبل المعاملة — المنتظر لا يمسك اتصالاً من المجمّع
+      const result = await withDocumentSlot(() => withTransaction(async (client) => {
         // يُقفل الصف أولاً — نفس إصلاح تكرار تسليم الـwebhook،
         // مطبَّقاً هنا لأن مسؤولين اثنين (أو واحداً يضغط مرتين) قد
         // يمرّان معاً من فحص «لا رقم فاتورة بعد» قبل أن تصل كتابة
@@ -1407,7 +1449,7 @@ adminRouter.post(
         );
         if (!generated) return { httpStatus: 422, body: { error: "tax_settings_not_configured" } };
         return { httpStatus: 200, body: generated, userId: invoice.user_id };
-      });
+      }));
 
       if (result.httpStatus === 200) {
         await logAdminAction({
@@ -1517,11 +1559,26 @@ adminRouter.post(
     try {
       const { status } = req.body || {};
       if (!["unread", "read", "replied"].includes(status)) return res.status(400).json({ error: "invalid_status" });
-      const { rows } = await query(
-        `UPDATE contact_messages SET status = $1 WHERE id = $2 RETURNING id, status`, [status, req.params.id]
-      );
-      if (!rows[0]) return res.status(404).json({ error: "not_found" });
-      res.json(rows[0]);
+      /* سجل الإجراءات (KANAF-ORD-0002 B-10): الفاعل والحالة قبل/بعد فقط — لا نص الرسالة
+         ولا اسم المرسل ولا بريده. الحالة القديمة تُقرأ تحت قفل الصف في نفس المعاملة. */
+      const out = await withTransaction(async (client) => {
+        const { rows: b } = await client.query(`SELECT status FROM contact_messages WHERE id = $1 FOR UPDATE`, [req.params.id]);
+        if (!b[0]) return null;
+        const { rows } = await client.query(
+          `UPDATE contact_messages SET status = $1 WHERE id = $2 RETURNING id, status`, [status, req.params.id]
+        );
+        return { before: b[0].status, row: rows[0] };
+      });
+      if (!out) return res.status(404).json({ error: "not_found" });
+      if (out.before !== status) {
+        await logAdminAction({
+          adminUserId: req.admin.id, action: "message_status_changed",
+          entity: "contact_message", entityId: req.params.id,
+          oldValue: { status: out.before }, newValue: { status },
+          reason: "تغيير حالة رسالة تواصل", ipAddress: req.ip,
+        });
+      }
+      res.json(out.row);
     } catch (err) { fail(res, err, "admin/messages:status", req); }
   }
 );

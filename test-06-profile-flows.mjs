@@ -37,6 +37,7 @@
  * • **وصول إشعار Push إلى جهاز** — لا يُثبَت إلا بجهاز. المفحوص
  *   هنا أن صف الصندوق يُكتب مرة واحدة وأن اليوم يُعلَّم.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
 import express from "express";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";

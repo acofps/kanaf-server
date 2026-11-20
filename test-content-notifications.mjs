@@ -11,6 +11,9 @@
  * ⚠️ يكتب صفوفاً حقيقية ثم ينظّفها. لا تشغّله على قاعدة إنتاج فيها
  * بيانات مستخدمين تهمّك قبل قراءة قسم التنظيف في آخر الملف.
  */
+import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // KANAF-ORD-0001 U09-2: يجب أن يبقى أول استيراد
+// نشر جماعي all:true وتنظيف يعيد كل content_items — قاعدة مخصّصة فقط.
+requireDedicatedDatabase(import.meta.url);
 import express from "express";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
@@ -125,7 +128,7 @@ const alice = await makeUser("alice");
 const bob = await makeUser("bob");
 
 const JOURNEY = "reactivate_your_day";     // مجانية
-const PLUS_JOURNEY = "break_the_thought_loop"; // كنف+
+const PLUS_JOURNEY = "break_the_thought_loop"; // تنفس+
 const NOTEBOOK = "need_right_now";
 
 // الحالة الابتدائية بعد الترحيل 007: مسودة.
@@ -180,6 +183,17 @@ await query(
 }
 
 /* ------------------------------------------------------------
+   4ب) النشر بلا سبب يُرفض في الخادم ولا يغيّر شيئاً
+   ------------------------------------------------------------ */
+{
+  const item = await contentRow("journey", JOURNEY);
+  const r1 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: true });
+  const r2 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: true, reason: "   " });
+  const after = await contentRow("journey", JOURNEY);
+  log("4ب. النشر بلا سبب (غائب أو مسافات) → 400 reason_required، والحالة كما هي", r1.status === 400 && r1.body?.error === "reason_required" && r2.status === 400 && after.launch_enabled === item.launch_enabled);
+}
+
+/* ------------------------------------------------------------
    5) النشر يظهر المحتوى للمستخدم
    ------------------------------------------------------------ */
 {
@@ -221,7 +235,7 @@ await query(
 }
 
 /* ------------------------------------------------------------
-   9) جدار الدفع: محتوى كنف+ لمستخدم غير مشترك = 402 لا 403
+   9) جدار الدفع: محتوى تنفس+ لمستخدم غير مشترك = 402 لا 403
    ------------------------------------------------------------ */
 {
   CURRENT_ADMIN = adminUser;
@@ -231,7 +245,7 @@ await query(
 
   CURRENT_USER_TOKEN = userToken(bob.id);
   const r = await post("/api/me/journeys", { journeyKey: PLUS_JOURNEY, totalDays: 7 });
-  log("9. محتوى كنف+ لغير المشترك يرد 402 (لا 403)", r.status === 402 && r.body.error === "subscription_required", `status=${r.status}`);
+  log("9. محتوى تنفس+ لغير المشترك يرد 402 (لا 403)", r.status === 402 && r.body.error === "subscription_required", `status=${r.status}`);
 }
 
 /* ------------------------------------------------------------
@@ -484,7 +498,7 @@ let scheduledId = null;
 }
 
 /* ------------------------------------------------------------
-   26) شرط بوصلة كنف يُحسب من قاعدة البيانات
+   26) شرط بوصلة تنفس يُحسب من قاعدة البيانات
    ------------------------------------------------------------ */
 {
   CURRENT_USER_TOKEN = userToken(alice.id);
@@ -801,7 +815,7 @@ let scheduledId = null;
    41) بصمة الكتالوج تتغيّر حين يتغيّر محتواه
 
    كانت البصمة `عدد:مجموع أطوال المفاتيح` — لا تتحرك حين يتغيّر
-   عنوان أو طبقة. أي أن تحويل محتوى إلى كنف+ لا يصل جهازاً
+   عنوان أو طبقة. أي أن تحويل محتوى إلى تنفس+ لا يصل جهازاً
    مثبَّتاً أبداً، لأن الخادم يرد 304 على بصمته القديمة.
    ------------------------------------------------------------ */
 {

@@ -4,8 +4,7 @@ import { api } from "../api.js";
 import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Select, Input, Spinner, Empty,
-  ErrorBar, Table, Td, Pager, useAsync,
-} from "../ui.jsx";
+  ErrorBar, Table, Td, Pager, useAsync, ValueDiff } from "../ui.jsx";
 
 /* ============================================================
    سجل الإجراءات — من غيّر ماذا، ومن أي قيمة إلى أي قيمة.
@@ -59,6 +58,17 @@ const ACTION_LABEL = {
   break_glass_requested: "طلب وصول طارئ",
   break_glass_approved: "اعتماد وصول طارئ",
   data_exported: "تصدير بيانات",
+  // KANAF-ORD-0002 B-10: أفعال تُسجَّل في الخادم وكانت تظهر بمفتاحها الإنجليزي
+  content_review: "مراجعة سريرية لمحتوى",
+  content_publish: "تشغيل محتوى",
+  content_unpublish: "إيقاف محتوى",
+  content_schedule: "جدولة نشر محتوى",
+  content_bulk_publish: "نشر جماعي للمحتوى",
+  notification_create: "إنشاء حملة إشعارات",
+  notification_schedule: "جدولة حملة إشعارات",
+  notification_send: "إرسال حملة إشعارات",
+  notification_cancel: "إلغاء حملة إشعارات",
+  message_status_changed: "تغيير حالة رسالة تواصل",
 };
 
 const ENTITY_LABEL = {
@@ -66,6 +76,7 @@ const ENTITY_LABEL = {
   invoice: "فاتورة", subscription: "اشتراك", campaign: "حملة", content: "محتوى",
   tax_settings: "بيانات ضريبية", billing_settings: "إعداد مالي",
   app_setting: "إعداد تشغيل", export: "تصدير", break_glass: "وصول طارئ",
+  contact_message: "رسالة تواصل",
 };
 
 /* الأفعال التي تستحق لوناً: نقل مال، أو تغيير من يقدر على ماذا. */
@@ -76,34 +87,7 @@ const HIGH_STAKES = new Set([
   "break_glass_approved", "data_exported",
 ]);
 
-function ValueDiff({ oldValue, newValue }) {
-  if (!oldValue && !newValue) return <span style={{ color: C.textFaint }}>—</span>;
-  const keys = [...new Set([...Object.keys(oldValue || {}), ...Object.keys(newValue || {})])];
-  return (
-    <div className="grid gap-1">
-      {keys.map((k) => {
-        const a = oldValue?.[k];
-        const b = newValue?.[k];
-        const changed = JSON.stringify(a) !== JSON.stringify(b);
-        const show = (v) => (v === undefined || v === null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
-        return (
-          <div key={k} className="text-[11px] flex items-center gap-1.5 flex-wrap">
-            <span style={{ color: C.textFaint }}>{k}:</span>
-            {oldValue !== null && oldValue !== undefined && (
-              <span style={{ color: changed ? C.crisis : C.textMuted, textDecoration: changed ? "line-through" : "none" }}>
-                {show(a)}
-              </span>
-            )}
-            {changed && newValue && <ChevronLeft size={10} color={C.textFaint} />}
-            {newValue !== null && newValue !== undefined && changed && (
-              <span className="font-bold" style={{ color: C.green }}>{show(b)}</span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+/* ValueDiff انتقل إلى ui.jsx مشتركاً (KANAF-ORD-0001 R15-22). */
 
 export default function AuditLog({ me, toast }) {
   const [page, setPage] = useState(1);
@@ -151,8 +135,8 @@ export default function AuditLog({ me, toast }) {
               ))}
             </Select>
           </Field>
-          <Field label="من تاريخ"><Input type="date" value={from} onChange={(e) => reset(setFrom)(e.target.value)} /></Field>
-          <Field label="إلى تاريخ"><Input type="date" value={to} onChange={(e) => reset(setTo)(e.target.value)} /></Field>
+          <Field label="من تاريخ"><Input dir="ltr" type="date" value={from} onChange={(e) => reset(setFrom)(e.target.value)} /></Field>
+          <Field label="إلى تاريخ"><Input dir="ltr" type="date" value={to} onChange={(e) => reset(setTo)(e.target.value)} /></Field>
         </div>
       </Card>
 
@@ -168,7 +152,7 @@ export default function AuditLog({ me, toast }) {
               {rows.map((r) => (
                 <React.Fragment key={r.id}>
                   <tr>
-                    <Td>{fmtDateTime(r.created_at)}</Td>
+                    <Td dir="ltr">{fmtDateTime(r.created_at)}</Td>
                     <Td className="font-bold">{r.admin_name || "—"}</Td>
                     <Td>
                       <Badge color={HIGH_STAKES.has(r.action) ? "amber" : "textMuted"}>
