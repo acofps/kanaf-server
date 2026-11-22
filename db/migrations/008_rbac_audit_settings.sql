@@ -136,9 +136,9 @@ INSERT INTO app_settings (key, value, category, description) VALUES
    'البريد المعروض للمستخدم للتواصل مع الدعم'),
   ('support_hours',        '"الأحد إلى الخميس، 9 صباحاً إلى 5 مساءً بتوقيت الرياض"'::jsonb, 'support',
    'أوقات العمل المعلنة'),
-  ('app_public_name',      '"تنفس بحرية"'::jsonb,               'general',
+  ('app_public_name',      '"كنف"'::jsonb,               'general',
    'الاسم التجاري المعروض في الرسائل والوثائق'),
-  ('marketing_email_footer', '"وصلتك هذه الرسالة لأنك مسجّل في تنفس بحرية."'::jsonb, 'notifications',
+  ('marketing_email_footer', '"وصلتك هذه الرسالة لأنك مسجّل في كنف."'::jsonb, 'notifications',
    'تذييل رسائل البث التسويقي'),
   ('admin_session_minutes', '15'::jsonb,                 'security',
    'عمر رمز الوصول الإداري بالدقائق — للعرض فقط؛ القيمة السارية من ADMIN_JWT_EXPIRES_IN')

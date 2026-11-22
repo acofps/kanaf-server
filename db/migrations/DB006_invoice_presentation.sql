@@ -38,7 +38,7 @@ ALTER TABLE billing_settings ADD COLUMN IF NOT EXISTS seller_phone TEXT;
    2) لاحقة الاسم التجاري
 
    تُعرض بعد الاسم النظامي مباشرة: «أكاديمية علم النفس ( خدمات
-   منصة تنفس بحرية )». تُخزَّن منفصلة عمداً ولا تُدمج في tax_settings،
+   منصة كنف )». تُخزَّن منفصلة عمداً ولا تُدمج في tax_settings،
    لأن الاسم النظامي هو ما يدخل في TLV الخاص برمز QR ويجب أن يبقى
    مطابقاً حرفياً لشهادة التسجيل الضريبي.
    ------------------------------------------------------------ */
@@ -71,7 +71,7 @@ ALTER TABLE billing_settings ADD COLUMN IF NOT EXISTS document_number_token TEXT
 UPDATE billing_settings
    SET seller_email          = COALESCE(seller_email, 'acofps@acofps.com'),
        seller_phone          = COALESCE(seller_phone, '00966558524774'),
-       seller_display_suffix = COALESCE(seller_display_suffix, '( خدمات منصة تنفس بحرية )'),
+       seller_display_suffix = COALESCE(seller_display_suffix, '( خدمات منصة كنف )'),
        document_number_token = COALESCE(document_number_token, 'KANAF')
  WHERE singleton = true;
 

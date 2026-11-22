@@ -245,8 +245,6 @@ CREATE TABLE admin_access_log (
 CREATE INDEX idx_admin_access_log_target ON admin_access_log (target_user_id, created_at DESC);
 CREATE INDEX idx_admin_access_log_admin ON admin_access_log (admin_user_id, created_at DESC);
 
--- ⚠️ DORMANT since KANAF-ORD-0013 addendum 2 (owner decision 6): the feature
--- was removed; this table keeps its history and nothing writes to it.
 -- Emergency ("break-glass") access requiring a second approver —
 -- only relevant for the rare case a support agent genuinely needs to
 -- see raw sensitive data (e.g. responding to a legal request).
@@ -339,8 +337,8 @@ CREATE INDEX idx_broadcast_notifications_time ON broadcast_notifications (create
 -- ============================================================
 INSERT INTO subscription_plans (plan_key, name, price_sar, duration_days, features, display_order) VALUES
   ('monthly', 'الباقة الشهرية', 29.00, 30,
-    ARRAY['كل أدوات تنفس بحرية الأربع', 'بوصلة تنفس بحرية الكاملة', 'كل رحلات تنفس بحرية ودفاترها', 'مناقشة سند غير محدودة'], 1),
+    ARRAY['كل أدوات تنفس الأربع', 'بوصلة تنفس الكاملة', 'كل رحلات تنفس ودفاترها', 'مناقشة سند غير محدودة'], 1),
   ('6_months', 'باقة 6 أشهر', 139.00, 182,
-    ARRAY['كل مميزات الباقة الشهرية', 'خصم مقارنة بالدفع الشهري', 'أرشيف بوصلة تنفس بحرية الكامل'], 2),
+    ARRAY['كل مميزات الباقة الشهرية', 'خصم مقارنة بالدفع الشهري', 'أرشيف بوصلة تنفس الكامل'], 2),
   ('annual', 'الباقة السنوية', 229.00, 365,
     ARRAY['كل مميزات باقة 6 أشهر', 'أكبر خصم متاح', 'أولوية بدعم العملاء'], 3);

@@ -24,26 +24,38 @@ const read = (f) => fs.readFileSync(f, "utf8");
 const files = execFileSync("git", ["ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean)
   .filter((f) => !/\.(png|ttf|woff2?|pdf|ico|svg|md)$/.test(f) && f !== "package-lock.json" && !f.startsWith("docs/") && !f.startsWith("admin-ui/"));
 const GUARDS = new Set(["test-33-system-mail-mime.mjs", "test-45-brand-naming.mjs"]);
+/* KANAF-ORD-0014 §2.2: ما طُبِّق على الإنتاج يبقى كما طُبِّق (يصف ما جرى)، فهو خارج الفحص النصّي —
+   وفحصه أنه **مطابق بايتاً لـmain 72551d3** (K1d). والترحيلتان اللتان تصحّحان القيم الحيّة تذكران
+   الاسم القديم في شروط البحث وحدها. */
+const APPLIED = ["db/migrations/007_content_and_notifications.sql", "db/migrations/008_rbac_audit_settings.sql",
+  "db/migrations/012_assistant_access_policy.sql", "db/migrations/DB006_invoice_presentation.sql", "db/schema.sql"];
+const NAME_FIX_MIGRATIONS = ["db/migrations/027_official_name.sql", "db/migrations/DB007_official_seller_suffix.sql"];
+const EXEMPT = new Set([...GUARDS, ...APPLIED, ...NAME_FIX_MIGRATIONS]);
 const hits = [];
 for (const f of files) {
-  if (GUARDS.has(f)) continue;
+  if (EXEMPT.has(f)) continue;
   let src; try { src = read(f); } catch { continue; }
   src.split("\n").forEach((l, i) => { if (KANAF.test(l)) hits.push(`${f}:${i + 1}`); });
 }
 const bundle = read("admin-ui/assets/app.js") + read("admin-ui/index.html");
 ok(`K1 🔴 لا «كنف» (بالتشكيل والتطويل) في ${files.length} ملفاً من الكود والزرع والاختبارات`, hits.length === 0, hits.join(" "));
 ok("K1b ولا في اللوحة المبنية (admin-ui)", !KANAF.test(bundle));
+const changedApplied = APPLIED.filter((f) => {
+  try { return execFileSync("git", ["show", `72551d3:${f}`], { encoding: "utf8" }) !== read(f); } catch { return false; }
+});
+ok("K1d 🔴 الترحيلات المطبَّقة على الإنتاج (007، 008، 012، DB006، schema.sql) مطابقة بايتاً لـmain 72551d3", changedApplied.length === 0, changedApplied.join(" "));
 ok("K1c حارسا الاختبار يذكرانها بحثاً لا عرضاً (test-33 M2 وحده خارج هذا الملف)", [...GUARDS].every((g) => fs.existsSync(g)));
 
 const plusSites = { "payments/routes.js": "اشتراك تنفس+ —", "invoicing/generate.js": "اشتراك تنفس+ —", "invoicing/pdf.js": "استرداد اشتراك تنفس+" };
 const plusMissing = Object.entries(plusSites).filter(([f, s]) => !read(f).includes(s)).map(([f]) => f);
 ok("K2 «اشتراك تنفس+» في وصف صفحة الدفع وسطر الفاتورة والإشعار الدائن", plusMissing.length === 0, plusMissing.join(" "));
-ok("K2b لا «كنف+» ولا «تنفس بحرية+» في أي ملف", !files.some((f) => !GUARDS.has(f) && /كنف\+|تنفس بحرية\+/.test(fs.existsSync(f) ? read(f) : "")));
+ok("K2b لا «كنف+» ولا «تنفس بحرية+» في أي ملف", !files.some((f) => !EXEMPT.has(f) && /كنف\+|تنفس بحرية\+/.test(fs.existsSync(f) ? read(f) : "")));
 
 ok("K3 سياسة الاسترداد في الفاتورة: «منصة تنفس بحرية»", read("invoicing/template.js").includes("الاشتراك في منصة تنفس بحرية خدمة رقمية"));
-const seed008 = read("db/migrations/008_rbac_audit_settings.sql"), seed006 = read("db/migrations/DB006_invoice_presentation.sql");
-ok("K3b قيم الزرع: الاسم التجاري وتذييل التسويق ولاحقة البائع بـ«تنفس بحرية»",
-  seed008.includes(`'"تنفس بحرية"'::jsonb`) && seed008.includes("مسجّل في تنفس بحرية.") && seed006.includes("'( خدمات منصة تنفس بحرية )'"));
+const m027 = read(NAME_FIX_MIGRATIONS[0]), mDB007 = read(NAME_FIX_MIGRATIONS[1]);
+ok("K3b القيم الحيّة تصحّحها 027 وDB007 (بشرط مطابقة حرفية، والسلوك على القاعدة في test-47)",
+  m027.includes(`'"تنفس بحرية"'::jsonb`) && m027.includes("مسجّل في تنفس بحرية.") && mDB007.includes("'( خدمات منصة تنفس بحرية )'")
+  && !/legal_name|zatca_invoice_number|document_number_token\s*=/.test(m027.replace(/--[^\n]*/g, "") + mDB007.replace(/--[^\n]*/g, "")));
 ok("K3c موجِّه المساعد يسمّي التطبيق «تنفس بحرية»", (read("index.js").match(/«تنفس بحرية»/g) || []).length === 2 && !/اسمه Kanaf|تطبيق Kanaf/.test(read("index.js")));
 
 /* ---------- T) القرار 5 ---------- */
@@ -51,7 +63,7 @@ const AR = "\u0621-\u064A\u0640\u064B-\u0652";
 const BARE = new RegExp(`(?<![${AR}])تنفس(?![${AR}])(?!\\s*بحرية)(?!\\+)`);
 const bare = [];
 for (const f of files) {
-  if (GUARDS.has(f)) continue;
+  if (EXEMPT.has(f)) continue;
   let src; try { src = read(f); } catch { continue; }
   // استثناء واحد: سجلّ نسخ نصّ الموافقة يقتبس نصّ v1 كما وافق عليه أصحابه (billing/autorenew.js).
   src.split("\n").forEach((l, i) => { if (BARE.test(l) && !(f === "billing/autorenew.js" && /2026-11-v1:/.test(l))) bare.push(`${f}:${i + 1}`); });
