@@ -110,7 +110,7 @@ export default function AuditLog({ me, toast }) {
     <div>
       <PageTitle
         title="سجل الإجراءات"
-        subtitle="كل تغيير في حالة النظام: من نفّذه، ومن أي قيمة إلى أي قيمة، وبأي سبب. لا يُعدَّل ولا يُحذف."
+        subtitle="كل تغيير في حالة النظام: من نفّذه، ومن أي قيمة إلى أي قيمة، ومتى. لا يُعدَّل ولا يُحذف."
       >
         {can(me, "exports:audit") && (
           <a href={api.exportUrl("audit-log", { action, entity, from, to })}>

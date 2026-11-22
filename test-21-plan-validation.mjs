@@ -10,9 +10,11 @@ const cookieParser = (await import("cookie-parser")).default;
 const jwt = (await import("jsonwebtoken")).default;
 const { query, pool } = await import("./db/pool.js");
 const { adminRouter } = await import("./admin/routes.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js"); // ملحق القرار 1: كما في index.js
+
 
 const R = []; const ok = (l, c, x = "") => R.push([l, !!c, x]);
-const app = express(); app.use(express.json()); app.use(cookieParser()); app.use("/admin", adminRouter);
+const app = express(); app.use(express.json()); app.use(cookieParser()); app.use("/admin", autoReasonMiddleware); app.use("/admin", adminRouter);
 const server = app.listen(4601); const B = "http://127.0.0.1:4601";
 let cookie;
 const as = async (role) => {
@@ -58,8 +60,9 @@ try {
   r = await call("PATCH", `/admin/plans/${id}`, { name: "  باقة معدلة  ", durationDays: 60, reason: "اختبار B-09" });
   ok("V1 a valid update succeeds (200), name trimmed", r.status === 200 && r.body.name === "باقة معدلة" && r.body.duration_days === 60);
   ok("V2 …with one audit row holding before/after", await audits("b09_test") === a0 + 1);
-  r = await call("PATCH", `/admin/plans/${id}`, { name: "x", reason: "" });
-  ok("V3 reason still required (400 reason_required)", r.status === 400 && r.body.error === "reason_required");
+  r = await call("PATCH", `/admin/plans/${id}`, { name: "باقة بلا سبب مكتوب", reason: "" });
+  const { rows: [v3] } = await query(`SELECT reason, old_value, new_value FROM admin_action_log WHERE action = 'plan_updated' ORDER BY created_at DESC LIMIT 1`);
+  ok("V3 (ملحق القرار 1) بلا سبب مكتوب → 200، والسجل بسبب تلقائي وقيمتَي قبل وبعد", r.status === 200 && v3?.reason === "تعديل باقة من اللوحة" && v3.old_value?.name === "باقة معدلة" && v3.new_value?.name === "باقة بلا سبب مكتوب", JSON.stringify(v3));
 
   await as("support");
   r = await call("PATCH", `/admin/plans/${id}`, { name: "دعم", reason: "اختبار" });

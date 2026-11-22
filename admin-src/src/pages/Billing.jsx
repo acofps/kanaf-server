@@ -6,7 +6,7 @@ import { UserLink } from "./Users.jsx";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync,
-  Field, Input, Select, SearchBox, Modal, Screen, ReasonPrompt,
+  Field, Input, Select, SearchBox, Modal, Screen, ConfirmPrompt,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -20,7 +20,7 @@ import {
    • لا منطق حسابات هنا: كل رقم من الخادم (نفس الاستعلامات التي يستعملها
      التصدير)، ولا تعديل يدوي لفاتورة أو دفعة.
    • كل تبويب يظهر بصلاحيته، وكل زر بصلاحيته — والخادم يفرض بمعزل عنها.
-   • كل إجراء يحرّك مالاً أو يغيّر حالة: سبب مكتوب (يُسجَّل في سجل
+   • كل إجراء يحرّك مالاً أو يغيّر حالة: تأكيد بنقرة، ويُسجَّل (في سجل
      التدقيق)، ونص يشرح أثره قبل التنفيذ، وزر يتعطّل أثناء التنفيذ.
    • الحمولة الخام لأحداث الدفع للمالك وحده (webhooks:view_payload)،
      والسر منزوع منها عند التخزين أصلاً — لا يُعرض حتى للمالك.
@@ -51,7 +51,7 @@ export default function Billing({ me, toast, route = [] }) {
   if (!tabs.length) return <Empty>صلاحيتك لا تشمل أي شاشة مالية.</Empty>;
   return (
     <div>
-      <PageTitle title="المالية" subtitle="الأرقام من الخادم مباشرة — لا تعديل يدوي لدفعة أو فاتورة. كل إجراء مالي بسبب مكتوب يُسجَّل في سجل التدقيق." />
+      <PageTitle title="المالية" subtitle="الأرقام من الخادم مباشرة — لا تعديل يدوي لدفعة أو فاتورة. كل إجراء مالي يُسجَّل في سجل التدقيق باسم منفّذه." />
       <div className="flex gap-1.5 mb-4 flex-wrap">
         {tabs.map((t) => (
           <Link key={t.key} to={`/billing/${t.key}`} aria-current={tab === t.key ? "page" : undefined} className="px-3 py-1.5 rounded-xl text-xs font-bold"
@@ -155,7 +155,7 @@ function Payments({ me, toast }) {
   const [status, setStatus] = useQueryState("status", "all");
   const state = useAsync(() => api.billingPayments({ page, search, status }), [page, search, status]);
   const [refundOf, setRefundOf] = useState(null);
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
   const rows = state.data?.payments || [];
   const t = state.data?.totals;
   const canRefund = can(me, "payments:refund");
@@ -194,11 +194,11 @@ function Payments({ me, toast }) {
                 <Td>
                   <div className="flex gap-1.5 justify-end">
                     {canReconcile && p.transaction_id && (
-                      <Button size="sm" variant="ghost" onClick={() => setReason({
+                      <Button size="sm" variant="ghost" onClick={() => setPending({
                         title: "مطابقة الدفعة مع المزوّد",
                         description: "يسأل المزوّد عن حالة هذه الدفعة الآن ويطبّقها هنا إن اختلفت (مثلاً: دفعة نجحت ولم يصلنا حدثها). لا يخصم ولا يسترد شيئاً. إن كانت الحالتان متطابقتين لا يتغيّر شيء.",
                         confirmLabel: "مطابقة",
-                        run: async (r) => { const res = await api.reconcilePayment(p.id, r); toast(`حالة المزوّد: ${res.providerStatus} · ${res.outcome}`); state.reload(); },
+                        run: async () => { const res = await api.reconcilePayment(p.id); toast(`حالة المزوّد: ${res.providerStatus} · ${res.outcome}`); state.reload(); },
                       })}><RefreshCw size={12} /> مطابقة</Button>
                     )}
                     {canRefund && ["paid", "partially_refunded"].includes(p.status) && refundable > 0 && (
@@ -213,29 +213,27 @@ function Payments({ me, toast }) {
       )}
       <Pager page={page} totalPages={state.data?.totalPages} total={state.data?.total} onPage={setPage} />
       <RefundModal payment={refundOf} onClose={() => setRefundOf(null)} onDone={(res) => { toast(`تم الاسترداد: ${res.amount} ر.س${res.creditNoteNumber ? ` · إشعار دائن ${res.creditNoteNumber}` : ""}`); state.reload(); }} />
-      <ReasonPrompt open={!!reason} title={reason?.title || ""} description={reason?.description}
-        confirmLabel={reason?.confirmLabel} onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)} />
+      <ConfirmPrompt open={!!pending} title={pending?.title || ""} description={pending?.description}
+        confirmLabel={pending?.confirmLabel} onConfirm={() => pending.run()} onClose={() => setPending(null)} />
     </Card>
   );
 }
 
 function RefundModal({ payment, onClose, onDone }) {
   const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  React.useEffect(() => { setAmount(""); setReason(""); setConfirm(false); setErr(""); setBusy(false); }, [payment?.id]);
+  React.useEffect(() => { setAmount(""); setConfirm(false); setErr(""); setBusy(false); }, [payment?.id]);
   if (!payment) return null;
   const n = amount === "" ? payment.refundable : Number(amount);
   const kind = amount === "" || n >= payment.refundable ? "كامل المتبقّي" : "جزئي";
   const submit = async () => {
     if (busy) return;
-    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
     if (!(n > 0) || n > payment.refundable) { setErr(`المبلغ بين 0.01 و${payment.refundable.toFixed(2)}.`); return; }
     if (!confirm) { setErr("أكّد أنك تفهم أثر الاسترداد."); return; }
     setBusy(true); setErr("");
-    try { const res = await api.refundPayment(payment.id, reason.trim(), amount === "" ? undefined : n); onDone(res); onClose(); }
+    try { const res = await api.refundPayment(payment.id, amount === "" ? undefined : n); onDone(res); onClose(); }
     catch (e) { setErr(e?.arabic || "تعذّر الاسترداد."); }
     finally { setBusy(false); }
   };
@@ -252,7 +250,6 @@ function RefundModal({ payment, onClose, onDone }) {
       <Field label="المبلغ بالريال" hint="اتركه فارغاً لاسترداد كامل المتبقّي.">
         <Input type="number" step="0.01" min="0.01" max={payment.refundable} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={payment.refundable.toFixed(2)} dir="ltr" />
       </Field>
-      <Field label="السبب" hint="يُحفظ في سجل التدقيق باسمك."><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
       <label className="flex items-center gap-2 text-xs mt-2" style={{ color: C.text }}>
         <input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />
         أؤكد استرداد <b dir="ltr">{Number.isFinite(n) ? money(n, payment.currency) : "—"}</b> ({kind}).
@@ -305,7 +302,7 @@ function Events({ me, toast }) {
   const [page, setPage] = useQueryState("page", 1);
   const [status, setStatus] = useQueryState("status", "all");
   const state = useAsync(() => api.webhookEvents({ page, status }), [page, status]);
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
   const rows = state.data?.events || [];
   const summary = state.data?.summary || {};
   return (
@@ -331,11 +328,11 @@ function Events({ me, toast }) {
                 <div className="flex gap-1.5 justify-end">
                   {can(me, "webhooks:view_payload") && <Link to={`/billing/events/${e.id}`}><Button size="sm" variant="ghost"><Eye size={12} /> الحمولة</Button></Link>}
                   {can(me, "webhooks:replay") && (
-                    <Button size="sm" variant="warn" onClick={() => setReason({
+                    <Button size="sm" variant="warn" onClick={() => setPending({
                       title: "إعادة معالجة حدث دفع",
                       description: "يعيد تمرير هذا الحدث المسجَّل على منطق الدفع نفسه. آمن من التكرار: الدفعة والفاتورة والاشتراك لا تُنشأ مرتين (قيود فريدة). يُستعمل بعد إصلاح سبب فشل (مثل إعداد ضريبي ناقص). لا يتصل بالمزوّد ولا يحرّك مالاً.",
                       confirmLabel: "إعادة المعالجة",
-                      run: async (r) => { const res = await api.replayWebhookEvent(e.id, r); toast(`أُعيدت المعالجة: ${res.outcome}`); state.reload(); },
+                      run: async () => { const res = await api.replayWebhookEvent(e.id); toast(`أُعيدت المعالجة: ${res.outcome}`); state.reload(); },
                     })}><RotateCcw size={12} /> إعادة</Button>
                   )}
                 </div>
@@ -345,8 +342,8 @@ function Events({ me, toast }) {
         </Table>
       )}
       <Pager page={page} totalPages={state.data?.totalPages} total={state.data?.total} onPage={setPage} />
-      <ReasonPrompt open={!!reason} title={reason?.title || ""} description={reason?.description}
-        confirmLabel={reason?.confirmLabel} onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)} />
+      <ConfirmPrompt open={!!pending} title={pending?.title || ""} description={pending?.description}
+        confirmLabel={pending?.confirmLabel} onConfirm={() => pending.run()} onClose={() => setPending(null)} />
     </Card>
   );
 }
@@ -367,7 +364,7 @@ const fmtMoneyObj = (o) => {
 function Holds({ me, toast }) {
   const [status, setStatus] = useQueryState("status", "open");
   const state = useAsync(() => api.paymentHolds(status), [status]);
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
   const rows = state.data?.holds || [];
   const canAct = can(me, "payments:reconcile");
   return (
@@ -395,17 +392,17 @@ function Holds({ me, toast }) {
               <Td>
                 {canAct && h.status === "open" && (
                   <div className="flex gap-1.5 justify-end">
-                    <Button size="sm" variant="ghost" onClick={() => setReason({
+                    <Button size="sm" variant="ghost" onClick={() => setPending({
                       title: "إعادة فحص حدث دفع محجوز",
                       description: "يقرأ هذه الدفعة من المزوّد الآن ويمرّرها على المحقق نفسه: إن طابقت مبلغ الفاتورة وعملتها وحالتها تُطبَّق كأي دفعة سليمة (تفعيل ووثيقة) ويُغلق الحجز؛ وإن لم تطابق أو تعذّر الوصول للمزوّد يبقى محجوزاً. لا يخصم ولا يسترد ولا يتجاوز التحقق.",
                       confirmLabel: "إعادة الفحص",
-                      run: async (r) => { const res = await api.recheckPaymentHold(h.id, r); toast(res.held ? `ما زال محجوزاً: ${res.holdReason}` : `طابق: ${res.outcome}`); state.reload(); },
+                      run: async () => { const res = await api.recheckPaymentHold(h.id); toast(res.held ? `ما زال محجوزاً: ${res.holdReason}` : `طابق: ${res.outcome}`); state.reload(); },
                     })}><RefreshCw size={12} /> إعادة الفحص</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setReason({
+                    <Button size="sm" variant="ghost" onClick={() => setPending({
                       title: "إغلاق الحدث المحجوز بلا أثر مالي",
                       description: "يغلق السجل فقط (مثلاً: حدث مزيّف أو مكرر ثبت ذلك لدى المزوّد). لا يفعّل اشتراكاً ولا يصدر وثيقة ولا يسترد. إن كان مال قد حُصِّل فعلاً فالاسترداد يتم من المزوّد بإجراء منفصل.",
                       confirmLabel: "إغلاق",
-                      run: async (r) => { await api.dismissPaymentHold(h.id, r); toast("أُغلق بلا أثر مالي"); state.reload(); },
+                      run: async () => { await api.dismissPaymentHold(h.id); toast("أُغلق بلا أثر مالي"); state.reload(); },
                     })}>إغلاق</Button>
                   </div>
                 )}
@@ -414,8 +411,8 @@ function Holds({ me, toast }) {
           ))}
         </Table>
       )}
-      <ReasonPrompt open={!!reason} title={reason?.title || ""} description={reason?.description}
-        confirmLabel={reason?.confirmLabel} onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)} />
+      <ConfirmPrompt open={!!pending} title={pending?.title || ""} description={pending?.description}
+        confirmLabel={pending?.confirmLabel} onConfirm={() => pending.run()} onClose={() => setPending(null)} />
     </Card>
   );
 }

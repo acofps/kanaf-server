@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { api } from "../api.js";
 import { C, fmtDateTime } from "../theme.js";
-import { Card, PageTitle, Button, Badge, SearchBox, Spinner, Empty, ErrorBar, ReasonPrompt, Table, Td, Pager, useAsync } from "../ui.jsx";
+import { Card, PageTitle, Button, Badge, SearchBox, Spinner, Empty, ErrorBar, ConfirmPrompt, Table, Td, Pager, useAsync } from "../ui.jsx";
 import { useQueryState } from "../router.js";
 
 /* ============================================================
@@ -58,9 +58,9 @@ export default function SystemErrors({ toast }) {
             </>
           )}
       </Card>
-      <ReasonPrompt open={!!del} title="إزالة خطأ عولج" description="يُحذف الصف من السجل، ويُسجَّل الإجراء في سجل الإجراءات."
+      <ConfirmPrompt open={!!del} title="إزالة خطأ عولج" description="يُحذف الصف من السجل، ويُسجَّل الإجراء في سجل الإجراءات."
         onClose={() => setDel(null)}
-        onConfirm={async (reason) => { await api.clearSystemError(del.id, reason); toast("أُزيل."); state.reload(); }} />
+        onConfirm={async () => { await api.clearSystemError(del.id); toast("أُزيل."); state.reload(); }} />
     </div>
   );
 }

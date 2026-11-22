@@ -32,7 +32,7 @@ import { Link, navigate } from "../router.js";
    تحته، بل في مكان آخر. الأدوار تأتي من الخادم لا من قائمة هنا.
 
    ------------------------------------------------------------
-   وكل فعل هنا يشترط سبباً
+   وكل فعل هنا يُسجَّل بالقيمتين، والسبب يولّده الخادم (ملحق KANAF-ORD-0013، القرار 1)
    ------------------------------------------------------------
    لأن هذه الشاشة تقرر **من يقدر على ماذا**. وترقية حساب إلى مالك
    كانت تمرّ بلا أثر واحد في سجل التدقيق قبل هذه المرحلة.
@@ -56,7 +56,7 @@ export default function AdminUsers({ me, toast, route = [] }) {
   const canInvite = can(me, "admins:invite");
 
   /* KANAF-ORD-0013 §3.2 و§5: الإضافة والدعوة والتعديل صفحات بعناوينها.
-     ويبقى نافذةً: إعادة الإرسال/الضبط (سبب قبل إجراء حساس)، وعرض رابط لمرة واحدة
+     ويبقى نافذةً: إعادة الإرسال/الضبط (تأكيد قبل إجراء حساس)، وعرض رابط لمرة واحدة
      (سرّ مؤقت لا يُوضع في عنوان ولا في سجل التصفّح). */
   if (route[0] === "new" && canInvite) {
     return <AddAdmin pages={pages} onClose={() => navigate("/admin-users")}
@@ -87,7 +87,7 @@ export default function AdminUsers({ me, toast, route = [] }) {
     <div>
       <PageTitle
         title="حسابات الإدارة"
-        subtitle="الصلاحية تُطبَّق في الخادم لا بإخفاء الأزرار. وكل تغيير هنا يُسجَّل بسبب مكتوب."
+        subtitle="الصلاحية تُطبَّق في الخادم لا بإخفاء الأزرار. وكل تغيير هنا يُسجَّل باسمك وبالقيمتين قبل وبعد."
       >
         {canInvite && (
           <div className="flex gap-2">
@@ -208,15 +208,13 @@ function InviteAdmin({ roles, onClose, onDone }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("support");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const save = async () => {
     if (!name.trim() || !email.trim()) { setErr("الاسم والبريد مطلوبان."); return; }
-    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
     setBusy(true); setErr("");
-    try { onDone(await api.inviteAdminUser({ name: name.trim(), email: email.trim(), role, reason: reason.trim() })); }
+    try { onDone(await api.inviteAdminUser({ name: name.trim(), email: email.trim(), role })); }
     catch (e) { setErr(e?.arabic || "تعذّرت الدعوة."); }
     finally { setBusy(false); }
   };
@@ -232,9 +230,6 @@ function InviteAdmin({ roles, onClose, onDone }) {
           <Select value={role} onChange={(e) => setRole(e.target.value)}>
             {roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r] || r}</option>)}
           </Select>
-        </Field>
-        <Field label="السبب" hint="لماذا يُنشأ هذا الحساب؟ يُحفظ في سجل التدقيق.">
-          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <p className="text-[11px] leading-6" style={{ color: C.textFaint }}>
           الحساب لا يعمل قبل أن يفتح صاحبه الرابط ويختار كلمة مروره. ولا أحد غيره يعرفها — ولا أنت.
@@ -254,13 +249,11 @@ function EditAdmin({ admin, roles, pages, isSelf, canPages, onClose, onDone }) {
   const [active, setActive] = useState(!!admin.active);
   const [grants, setGrants] = useState(Array.isArray(admin.page_grants) ? admin.page_grants : null);
   const [phone, setPhone] = useState(admin.phone || "");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const save = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
-    const patch = { reason: reason.trim() };
+    const patch = {};
     if (role !== admin.role) patch.role = role;
     if (active !== !!admin.active) patch.active = active;
     const grantsChanged = JSON.stringify(grants) !== JSON.stringify(Array.isArray(admin.page_grants) ? admin.page_grants : null);
@@ -270,7 +263,7 @@ function EditAdmin({ admin, roles, pages, isSelf, canPages, onClose, onDone }) {
     try {
       if (patch.role !== undefined || patch.active !== undefined) await api.updateAdminUser(admin.id, patch);
       if (grantsChanged || phoneChanged) {
-        await api.updateAdminPages(admin.id, { ...(grantsChanged ? { pages: grants } : {}), ...(phoneChanged ? { phone: phone || null } : {}), reason: reason.trim() });
+        await api.updateAdminPages(admin.id, { ...(grantsChanged ? { pages: grants } : {}), ...(phoneChanged ? { phone: phone || null } : {}) });
       }
       onDone();
     }
@@ -306,7 +299,6 @@ function EditAdmin({ admin, roles, pages, isSelf, canPages, onClose, onDone }) {
             <PageGrants pages={pages} value={grants} onChange={setGrants} disabled={isSelf} />
           </>
         )}
-        <Field label="السبب"><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <ErrorBar error={err} onClose={() => setErr("")} />
         <div className="flex gap-2">
           <Button onClick={save} busy={busy}>حفظ</Button>
@@ -319,17 +311,15 @@ function EditAdmin({ admin, roles, pages, isSelf, canPages, onClose, onDone }) {
 
 function CredentialLink({ admin, mode, onClose, onDone }) {
   const isResend = mode === "resend";
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const go = async () => {
-    if (!isResend && !reason.trim()) { setErr("السبب مطلوب."); return; }
     setBusy(true); setErr("");
     try {
       onDone(isResend
-        ? await api.resendInvite(admin.id, reason.trim() || "إعادة إرسال دعوة")
-        : await api.resetAdminPassword(admin.id, reason.trim()));
+        ? await api.resendInvite(admin.id)
+        : await api.resetAdminPassword(admin.id));
     } catch (e) { setErr(e?.arabic || "تعذّر التنفيذ."); }
     finally { setBusy(false); }
   };
@@ -341,7 +331,6 @@ function CredentialLink({ admin, mode, onClose, onDone }) {
           ? "يُنشأ رابط جديد ويُلغى القديم. الحساب يبقى معطّلاً حتى يفتحه صاحبه."
           : "يُرسَل رابط لمرة واحدة يختار به صاحب الحساب كلمة مرور جديدة. كلمته الحالية تبقى تعمل حتى يستعمله."}
       </p>
-      <Field label="السبب" hint="يُحفظ في سجل التدقيق."><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
       <ErrorBar error={err} onClose={() => setErr("")} />
       <div className="flex gap-2 mt-4">
         <Button onClick={go} busy={busy}>{isResend ? "إعادة الإرسال" : "إرسال رابط الاستعادة"}</Button>
@@ -385,7 +374,7 @@ function PageGrants({ pages, value, onChange, disabled }) {
 
 /* الإضافة المباشرة — KANAF-ORD-0013 §5. «المهام» دوران قائمان: إدارية → مدير، مالية → محاسب. */
 function AddAdmin({ pages, onClose, onDone }) {
-  const [f, setF] = useState({ name: "", email: "", phone: "", password: "", reason: "" });
+  const [f, setF] = useState({ name: "", email: "", phone: "", password: "" });
   const [duties, setDuties] = useState(["finance"]);
   const [grants, setGrants] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -396,11 +385,10 @@ function AddAdmin({ pages, onClose, onDone }) {
     if (!f.name.trim() || !f.email.trim()) { setErr("اسم المستخدم والبريد مطلوبان."); return; }
     if (!duties.length) { setErr("اختر مهمة واحدة على الأقل."); return; }
     if (grants !== null && !grants.length) { setErr("أشّر على صفحة واحدة على الأقل، أو اختر «كل ما يسمح به الدور»."); return; }
-    if (!f.reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
     setBusy(true); setErr("");
     try {
       onDone(await api.createAdminDirect({ name: f.name.trim(), email: f.email.trim(), phone: f.phone.trim() || null,
-        password: f.password, duties, pages: grants, reason: f.reason.trim() }));
+        password: f.password, duties, pages: grants }));
     } catch (e) { setErr(e?.arabic || "تعذّر الإنشاء."); }
     finally { setBusy(false); }
   };
@@ -418,7 +406,6 @@ function AddAdmin({ pages, onClose, onDone }) {
           </div>
         </Field>
         <PageGrants pages={pages} value={grants} onChange={setGrants} />
-        <Field label="السبب"><Textarea rows={2} value={f.reason} onChange={set("reason")} /></Field>
         <ErrorBar error={err} onClose={() => setErr("")} />
         <div className="flex gap-2">
           <Button onClick={save} busy={busy}>إنشاء الحساب</Button>

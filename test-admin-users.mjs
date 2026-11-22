@@ -24,6 +24,7 @@ const log = (label, cond, extra = "") => results.push([label, cond, extra]);
 // CURRENT_ADMIN = null means "send no cookie at all".
 let CURRENT_ADMIN = null;
 const { adminRouter } = await import("./admin/routes.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js");
 
 function adminCookie() {
   if (!CURRENT_ADMIN) return null;
@@ -94,6 +95,7 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(express.json());
 app.use(cookieParser());
+app.use("/admin", autoReasonMiddleware); // ملحق القرار 1: كما في index.js
 app.use("/admin", adminRouter);
 app.use("/api/auth", authRouter);
 
@@ -384,11 +386,14 @@ async function run() {
 
   // ---------- TEST 7 — Validation ----------
   CURRENT_ADMIN = { id: ADMIN_ID, role: "admin" };
+  // ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب — الخادم يولّد سبباً غير فارغ من الإجراء.
   r = await post(`/admin/users/${target.id}/suspend`, {});
-  log("T7 missing reason rejected", r.status === 400 && r.body.error === "reason_required", JSON.stringify(r.body));
+  const { rows: [t7] } = await query(`SELECT reason, old_value, new_value FROM admin_action_log WHERE action = 'suspend_account' AND entity_id = $1 ORDER BY created_at DESC LIMIT 1`, [target.id]);
+  log("T7 no written reason → 200, logged with an automatic reason and before/after", r.status === 200 && t7?.reason === "تعليق حساب العميل من اللوحة" && t7.old_value?.account_status === "active" && t7.new_value?.account_status === "suspended", JSON.stringify(t7));
 
-  r = await post(`/admin/users/${target.id}/suspend`, { reason: "   " });
-  log("T7 whitespace-only reason rejected", r.status === 400, String(r.status));
+  r = await post(`/admin/users/${target.id}/restore`, { reason: "   " });
+  const { rows: [t7b] } = await query(`SELECT reason FROM admin_action_log WHERE entity_id = $1 ORDER BY created_at DESC LIMIT 1`, [target.id]);
+  log("T7 whitespace-only reason → treated as none: automatic reason, never blank", r.status === 200 && t7b?.reason === "رفع تعليق حساب العميل من اللوحة", JSON.stringify(t7b));
 
   r = await post(`/admin/users/${target.id}/suspend`, { reason: "x".repeat(501) });
   log("T7 over-long reason rejected", r.status === 400 && r.body.error === "reason_too_long", String(r.status));

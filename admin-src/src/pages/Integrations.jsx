@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { KeyRound, PlugZap, Trash2, ShieldCheck } from "lucide-react";
 import { api } from "../api.js";
 import { C, fmtDateTime } from "../theme.js";
-import { Card, PageTitle, Button, Badge, Spinner, ErrorBar, Screen, Field, Input, useAsync, ReasonPrompt } from "../ui.jsx";
+import { Card, PageTitle, Button, Badge, Spinner, ErrorBar, Screen, Field, Input, useAsync, ConfirmPrompt } from "../ui.jsx";
 import { Link, navigate } from "../router.js";
 
 /* ============================================================
@@ -82,24 +82,23 @@ function IntegrationList({ toast, state }) {
         </div>
       )}
 
-      <ReasonPrompt open={!!del} title="حذف المفتاح" danger onClose={() => setDel(null)}
-        onConfirm={async (reason) => { await api.deleteIntegrationKey(del.service, del.key, reason); setDel(null); state.reload(); }} />
-      <ReasonPrompt open={!!test} title="فحص الاتصال" description="قراءة واحدة من المزوّد. تُسجَّل النتيجة في سجل الإجراءات بلا أي مفتاح."
+      <ConfirmPrompt open={!!del} title="حذف المفتاح" danger onClose={() => setDel(null)}
+        onConfirm={async () => { await api.deleteIntegrationKey(del.service, del.key); setDel(null); state.reload(); }} />
+      <ConfirmPrompt open={!!test} title="فحص الاتصال" description="قراءة واحدة من المزوّد. تُسجَّل النتيجة في سجل الإجراءات بلا أي مفتاح."
         onClose={() => setTest(null)}
-        onConfirm={async (reason) => { const r = await api.testIntegration(test, reason); setResults((x) => ({ ...x, [test]: r })); setTest(null); }} />
+        onConfirm={async () => { const r = await api.testIntegration(test); setResults((x) => ({ ...x, [test]: r })); setTest(null); }} />
     </div>
   );
 }
 
 function SetModal({ target, onClose, onDone }) {
   const [value, setValue] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const close = () => { setValue(""); setReason(""); setErr(""); onClose(); };
+  const close = () => { setValue(""); setErr(""); onClose(); };
   const submit = async () => {
     setBusy(true); setErr("");
-    try { await api.setIntegrationKey(target.service, target.key, value, reason); setValue(""); setReason(""); onDone(); }
+    try { await api.setIntegrationKey(target.service, target.key, value); setValue(""); onDone(); }
     catch (e) { setErr(e?.arabic || e?.code || "تعذّر الحفظ."); } finally { setBusy(false); }
   };
   return (
@@ -110,9 +109,8 @@ function SetModal({ target, onClose, onDone }) {
           تُشفَّر القيمة في الخادم قبل التخزين، ولا تعود إلى أي شاشة بعد الحفظ — يظهر آخر أربعة محارف فقط.
         </div>
         <Field label="القيمة"><Input type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} dir="ltr" /></Field>
-        <Field label="السبب" hint="يُسجَّل في سجل الإجراءات بلا القيمة."><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <ErrorBar error={err} />
-        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!value.trim() || !reason.trim()}>حفظ مشفَّراً</Button><Button variant="ghost" onClick={close}>إلغاء</Button></div>
+        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!value.trim()}>حفظ مشفَّراً</Button><Button variant="ghost" onClick={close}>إلغاء</Button></div>
       </div>
     </Screen>
   );

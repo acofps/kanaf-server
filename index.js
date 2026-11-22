@@ -14,6 +14,7 @@ import { systemErrorsRouter } from "./admin/system-errors.js";
 import { membersRouter } from "./admin/members.js";
 import { messageCatalogRouter } from "./admin/message-catalog.js";
 import { adminAutorenewRouter } from "./admin/autorenew.js";
+import { autoReasonMiddleware } from "./admin/auto-reason.js";
 import { autorenewRouter } from "./billing/autorenew-routes.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
@@ -976,6 +977,9 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
    فيه **بلا مصادقة** بالضرورة (المدعوّ لا حساب له بعد، ومن نسي
    كلمة مروره لا يقدر يثبت هويته إلا بالرمز)، فلا يجوز أن يسبقهما
    موجّه يفرض كوكي إدارة. */
+/* ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب في أي موضع. الخادم يولّده من الإجراء وهدفه
+   قبل أي معالج (admin/auto-reason.js)، فيبقى admin_action_log.reason غير فارغ بلا مطالبة. */
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminAccountsRouter);
 app.use("/admin", adminExportsRouter);
 app.use("/admin", adminSettingsRouter);

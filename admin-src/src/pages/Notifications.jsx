@@ -8,7 +8,7 @@ import {
 } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox,
-  Spinner, Empty, ErrorBar, Screen, ReasonPrompt, Table, Td, useAsync,
+  Spinner, Empty, ErrorBar, Screen, ConfirmPrompt, Table, Td, useAsync,
 } from "../ui.jsx";
 import { Link, navigate, useQueryState } from "../router.js";
 import { UserLink } from "./Users.jsx";
@@ -52,7 +52,7 @@ function CampaignList({ me, toast }) {
   const [offset, setOffset] = useQueryState("offset", 0);
   const limit = 25;
 
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
 
   const list = useAsync(
     () => api.listCampaigns({ limit, offset, status, channel, search }),
@@ -66,7 +66,7 @@ function CampaignList({ me, toast }) {
   const reloadAll = () => { list.reload(); sched.reload(); };
 
   const doSend = (c, retry = false) =>
-    setReason({
+    setPending({
       title: retry ? `إعادة محاولة الفاشلة في «${c.title}»` : `إرسال «${c.title}»`,
       /* B-11: الخادم يعيد محاولة صفوف التسليم الفاشلة وحدها لنفس الجمهور الأصلي؛ الناجح لا يُعاد،
          ومن ألغى البريد التسويقي بعد الإرسال الأول يُتجاوز في البريد. */
@@ -74,8 +74,8 @@ function CampaignList({ me, toast }) {
         ? "تُعاد محاولة التسليمات الفاشلة فقط، لنفس المستلمين الأصليين — الرسائل الناجحة لا تُرسل مرة ثانية، ومن ألغى البريد التسويقي يُتجاوز. يُسجَّل باسمك في سجل التدقيق."
         : "الإرسال لا يمكن التراجع عنه. يُسجَّل باسمك في سجل التدقيق.",
       confirmLabel: retry ? "إعادة المحاولة" : "إرسال الآن",
-      run: async (r) => {
-        const res = await api.sendCampaign(c.id, r);
+      run: async () => {
+        const res = await api.sendCampaign(c.id);
         /* skipped في الرد رقم (عدد المتجاوَزين) أو true (الحملة نفسها لم
            تُنفَّذ) — كان يُقرأ بولياناً فيظهر «تُخطّيت: undefined». و202 =
            الإرسال مستمر في الخلفية (KANAF-ORD-0001 R15-13). */
@@ -91,12 +91,12 @@ function CampaignList({ me, toast }) {
     });
 
   const doCancel = (c) =>
-    setReason({
+    setPending({
       title: `إلغاء «${c.title}»`,
       description: "الإلغاء متاح للمسودات والمجدولة فقط، لا لحملة نُفّذت.",
       confirmLabel: "إلغاء الحملة",
       danger: true,
-      run: async (r) => { await api.cancelCampaign(c.id, r); toast("أُلغيت الحملة."); reloadAll(); },
+      run: async () => { await api.cancelCampaign(c.id); toast("أُلغيت الحملة."); reloadAll(); },
     });
 
   const [sweeping, setSweeping] = useState(false);
@@ -232,14 +232,14 @@ function CampaignList({ me, toast }) {
       </Card>
 
 
-      <ReasonPrompt
-        open={!!reason}
-        title={reason?.title || ""}
-        description={reason?.description}
-        confirmLabel={reason?.confirmLabel}
-        danger={reason?.danger}
-        onConfirm={(r) => reason.run(r)}
-        onClose={() => setReason(null)}
+      <ConfirmPrompt
+        open={!!pending}
+        title={pending?.title || ""}
+        description={pending?.description}
+        confirmLabel={pending?.confirmLabel}
+        danger={pending?.danger}
+        onConfirm={() => pending.run()}
+        onClose={() => setPending(null)}
       />
     </div>
   );

@@ -5,7 +5,7 @@ import { Link, navigate, useQueryState } from "../router.js";
 import { C, CONTENT_TYPE_LABEL, REVIEW_LABEL, can, fmtDateTime, toIsoWithOffset, toLocalInput } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Modal, Screen, ReasonPrompt, Table, Td, Pager, useAsync,
+  ErrorBar, Modal, Screen, ConfirmPrompt, Table, Td, Pager, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -52,7 +52,7 @@ function ContentList({ me, toast }) {
   const [page, setPage] = useQueryState("page", 1);
   const pageSize = 25;
 
-  const [reason, setReason] = useState(null);   // { title, description, danger, run }
+  const [pending, setPending] = useState(null);   // { title, description, danger, run }
   const [bulk, setBulk] = useState(false);
   const [err, setErr] = useState("");
 
@@ -152,30 +152,30 @@ function ContentList({ me, toast }) {
                     <Td>
                       <div className="flex gap-1.5 flex-wrap justify-end">
                         {canReview && it.clinical_review_status !== "approved" && (
-                          <Button size="sm" variant="good" onClick={() => setReason({
+                          <Button size="sm" variant="good" onClick={() => setPending({
                             title: `اعتماد «${it.title || it.content_key}»`,
                             description: "اعتماد سريري يعني أن هذا النص صالح للعرض على شخص قد يكون في ضائقة.",
-                            run: (r) => run(() => api.reviewContent(it.id, "approved", r), "اعتُمد المحتوى."),
+                            run: () => run(() => api.reviewContent(it.id, "approved"), "اعتُمد المحتوى."),
                           })}><Check size={12} /> اعتماد</Button>
                         )}
                         {canReview && it.clinical_review_status !== "rejected" && (
-                          <Button size="sm" variant="ghost" onClick={() => setReason({
+                          <Button size="sm" variant="ghost" onClick={() => setPending({
                             title: `رفض «${it.title || it.content_key}»`,
                             description: "الرفض ينزل مفتاح الإطلاق معه، ولا يمسّه النشر الجماعي بعدها.",
                             danger: true,
-                            run: (r) => run(() => api.reviewContent(it.id, "rejected", r), "رُفض المحتوى."),
+                            run: () => run(() => api.reviewContent(it.id, "rejected"), "رُفض المحتوى."),
                           })}><X size={12} /> رفض</Button>
                         )}
                         {canReview && it.clinical_review_status === "approved" && (
                           <Button size="sm" variant={it.launch_enabled ? "warn" : "primary"}
-                            onClick={() => setReason({
+                            onClick={() => setPending({
                               title: it.launch_enabled ? `إيقاف «${it.title}»` : `نشر «${it.title}»`,
                               description: it.launch_enabled
                                 ? "سيختفي من التطبيق فوراً لكل المستخدمين."
                                 : "سيظهر في التطبيق فوراً لكل من تسمح له طبقته.",
                               danger: it.launch_enabled,
-                              run: (r) => run(
-                                () => api.toggleContentLaunch(it.id, !it.launch_enabled, r),
+                              run: () => run(
+                                () => api.toggleContentLaunch(it.id, !it.launch_enabled),
                                 it.launch_enabled ? "أُوقف المحتوى." : "نُشر المحتوى."
                               ),
                             })}>
@@ -195,13 +195,13 @@ function ContentList({ me, toast }) {
           )}
       </Card>
 
-      <ReasonPrompt
-        open={!!reason}
-        title={reason?.title || ""}
-        description={reason?.description}
-        danger={reason?.danger}
-        onConfirm={(r) => reason.run(r)}
-        onClose={() => setReason(null)}
+      <ConfirmPrompt
+        open={!!pending}
+        title={pending?.title || ""}
+        description={pending?.description}
+        danger={pending?.danger}
+        onConfirm={() => pending.run()}
+        onClose={() => setPending(null)}
       />
 
 
@@ -225,7 +225,6 @@ function EditPresentation({ item, me, onClose, onDone }) {
   const [category, setCategory] = useState(item.category || "");
   const [order, setOrder] = useState(item.display_order ?? 0);
   const [tier, setTier] = useState(item.subscription_tier || "free");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const canTier = can(me, "content:change_tier");
@@ -233,7 +232,7 @@ function EditPresentation({ item, me, onClose, onDone }) {
   const save = async () => {
     setBusy(true); setErr("");
     try {
-      const patch = { title, category, displayOrder: Number(order), reason };
+      const patch = { title, category, displayOrder: Number(order) };
       if (canTier && tier !== item.subscription_tier) patch.subscriptionTier = tier;
       await api.updateContentPresentation(item.content_type, item.content_key, patch);
       onDone();
@@ -253,7 +252,6 @@ function EditPresentation({ item, me, onClose, onDone }) {
             <option value="plus">تنفس+</option>
           </Select>
         </Field>
-        <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="اختياري" /></Field>
         <ErrorBar error={err} />
         <div className="flex gap-2 pt-1">
           <Button onClick={save} busy={busy}>حفظ</Button>
@@ -277,7 +275,6 @@ function EditPresentation({ item, me, onClose, onDone }) {
 function ScheduleContent({ item, onClose, onDone }) {
   const [pub, setPub] = useState(toLocalInput(item.publish_at));
   const [unpub, setUnpub] = useState(toLocalInput(item.unpublish_at));
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -287,7 +284,6 @@ function ScheduleContent({ item, onClose, onDone }) {
       await api.scheduleContent(item.content_type, item.content_key, {
         publishAt: toIsoWithOffset(pub),
         unpublishAt: toIsoWithOffset(unpub),
-        reason,
       });
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّرت الجدولة."); }
@@ -306,7 +302,6 @@ function ScheduleContent({ item, onClose, onDone }) {
         <Field label="يختفي عند" hint="اتركه فارغاً ليبقى بلا نهاية.">
           <Input type="datetime-local" value={unpub} onChange={(e) => setUnpub(e.target.value)} />
         </Field>
-        <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="اختياري" /></Field>
         <ErrorBar error={err} />
         <div className="flex gap-2 pt-1">
           <Button onClick={save} busy={busy}>حفظ الجدولة</Button>
@@ -358,15 +353,13 @@ function HistoryScreen({ item, onClose }) {
    ------------------------------------------------------------ */
 function BulkPublish({ open, onClose, onDone }) {
   const [scope, setScope] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const submit = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     setBusy(true); setErr("");
     try {
-      const body = { reason: reason.trim() };
+      const body = {};
       if (scope) body.type = scope; else body.all = true;
       const r = await api.bulkPublish(body);
       onDone(r.published ?? 0);
@@ -388,9 +381,6 @@ function BulkPublish({ open, onClose, onDone }) {
             <option value="">كل المحتوى</option>
             {TYPES.filter(Boolean).map((t) => <option key={t} value={t}>{CONTENT_TYPE_LABEL[t]}</option>)}
           </Select>
-        </Field>
-        <Field label="السبب" hint="يُكتب في سجل النسخ لكل عنصر وفي سجل التدقيق.">
-          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <ErrorBar error={err} />
         <div className="flex gap-2">

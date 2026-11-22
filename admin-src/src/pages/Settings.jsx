@@ -107,12 +107,10 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
   const [includes, setIncludes] = useState(!!v.prices_include_vat);
   const [currency, setCurrency] = useState(v.currency || "SAR");
   const [tz, setTz] = useState(v.reporting_timezone || "Asia/Riyadh");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const save = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
     if (String(vatRate).trim() === "") { setErr("النسبة مطلوبة: 0.15 لخمسة عشر بالمئة."); return; }   // Number("") = 0
     const r = Number(vatRate);
     if (!Number.isFinite(r) || r < 0 || r >= 1) {
@@ -121,9 +119,8 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
     setBusy(true); setErr("");
     try {
       await api.saveBillingSettings({
-        vatRate: r, pricesIncludeVat: includes, currency, reportingTimezone: tz, reason: reason.trim(),
-      });
-      setReason(""); toast("حُفظ الإعداد المالي."); onSaved();
+        vatRate: r, pricesIncludeVat: includes, currency, reportingTimezone: tz, });
+ toast("حُفظ الإعداد المالي."); onSaved();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
@@ -164,9 +161,6 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
 
       {section.canEdit ? (
         <div className="mt-4 grid gap-3">
-          <Field label="السبب" hint="إلزامي. يُحفظ في سجل التدقيق بالقيمة القديمة والجديدة.">
-            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div><Button onClick={save} busy={busy}><Save size={13} /> حفظ</Button></div>
         </div>
@@ -187,17 +181,15 @@ function TaxSection({ section, registryFor, toast, onSaved }) {
   const [legalName, setLegalName] = useState(v.legal_name || "");
   const [vatNumber, setVatNumber] = useState(v.vat_number || "");
   const [address, setAddress] = useState(v.address || "");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const save = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     if (!/^\d{15}$/.test(vatNumber.trim())) { setErr("الرقم الضريبي خمسة عشر رقماً."); return; }
     setBusy(true); setErr("");
     try {
-      await api.saveTaxSettings({ legalName: legalName.trim(), vatNumber: vatNumber.trim(), address: address.trim(), reason: reason.trim() });
-      setReason(""); toast("حُفظت البيانات الضريبية."); onSaved();
+      await api.saveTaxSettings({ legalName: legalName.trim(), vatNumber: vatNumber.trim(), address: address.trim() });
+ toast("حُفظت البيانات الضريبية."); onSaved();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
@@ -225,7 +217,6 @@ function TaxSection({ section, registryFor, toast, onSaved }) {
 
       {section.canEdit ? (
         <div className="mt-4 grid gap-3">
-          <Field label="السبب"><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div><Button onClick={save} busy={busy}><Save size={13} /> حفظ</Button></div>
         </div>
@@ -331,7 +322,6 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   const isBool = typeof setting.value === "boolean";
   const [boolValue, setBoolValue] = useState(setting.value === true);
   const [value, setValue] = useState(isNumber ? String(setting.value) : String(setting.value ?? ""));
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -342,13 +332,12 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   // التذييل التسويقي اختياري: مسحه = بلا تذييل؛ رابط إلغاء الاشتراك يُلحق بكل رسالة بث مستقلاً عنه (B-11)
   const nullable = setting.key === "whatsapp_number" || setting.key === "marketing_email_footer";
   const save = async (forceClear = false) => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     const clearing = nullable && (forceClear || !String(value).trim());
     if (!isBool && !clearing && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
     setBusy(true); setErr("");
     try {
       const payload = clearing ? null : isBool ? boolValue : (isNumber ? Number(value) : value);
-      await api.updateAppSetting(setting.key, payload, reason.trim());
+      await api.updateAppSetting(setting.key, payload);
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
@@ -381,9 +370,6 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
             ) : String(setting.value ?? "").length > 60
               ? <Textarea rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
               : <Input value={value} inputMode={isNumber ? "numeric" : undefined} onChange={(e) => setValue(e.target.value)} />}
-          </Field>
-          <Field label="السبب" hint="يُحفظ في سجل التدقيق بالقيمة القديمة والجديدة.">
-            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
           {nullable && (
             <p className="text-[11px] leading-5" style={{ color: C.textFaint }}>

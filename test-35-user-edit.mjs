@@ -15,13 +15,15 @@ const jwt = (await import("jsonwebtoken")).default;
 const { query, pool } = await import("./db/pool.js");
 const { userEditRouter } = await import("./admin/user-edit.js");
 const { adminRouter } = await import("./admin/routes.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js"); // ملحق القرار 1: كما في index.js
+
 
 const printed = [];
 for (const k of ["log", "error", "warn"]) { const o = console[k]; console[k] = (...a) => { printed.push(a.map(String).join(" ")); if (k === "log") o(...a); }; }
 
 const R = []; const ok = (l, c, x = "") => R.push([l, !!c, x]);
 const app = express(); app.use(express.json()); app.use(cookieParser());
-app.use("/admin", userEditRouter); app.use("/admin", adminRouter);
+app.use("/admin", autoReasonMiddleware); app.use("/admin", userEditRouter); app.use("/admin", adminRouter);
 const server = app.listen(4635); const B = "http://127.0.0.1:4635";
 let cookie = "";
 const as = async (role) => {
@@ -61,8 +63,11 @@ try {
   ok("P2 المحاسب بلا subscriptions:edit → 403", r.status === 403);
 
   const adminId = await as("admin");
-  r = await call("PATCH", `/admin/users/${u.id}/profile`, { name: "اسم جديد" });
-  ok("P3 بلا سبب → 400 reason_required", r.status === 400 && r.body.error === "reason_required");
+  const nameBefore = (await query(`SELECT name FROM users WHERE id = $1`, [u.id])).rows[0].name;
+  r = await call("PATCH", `/admin/users/${u.id}/profile`, { name: "اسم بلا سبب مكتوب" });
+  const { rows: [p3] } = await query(`SELECT reason, old_value, new_value, ip_address FROM admin_action_log WHERE action = 'user_profile_edit' AND target_user_id = $1 ORDER BY created_at DESC LIMIT 1`, [u.id]);
+  ok("P3 (ملحق القرار 1) بلا سبب مكتوب → 200، والسجل بسبب تلقائي وقبل/بعد وIP", r.status === 200 && p3?.reason === "تعديل ملف العميل من اللوحة" && p3.old_value?.name === nameBefore && p3.new_value?.name === "اسم بلا سبب مكتوب" && Boolean(p3.ip_address), JSON.stringify(p3));
+  await call("PATCH", `/admin/users/${u.id}/profile`, { name: nameBefore, reason: "إرجاع الاسم للاختبار" });
   r = await call("PATCH", `/admin/users/${u.id}/profile`, { phone: { dial: "966", national: "512345678" }, reason: "r" });
   ok("P4 المدير بلا users:view_contact لا يعدّل الجوال → 403", r.status === 403);
 
@@ -81,9 +86,11 @@ try {
     && a.old_value.ageRange === "20-30" && a.new_value.ageRange === "30-40"
     && a.old_value.gender === "male" && a.new_value.gender === "female"
     && a.new_value.reminderTime === "21:15" && a.new_value.marketingOptOut === true && !("email" in a.new_value), JSON.stringify(a));
+  const countEdits = async () => (await query(`SELECT count(*)::int n FROM admin_action_log WHERE target_user_id = $1 AND action = 'user_profile_edit'`, [u.id])).rows[0].n;
+  const n0 = await countEdits();
   r = await call("PATCH", `/admin/users/${u.id}/profile`, { name: "اسم جديد", reason: "لا تغيير" });
-  const n = (await query(`SELECT count(*)::int n FROM admin_action_log WHERE target_user_id = $1 AND action = 'user_profile_edit'`, [u.id])).rows[0].n;
-  ok("E3 حفظ بلا تغيير فعلي لا يكتب أثراً كاذباً", r.status === 200 && r.body.changed.length === 0 && n === 1);
+  const n = await countEdits();
+  ok("E3 حفظ بلا تغيير فعلي لا يكتب أثراً كاذباً", r.status === 200 && r.body.changed.length === 0 && n === n0, `${n0}→${n}`);
 
   /* ---------------- V) قواعد مسار المستخدم نفسها ---------------- */
   const ownerId = await as("owner");

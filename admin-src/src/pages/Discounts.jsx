@@ -5,7 +5,7 @@ import { Link, navigate, useQueryState } from "../router.js";
 import { UserLink } from "./Users.jsx";
 import { C, fmtDateTime, can, toIsoWithOffset } from "../theme.js";
 import {
-  Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Screen, Field, Input, Select, useAsync, ReasonPrompt,
+  Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Screen, Field, Input, Select, useAsync, ConfirmPrompt,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -83,9 +83,9 @@ function DiscountList({ me, toast }) {
           )}
       </Card>
 
-      <ReasonPrompt open={!!toggle} title={toggle?.is_active ? `إيقاف ${toggle?.code}` : `تفعيل ${toggle?.code}`}
+      <ConfirmPrompt open={!!toggle} title={toggle?.is_active ? `إيقاف ${toggle?.code}` : `تفعيل ${toggle?.code}`}
         onClose={() => setToggle(null)}
-        onConfirm={async (reason) => { await api.setDiscountActive(toggle.id, !toggle.is_active, reason); setToggle(null); state.reload(); }} />
+        onConfirm={async () => { await api.setDiscountActive(toggle.id, !toggle.is_active); setToggle(null); state.reload(); }} />
     </div>
   );
 }
@@ -123,7 +123,7 @@ function CheckBox({ plans }) {
 }
 
 function CreateModal({ open, plans, onClose, onDone }) {
-  const [f, setF] = useState({ code: "", kind: "percent", value: "", validFrom: "", validUntil: "", maxRedemptions: "", planKeys: [], note: "", reason: "" });
+  const [f, setF] = useState({ code: "", kind: "percent", value: "", validFrom: "", validUntil: "", maxRedemptions: "", planKeys: [], note: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -160,9 +160,8 @@ function CreateModal({ open, plans, onClose, onDone }) {
           </div>
         </Field>
         <Field label="ملاحظة (اختياري)"><Input value={f.note} onChange={set("note")} /></Field>
-        <Field label="السبب" hint="يُسجَّل في سجل الإجراءات."><Input value={f.reason} onChange={set("reason")} /></Field>
         <ErrorBar error={err} />
-        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!f.code || !f.value || !f.reason.trim()}>إنشاء</Button><Button variant="ghost" onClick={onClose}>إلغاء</Button></div>
+        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!f.code || !f.value}>إنشاء</Button><Button variant="ghost" onClick={onClose}>إلغاء</Button></div>
       </div>
     </Screen>
   );

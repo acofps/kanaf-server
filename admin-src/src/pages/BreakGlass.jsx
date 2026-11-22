@@ -24,18 +24,16 @@ export default function BreakGlass({ me, toast }) {
   const pending = useAsync(() => api.listPendingBreakGlass(), []);
 
   const [targetUserId, setTargetUserId] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [hours, setHours] = useState({});
   const [busyId, setBusyId] = useState(null);
 
   const request = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     setBusy(true); setErr("");
     try {
-      await api.requestBreakGlass(targetUserId.trim() || null, reason.trim());
-      setTargetUserId(""); setReason("");
+      await api.requestBreakGlass(targetUserId.trim() || null);
+      setTargetUserId(""); 
       toast("سُجّل الطلب. ينتظر اعتماد المالك.");
       pending.reload();
     } catch (e) { setErr(e?.arabic || "تعذّر الطلب."); }
@@ -68,14 +66,11 @@ export default function BreakGlass({ me, toast }) {
         </div>
         <p className="text-[11px] leading-6 mb-4" style={{ color: C.textFaint }}>
           يُستخدم للوصول إلى ما لا تصله الشاشات العادية — إجابات المقاييس التفصيلية
-          ومحتوى الدفاتر. كل استخدام يظهر في سجل الوصول باسمك وسببك.
+          ومحتوى الدفاتر. كل استخدام يظهر في سجل الوصول باسمك ووقته.
         </p>
         <div className="grid gap-3">
           <Field label="معرّف المستخدم (اختياري)" hint="اتركه فارغاً لطلب عام غير مرتبط بحساب.">
             <Input value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)} placeholder="UUID" />
-          </Field>
-          <Field label="السبب">
-            <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
           <ErrorBar error={err} />
           <div><Button onClick={request} busy={busy}><ShieldAlert size={13} /> إرسال الطلب</Button></div>

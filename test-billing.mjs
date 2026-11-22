@@ -100,6 +100,7 @@ function makeWebhookBody(type, { providerInvoiceId, amountSar, metadata, payment
 const { authRouter } = await import("./auth/routes.js");
 const { paymentsRouter } = await import("./payments/routes.js");
 const { adminRouter } = await import("./admin/routes.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js"); // ملحق القرار 1: كما في index.js
 
 let CURRENT_ADMIN = null;
 const app = express();
@@ -108,6 +109,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.use("/api/auth", authRouter);
 app.use("/api/payments", paymentsRouter);
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminRouter);
 const server = app.listen(4599);
 const B = "http://127.0.0.1:4599";
@@ -531,8 +533,12 @@ async function run() {
   log("J3 موظف الدعم لا يعدّل الإعداد الضريبي", r.status === 403, String(r.status));
 
   CURRENT_ADMIN = { id: ADMIN_ID, role: "admin" };
-  r = await post(`/admin/billing/payments/${payment5.id}/refund`, {});
-  log("J4 الاسترداد بلا سبب مكتوب مرفوض", r.status === 400 && r.body.error === "reason_required", JSON.stringify(r.body));
+  // ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب — الخادم يولّده، والوصول والاسترداد يُسجَّلان به.
+  const { rows: [pj4] } = await query(`SELECT id FROM payments WHERE status = 'paid' AND refunded_amount = 0 AND amount > 1 AND provider = 'moyasar' AND provider_payment_id = ANY($1::text[]) ORDER BY created_at LIMIT 1`, [[...moyasarState.payments.keys()]]);
+  r = await post(`/admin/billing/payments/${pj4.id}/refund`, { amountSar: 1 });
+  const { rows: [j4a] } = await query(`SELECT reason FROM admin_access_log WHERE action = 'payment_refund' ORDER BY created_at DESC LIMIT 1`);
+  const { rows: [j4r] } = await query(`SELECT reason FROM refunds WHERE payment_id = $1 ORDER BY created_at DESC LIMIT 1`, [pj4.id]);
+  log("J4 الاسترداد بلا سبب مكتوب ينجح، بسبب تلقائي في سجل الوصول وفي الاسترداد", r.status === 200 && j4a?.reason === "استرداد دفعة من اللوحة" && j4r?.reason === "استرداد دفعة من اللوحة", JSON.stringify({ s: r.status, j4a, j4r, b: r.body }).slice(0, 300));
 
   CURRENT_ADMIN = null;
   r = await get("/admin/billing/payments");

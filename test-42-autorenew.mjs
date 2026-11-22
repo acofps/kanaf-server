@@ -22,6 +22,7 @@ const { query, pool } = await import("./db/pool.js");
 const { issueAccessToken } = await import("./auth/tokens.js");
 const { autorenewRouter } = await import("./billing/autorenew-routes.js");
 const { adminAutorenewRouter } = await import("./admin/autorenew.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js"); // ملحق القرار 1: كما في index.js
 const AR = await import("./billing/autorenew.js");
 const { saveCard, captureCardAfterPayment } = await import("./billing/payment-methods.js");
 const { setRenewalProviderForTests } = await import("./billing/renewal-provider.js");
@@ -47,7 +48,7 @@ const fake = {
 setRenewalProviderForTests(fake);
 
 const app = express(); app.use(express.json()); app.use(cookieParser());
-app.use("/api/billing/autorenew", autorenewRouter); app.use("/admin", adminAutorenewRouter);
+app.use("/api/billing/autorenew", autorenewRouter); app.use("/admin", autoReasonMiddleware); app.use("/admin", adminAutorenewRouter);
 const server = app.listen(4643); const B = "http://127.0.0.1:4643";
 const call = async (method, p, { token, cookie, body } = {}) => {
   const headers = { "Content-Type": "application/json" };
@@ -244,12 +245,12 @@ try {
   ok("8b قائمة الدورات بفلتر الحالة", r.status === 200 && r.body.enabled === true && r.body.counts.active_consents >= 2 && r.body.cycles.every((x) => x.status === "unknown"));
   r = await call("POST", `/admin/users/${a.id}/autorenew/disable`, { cookie: support.cookie, body: { reason: "x" } });
   ok("8c الدعم لا يوقف (subscriptions:edit) → 403", r.status === 403);
+  // ملحق القرار 1: لا سبب مكتوب — الإيقاف ينجح والسبب تلقائي.
   r = await call("POST", `/admin/users/${a.id}/autorenew/disable`, { cookie: owner.cookie, body: {} });
-  ok("8d بلا سبب → 400", r.status === 400 && r.body.error === "reason_required");
-  r = await call("POST", `/admin/users/${a.id}/autorenew/disable`, { cookie: owner.cookie, body: { reason: "طلب العميل عبر الدعم" } });
+  ok("8d بلا سبب مكتوب → 200 (لا 400)", r.status === 200, r.raw);
   const { rows: [aud] } = await query(`SELECT old_value, new_value, reason, target_user_id FROM admin_action_log WHERE action = 'autorenew_disable' ORDER BY created_at DESC LIMIT 1`);
   const { rows: [cr] } = await query(`SELECT revoked_by, revoked_by_admin, revoke_reason FROM autorenew_consents WHERE user_id = $1 ORDER BY granted_at DESC LIMIT 1`, [a.id]);
-  ok("8e الإيقاف → 200، الموافقة مسحوبة باسم المشرف وسببه، وفي سجل الإجراءات بالقيمتين", r.status === 200 && cr.revoked_by === "admin" && cr.revoked_by_admin === owner.id && cr.revoke_reason === "طلب العميل عبر الدعم"
+  ok("8e الإيقاف: الموافقة مسحوبة باسم المشرف وبسبب تلقائي، وفي سجل الإجراءات بالقيمتين", cr.revoked_by === "admin" && cr.revoked_by_admin === owner.id && cr.revoke_reason === "إيقاف التجديد التلقائي للعميل من اللوحة" && aud.reason === "إيقاف التجديد التلقائي للعميل من اللوحة"
      && aud.old_value.autorenew === "active" && aud.new_value.autorenew === "disabled_by_admin" && aud.target_user_id === a.id);
   r = await call("POST", `/admin/users/${a.id}/autorenew/disable`, { cookie: owner.cookie, body: { reason: "مرة ثانية" } });
   ok("8f إيقاف ما ليس مفعَّلاً → 409", r.status === 409);

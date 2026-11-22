@@ -5,7 +5,7 @@ import { Link, navigate } from "../router.js";
 import { C, can } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Spinner, Empty,
-  ErrorBar, Screen, ReasonPrompt, Table, Td, useAsync,
+  ErrorBar, Screen, ConfirmPrompt, Table, Td, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -38,15 +38,13 @@ function PlanList({ me, toast }) {
 
   const plans = state.data?.plans || [];
 
-  /* KANAF-ORD-0001: الخادم يشترط سبباً مكتوباً (reason_required) لتشغيل
-     الباقة أو إيقافها، والزر كان يرسل { active } وحده فيفشل دائماً بـ400.
-     السبب يُطلب الآن كبقية الإجراءات المسجّلة في سجل التدقيق. */
+  /* تشغيل الباقة أو إيقافها بتأكيد بنقرة. السبب يولّده الخادم (ملحق KANAF-ORD-0013، قرار المالك 1). */
   const [toggling, setToggling] = useState(null);
   const toggle = (p) => setToggling(p);
-  const runToggle = async (reason) => {
+  const runToggle = async () => {
     const p = toggling;
     setBusyId(p.id);
-    try { await api.togglePlanActive(p.id, !p.is_active, reason); state.reload(); toast(p.is_active ? "أُوقفت الباقة." : "فُعّلت الباقة."); }
+    try { await api.togglePlanActive(p.id, !p.is_active); state.reload(); toast(p.is_active ? "أُوقفت الباقة." : "فُعّلت الباقة."); }
     finally { setBusyId(null); }
   };
 
@@ -93,7 +91,7 @@ function PlanList({ me, toast }) {
             ))}
           </Table>
         )}
-      <ReasonPrompt open={!!toggling}
+      <ConfirmPrompt open={!!toggling}
         title={toggling?.is_active ? `إيقاف باقة «${toggling?.name}»` : `تفعيل باقة «${toggling?.name || ""}»`}
         description={toggling?.is_active ? "الباقة الموقوفة تختفي من صفحة الاشتراك للمستخدمين الجدد. الاشتراكات القائمة والفواتير الصادرة لا تتأثر." : "الباقة المفعّلة تظهر في صفحة الاشتراك بسعرها الحالي."}
         confirmLabel={toggling?.is_active ? "إيقاف" : "تفعيل"} danger={!!toggling?.is_active}
@@ -113,14 +111,10 @@ function PlanEditor({ plan, onClose, onSaved }) {
   const [durationDays, setDurationDays] = useState(plan.duration_days ?? 30);
   const [features, setFeatures] = useState((Array.isArray(plan.features) ? plan.features : []).join("\n"));
   const [displayOrder, setDisplayOrder] = useState(plan.display_order ?? 0);
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  /* KANAF-ORD-0001: الخادم يشترط سبباً مكتوباً لإنشاء الباقة وتعديلها
-     (reason_required) والنموذج لم يكن يرسله — فكل حفظ كان يفشل بـ400. */
   const save = async () => {
-    if (!reason.trim()) { setErr("سبب التغيير مطلوب — يُسجَّل في سجل التدقيق."); return; }
     if (String(priceSar).trim() === "") { setErr("السعر مطلوب."); return; }   // Number("") = 0 — باقة مجانية بلا قصد
     setBusy(true); setErr("");
     const body = {
@@ -129,8 +123,7 @@ function PlanEditor({ plan, onClose, onSaved }) {
       durationDays: Number(durationDays),
       features: features.split("\n").map((s) => s.trim()).filter(Boolean),
       displayOrder: Number(displayOrder) || 0,
-      reason: reason.trim(),
-    };
+      };
     try {
       if (isNew) await api.createPlan({ ...body, planKey: planKey.trim() });
       else await api.updatePlan(plan.id, body);
@@ -161,9 +154,6 @@ function PlanEditor({ plan, onClose, onSaved }) {
         </div>
         <Field label="المزايا" hint="ميزة في كل سطر.">
           <Textarea rows={4} value={features} onChange={(e) => setFeatures(e.target.value)} />
-        </Field>
-        <Field label="سبب التغيير" hint="يُحفظ في سجل التدقيق باسمك. تغيير السعر يظهر في الفواتير القادمة فقط؛ الصادرة لا تتغير.">
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <ErrorBar error={err} />
         <div className="flex gap-2">

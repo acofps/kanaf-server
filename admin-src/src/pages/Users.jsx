@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Screen, ReasonPrompt, Table, Td, Pager, useAsync, ValueDiff,
+  ErrorBar, Screen, ConfirmPrompt, Table, Td, Pager, useAsync, ValueDiff,
 } from "../ui.jsx";
 import { Link, useQueryState } from "../router.js";
 import { Compose } from "./Notifications.jsx";
@@ -17,7 +17,7 @@ import { Compose } from "./Notifications.jsx";
    وجلسات تنفس — كلها **لا تصل إلى المتصفح أصلاً**، لأن إخفاءها
    في الواجهة يبقى كشفاً في الشبكة.
 
-   وما يظهر منها (درجات المتابعة) يمر بمطالبة سبب تُكتب في سجل
+   وما يظهر منها (درجات المتابعة) يمر بتأكيد بنقرة، ويُكتب في سجل
    تدقيق غير قابل للتعديل **قبل** تنفيذ القراءة.
    ============================================================ */
 
@@ -205,7 +205,7 @@ function Row({ label, children }) {
 
 function UserDetail({ id, tab, me, toast }) {
   const state = useAsync(() => api.getUser(id), [id]);
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
   const onChanged = () => {};
 
   const u = state.data;
@@ -220,16 +220,16 @@ function UserDetail({ id, tab, me, toast }) {
 
   const act = (kind) => {
     if (kind === "suspend") {
-      setReason({
+      setPending({
         title: "إيقاف الحساب",
         description: "يُنهي كل جلسات المستخدم فوراً. الوصول إلى محتوى الطوارئ يبقى متاحاً له.",
         confirmLabel: "إيقاف", danger: true,
-        run: async (r) => { const res = await api.suspendUser(id, r); toast(`أُوقف الحساب · أُنهيت ${res.sessionsRevoked} جلسة`); state.reload(); onChanged(); },
+        run: async () => { const res = await api.suspendUser(id); toast(`أُوقف الحساب · أُنهيت ${res.sessionsRevoked} جلسة`); state.reload(); onChanged(); },
       });
     } else {
-      setReason({
+      setPending({
         title: "إعادة تفعيل الحساب", confirmLabel: "إعادة التفعيل",
-        run: async (r) => { await api.restoreUser(id, r); toast("أُعيد تفعيل الحساب."); state.reload(); onChanged(); },
+        run: async () => { await api.restoreUser(id); toast("أُعيد تفعيل الحساب."); state.reload(); onChanged(); },
       });
     }
   };
@@ -354,10 +354,10 @@ function UserDetail({ id, tab, me, toast }) {
                     طلب العضو حذف حسابه فعُطّل. المحو النهائي يمحو بياناته النفسية والشخصية ويكتب سجلاً مجهولاً في «الأعضاء الملغون».
                     الفواتير الصادرة تبقى. <b>لا رجعة فيه.</b>
                   </p>
-                  <Button variant="danger" onClick={() => setReason({
+                  <Button variant="danger" onClick={() => setPending({
                     title: "إتمام الحذف النهائي", danger: true, confirmLabel: "محو نهائي",
                     description: "يُمحى كل ما يخص العضو ولا يمكن استرجاعه. يبقى سجل مجهول لا يُردّ إليه، والفواتير كما صدرت.",
-                    run: async (r) => { await api.purgeMember(id, r); toast("أُتمّ المحو النهائي."); state.reload(); },
+                    run: async () => { await api.purgeMember(id); toast("أُتمّ المحو النهائي."); state.reload(); },
                   })}>إتمام الحذف النهائي</Button>
                 </div>
               )}
@@ -388,10 +388,10 @@ function UserDetail({ id, tab, me, toast }) {
         </>
       )}
 
-      <ReasonPrompt
-        open={!!reason} title={reason?.title || ""} description={reason?.description}
-        confirmLabel={reason?.confirmLabel} danger={reason?.danger}
-        onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)}
+      <ConfirmPrompt
+        open={!!pending} title={pending?.title || ""} description={pending?.description}
+        confirmLabel={pending?.confirmLabel} danger={pending?.danger}
+        onConfirm={() => pending.run()} onClose={() => setPending(null)}
       />
     </Screen>
   );
@@ -412,8 +412,8 @@ export function UserLink({ id, name, email }) {
    المتابعة اليومية.
 
    درجات فقط — مزاج ونوم وطاقة. نص اليومية (`note`) وإجابات
-   المقاييس التفصيلية لا تُعرض هنا بحال. الطلب نفسه لا ينطلق قبل
-   كتابة سبب، والسبب يُسجَّل قبل وصول البيانات.
+   المقاييس التفصيلية لا تُعرض هنا بحال. الطلب لا ينطلق قبل تأكيد
+   بنقرة، والوصول يُسجَّل قبل وصول البيانات بسبب يولّده الخادم.
    ------------------------------------------------------------ */
 const SCALE = ["—", "منخفض جداً", "منخفض", "متوسط", "جيد", "مرتفع"];
 
@@ -464,13 +464,13 @@ function Sensitive({ id }) {
   return (
     <>
       <ErrorBar error={err} />
-      <ReasonPrompt
+      <ConfirmPrompt
         open={ask}
         title="عرض بيانات المتابعة"
-        description="هذه بيانات صحية. سيُسجَّل اسمك وسببك ووقتك في سجل التدقيق قبل عرض أي شيء، ولا يمكن حذف السجل لاحقاً."
+        description="هذه بيانات صحية. سيُسجَّل اسمك ووقت الاطلاع في سجل الوصول قبل عرض أي شيء، ولا يمكن حذف السجل لاحقاً."
         confirmLabel="عرض"
-        onConfirm={async (r) => {
-          try { setData(await api.getUserSensitive(id, r)); }
+        onConfirm={async () => {
+          try { setData(await api.getUserSensitive(id)); }
           catch (e) { setErr(e?.arabic || "تعذّر الجلب."); throw e; }
         }}
         onClose={() => setAsk(false)}
@@ -478,8 +478,8 @@ function Sensitive({ id }) {
       {!ask && !data && (
         <div className="text-center py-6">
           <ShieldAlert size={20} color={C.textFaint} className="mx-auto mb-2" />
-          <p className="text-xs mb-3" style={{ color: C.textFaint }}>لم تُعرض البيانات — لم يُسجَّل سبب.</p>
-          <Button size="sm" variant="ghost" onClick={() => setAsk(true)}>اكتب سبباً واعرض</Button>
+          <p className="text-xs mb-3" style={{ color: C.textFaint }}>لم تُعرض البيانات.</p>
+          <Button size="sm" variant="ghost" onClick={() => setAsk(true)}>اعرض</Button>
         </div>
       )}
     </>
@@ -513,7 +513,7 @@ function Actions({ id }) {
    بنصّين مختلفين، لا زر واحد بخيار.
    ------------------------------------------------------------ */
 function Billing({ user, me, toast, onChanged }) {
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
   const [atPeriodEnd, setAtPeriodEnd] = useState(true);
   const [amount, setAmount] = useState("");
   /* KANAF-ORD-0001 R15-09: الزران كانا يظهران لكل من يرى الملف المالي،
@@ -546,10 +546,10 @@ function Billing({ user, me, toast, onChanged }) {
               <input type="checkbox" checked={atPeriodEnd} onChange={(e) => setAtPeriodEnd(e.target.checked)} />
               يبقى الوصول حتى نهاية المدة المدفوعة
             </label>
-            <Button size="sm" variant="warn" onClick={() => setReason({
+            <Button size="sm" variant="warn" onClick={() => setPending({
               title: "إلغاء الاشتراك", confirmLabel: "إلغاء الاشتراك",
-              run: async (r) => {
-                const res = await api.cancelSubscription(user.id, r, atPeriodEnd);
+              run: async () => {
+                const res = await api.cancelSubscription(user.id, atPeriodEnd);
                 toast(res.mode === "at_period_end" ? `يُلغى في ${fmtDate(res.accessUntil)}` : "أُلغي الاشتراك فوراً.");
                 onChanged();
               },
@@ -568,11 +568,11 @@ function Billing({ user, me, toast, onChanged }) {
                 <Input type="number" step="0.01" min="0" placeholder="المبلغ بالريال (اختياري)"
                   value={amount} onChange={(e) => setAmount(e.target.value)} />
               </div>
-              <Button size="sm" variant="danger" onClick={() => setReason({
+              <Button size="sm" variant="danger" onClick={() => setPending({
                 title: "استرداد مبلغ", danger: true, confirmLabel: "تنفيذ الاسترداد",
                 description: "هذا إجراء مالي لا يُتراجع عنه، ويصدر إشعاراً دائناً بترقيم رسمي.",
-                run: async (r) => {
-                  const res = await api.refundSubscription(user.id, r, amount === "" ? undefined : Number(amount));
+                run: async () => {
+                  const res = await api.refundSubscription(user.id, amount === "" ? undefined : Number(amount));
                   toast(`تم الاسترداد: ${res.amount} ر.س${res.creditNoteNumber ? ` · إشعار ${res.creditNoteNumber}` : ""}`);
                   onChanged();
                 },
@@ -582,10 +582,10 @@ function Billing({ user, me, toast, onChanged }) {
         </div>
       )}
 
-      <ReasonPrompt
-        open={!!reason} title={reason?.title || ""} description={reason?.description}
-        confirmLabel={reason?.confirmLabel} danger={reason?.danger}
-        onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)}
+      <ConfirmPrompt
+        open={!!pending} title={pending?.title || ""} description={pending?.description}
+        confirmLabel={pending?.confirmLabel} danger={pending?.danger}
+        onConfirm={() => pending.run()} onClose={() => setPending(null)}
       />
     </div>
   );
@@ -594,7 +594,8 @@ function Billing({ user, me, toast, onChanged }) {
 
 /* ============================================================
    تعديل الملف — KANAF-ORD-0013 §4.3
-   كل حفظ بسبب يُكتب في سجل الإجراءات بالقيمة قبل وبعد. يُرسَل ما تغيّر
+   كل حفظ يُكتب في سجل الإجراءات بالقيمة قبل وبعد، والسبب يولّده الخادم
+   (ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب). يُرسَل ما تغيّر
    فقط. والمحجوب (D-ADM-01) ليس هنا: لا حقل ولا مسار.
    ============================================================ */
 const AGE_RANGES = ["20-30", "30-40", "40-50", "50-60"];
@@ -614,7 +615,6 @@ function EditUser({ u, toast, onSaved }) {
     country: u.country || "", dial: u.phone_parts?.dial || "", national: u.phone_parts?.national || "",
   };
   const [f, setF] = useState(init);
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e?.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e }));
@@ -639,23 +639,21 @@ function EditUser({ u, toast, onSaved }) {
   const save = async () => {
     const b = patch();
     if (!Object.keys(b).length) { setErr("لا تغيير لحفظه."); return; }
-    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل مع القيمتين قبل وبعد."); return; }
     setBusy(true); setErr("");
     try {
-      const r = await api.editUserProfile(u.id, { ...b, reason: reason.trim() });
+      const r = await api.editUserProfile(u.id, b);
       toast(r.verification === "sent" ? "حُفظ. البريد الجديد يحتاج تحقّقاً، وأُرسل إليه رمز."
         : r.verification === "send_failed" ? "حُفظ، لكن تعذّر إرسال رمز التحقق إلى البريد الجديد."
         : `حُفظ: ${r.changed.length} حقل.`);
-      setReason(""); onSaved();
+      onSaved();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
 
   const [photoBusy, setPhotoBusy] = useState(false);
   const photo = async (file) => {
-    if (!reason.trim()) { setErr("اكتب السبب أولاً — يُسجَّل مع تغيير الصورة."); return; }
     setPhotoBusy(true); setErr("");
-    try { file ? await api.setUserAvatar(u.id, file, reason.trim()) : await api.deleteUserAvatar(u.id, reason.trim()); toast(file ? "حُفظت الصورة." : "حُذفت الصورة."); onSaved(); }
+    try { file ? await api.setUserAvatar(u.id, file) : await api.deleteUserAvatar(u.id); toast(file ? "حُفظت الصورة." : "حُذفت الصورة."); onSaved(); }
     catch (e) { setErr(e?.arabic || "تعذّر."); }
     finally { setPhotoBusy(false); }
   };
@@ -694,9 +692,6 @@ function EditUser({ u, toast, onSaved }) {
           {u.has_photo && <Button size="sm" variant="ghost" busy={photoBusy} onClick={() => photo(null)}>حذف الصورة</Button>}
         </div>
       </Field>
-      <Field label="السبب" hint="يُكتب في سجل الإجراءات باسمك مع القيمة قبل وبعد.">
-        <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-      </Field>
       <ErrorBar error={err} />
       <div><Button onClick={save} busy={busy}>حفظ التعديلات</Button></div>
     </div>
@@ -706,7 +701,7 @@ function EditUser({ u, toast, onSaved }) {
 /* الباقة وحالة الاشتراك ومدته — يدوياً بلا حركة مال (subscriptions:edit). */
 /* ============================================================
    التجديد التلقائي — KANAF-ORD-0013 §7.8: العرض (الموافقة بنصّها، البطاقة بآخر
-   أربعة أرقامها، والدورات بمحاولاتها) والإيقاف بسبب. الرمز لا يصل إلى المتصفّح.
+   أربعة أرقامها، والدورات بمحاولاتها) والإيقاف بنقرة تأكيد. الرمز لا يصل إلى المتصفّح.
    ============================================================ */
 export const RENEWAL_STATUS = {
   noticed: { label: "أُشعر — بانتظار الخصم", color: "textMuted" }, charging: { label: "يُخصم الآن", color: "teal" },
@@ -756,9 +751,9 @@ function AutoRenewPanel({ user, canEdit, toast }) {
           {canEdit && d.active && <div className="mt-3"><Button variant="danger" size="sm" onClick={() => setAsk(true)}>إيقاف التجديد التلقائي</Button></div>}
         </>
       )}
-      <ReasonPrompt open={ask} danger title="إيقاف التجديد التلقائي" description="تُسحب موافقة العضو باسمك وسببك، ولا خصم بعدها. اشتراكه الحالي يبقى إلى نهايته، ويقدر يفعّل التجديد من التطبيق من جديد."
+      <ConfirmPrompt open={ask} danger title="إيقاف التجديد التلقائي" description="تُسحب موافقة العضو باسمك، ولا خصم بعدها. اشتراكه الحالي يبقى إلى نهايته، ويقدر يفعّل التجديد من التطبيق من جديد."
         onClose={() => setAsk(false)}
-        onConfirm={async (reason) => { await api.disableUserAutorenew(user.id, reason); toast("أُوقف التجديد التلقائي."); state.reload(); }} />
+        onConfirm={async () => { await api.disableUserAutorenew(user.id); toast("أُوقف التجديد التلقائي."); state.reload(); }} />
     </div>
   );
 }
@@ -768,7 +763,6 @@ function EditSubscription({ user, toast, onSaved }) {
   const [planId, setPlanId] = useState(user.subscription_plan || "");
   const [periodEnd, setPeriodEnd] = useState(user.subscription_renews_at ? String(user.subscription_renews_at).slice(0, 10) : "");
   const [status, setStatus] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const save = async () => {
@@ -777,9 +771,8 @@ function EditSubscription({ user, toast, onSaved }) {
     if (periodEnd && periodEnd !== String(user.subscription_renews_at || "").slice(0, 10)) b.periodEnd = `${periodEnd}T23:59:59+03:00`;
     if (status) b.status = status;
     if (!Object.keys(b).length) { setErr("لا تغيير لحفظه."); return; }
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     setBusy(true); setErr("");
-    try { const r = await api.editUserSubscription(user.id, { ...b, reason: reason.trim() }); toast(r.created ? "مُنح اشتراك يدوي." : "عُدّل الاشتراك."); setReason(""); onSaved(); }
+    try { const r = await api.editUserSubscription(user.id, b); toast(r.created ? "مُنح اشتراك يدوي." : "عُدّل الاشتراك."); onSaved(); }
     catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
@@ -793,7 +786,6 @@ function EditSubscription({ user, toast, onSaved }) {
         <Field label="الحالة"><Select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">بلا تغيير</option><option value="active">نشط</option><option value="canceled">ملغى</option></Select></Field>
       </div>
       <div className="grid gap-3 mt-3" style={{ maxWidth: 680 }}>
-        <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <ErrorBar error={err} />
         <div><Button onClick={save} busy={busy}>حفظ الاشتراك</Button></div>
       </div>

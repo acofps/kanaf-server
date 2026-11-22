@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { C, can, fmtDateTime } from "../theme.js";
-import { Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, Spinner, Empty, ErrorBar, ReasonPrompt, Table, Td, Screen, useAsync } from "../ui.jsx";
+import { Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, Spinner, Empty, ErrorBar, ConfirmPrompt, Table, Td, Screen, useAsync } from "../ui.jsx";
 import { Link, navigate } from "../router.js";
 
 /* ============================================================
@@ -169,16 +169,16 @@ function MessageEditor({ m, catalog, canEdit, toast, reload }) {
           <Preview html={preview?.html} />
         </div>
       </div>
-      <ReasonPrompt open={ask === "save"} title="حفظ الرسالة" description="يُسجَّل النص والقالب والقنوات قبل التعديل وبعده في سجل الإجراءات."
+      <ConfirmPrompt open={ask === "save"} title="حفظ الرسالة" description="يُسجَّل النص والقالب والقنوات قبل التعديل وبعده في سجل الإجراءات."
         onClose={() => setAsk(null)}
-        onConfirm={async (reason) => {
-          try { await api.saveMessage(m.key, { ...draft, channels, reason }); }
+        onConfirm={async () => {
+          try { await api.saveMessage(m.key, { ...draft, channels }); }
           catch (e) { throw Object.assign(new Error(), { arabic: explain(e) }); }
           toast("حُفظت."); reload();
         }} />
-      <ReasonPrompt open={ask === "reset"} title="العودة إلى النص الافتراضي" danger
+      <ConfirmPrompt open={ask === "reset"} title="العودة إلى النص الافتراضي" danger
         onClose={() => setAsk(null)}
-        onConfirm={async (reason) => { await api.resetMessage(m.key, reason); toast("عادت إلى الافتراضي."); reload(); }} />
+        onConfirm={async () => { await api.resetMessage(m.key); toast("عادت إلى الافتراضي."); reload(); }} />
     </Screen>
   );
 }
@@ -225,17 +225,17 @@ function TemplateEditor({ t, catalog, canEdit, toast, reload }) {
         </div>
         <div>{preview && <Preview html={preview.html} />}</div>
       </div>
-      <ReasonPrompt open={ask === "save"} title={t ? "حفظ القالب" : "إنشاء قالب"} onClose={() => setAsk(null)}
-        onConfirm={async (reason) => {
+      <ConfirmPrompt open={ask === "save"} title={t ? "حفظ القالب" : "إنشاء قالب"} onClose={() => setAsk(null)}
+        onConfirm={async () => {
           try {
-            const r = t ? await api.updateTemplate(t.id, { ...v, reason }) : await api.createTemplate({ ...v, reason });
+            const r = t ? await api.updateTemplate(t.id, { ...v }) : await api.createTemplate({ ...v });
             toast("حُفظ."); reload(); if (!t) navigate(`/templates/t/${r.template.id}`);
           } catch (e) { throw Object.assign(new Error(), { arabic: explain(e) }); }
         }} />
-      <ReasonPrompt open={ask === "delete"} title="حذف القالب" danger description="الرسائل المربوطة به تعود إلى القالب الافتراضي."
+      <ConfirmPrompt open={ask === "delete"} title="حذف القالب" danger description="الرسائل المربوطة به تعود إلى القالب الافتراضي."
         onClose={() => setAsk(null)}
-        onConfirm={async (reason) => {
-          try { await api.deleteTemplate(t.id, reason); } catch (e) { throw Object.assign(new Error(), { arabic: explain(e) }); }
+        onConfirm={async () => {
+          try { await api.deleteTemplate(t.id); } catch (e) { throw Object.assign(new Error(), { arabic: explain(e) }); }
           toast("حُذف."); reload(); navigate("/templates");
         }} />
     </Screen>

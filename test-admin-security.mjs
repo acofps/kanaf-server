@@ -38,6 +38,7 @@ import { adminExportsRouter } from "./admin/exports.js";
 import { adminSettingsRouter, getAppSetting, SETTINGS_REGISTRY } from "./admin/settings.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
+import { autoReasonMiddleware } from "./admin/auto-reason.js"; // ملحق القرار 1: كما في index.js
 import { ROLES, ALL_PERMISSIONS, can, permissionsFor, matrixRows } from "./admin/permissions.js";
 
 const results = [];
@@ -50,6 +51,7 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(express.json());
 app.use(cookieParser());
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminAccountsRouter);
 app.use("/admin", adminExportsRouter);
 app.use("/admin", adminSettingsRouter);
@@ -440,17 +442,17 @@ async function run() {
     });
     log("7-أ. إنشاء باقة ينجح (201)", plan.status === 201, JSON.stringify(plan.body).slice(0, 60));
 
+    // ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب — الخادم يولّده، والأثر قبل/بعد كما هو.
     const noReason = await patch(`/admin/plans/${plan.body.id}`, { priceSar: 39 });
-    log("7-ب. تعديل الباقة بلا سبب مرفوض (400)", noReason.status === 400 && noReason.body.error === "reason_required");
-
-    await patch(`/admin/plans/${plan.body.id}`, { priceSar: 39, reason: "رفع السعر للاختبار" });
+    log("7-ب. تعديل الباقة بلا سبب مكتوب ينجح (200) بسبب تلقائي", noReason.status === 200);
     const { rows: planLog } = await query(
       `SELECT action, entity, entity_id, old_value, new_value, reason FROM admin_action_log
         WHERE entity = 'plan' ORDER BY created_at`
     );
     log("7-ج. تغيير السعر مسجَّل بالقيمة القديمة والجديدة معاً",
       planLog.length === 2 && planLog[1].action === "plan_price_changed"
-        && Number(planLog[1].old_value.price_sar) === 29 && Number(planLog[1].new_value.price_sar) === 39,
+        && Number(planLog[1].old_value.price_sar) === 29 && Number(planLog[1].new_value.price_sar) === 39
+        && planLog[1].reason === "تعديل باقة من اللوحة",
       JSON.stringify(planLog.map((r) => r.action)));
 
     /* ------------------------------------------------------------
