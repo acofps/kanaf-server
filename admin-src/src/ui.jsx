@@ -169,6 +169,8 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
    تبقى Modal لصناديق التأكيد القصيرة وحدها (ConfirmPrompt وما شابه).
    ------------------------------------------------------------ */
 export function Screen({ title, back, backLabel = "رجوع", children, actions }) {
+  /* عنوان التبويب = عنوان الشاشة (KANAF-ORD-0014 §2.7) — يُحفظ في المفضّلة باسم ما فيه. */
+  useEffect(() => { if (title) document.title = `${title} · لوحة تنفس بحرية`; }, [title]);
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">

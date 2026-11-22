@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useLayoutEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, UserCog, ScrollText, LogOut, Menu, X,
@@ -58,6 +58,8 @@ const GROUPS = [
   { key: "gov",   label: "الحوكمة" },
 ];
 
+export const PANEL_TITLE = "لوحة تنفس بحرية";
+
 const SECTIONS = [
   { key: "overview",     group: "watch", label: "نظرة عامة",     icon: LayoutDashboard,   perms: ["overview:view"] },
   { key: "users",        group: "watch", label: "المستخدمون",     icon: UsersIcon,         perms: ["users:view"] },
@@ -109,6 +111,14 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState("");
   const [mode, setMode] = useState(readTheme);
   const toggleMode = () => setMode((m) => applyTheme(m === "dark" ? "light" : "dark"));
+  /* KANAF-ORD-0014 §2.7: عنوان التبويب لكل شاشة — كانت كل التبويبات والمفضّلات «لوحة تحكم تنفس بحرية»
+     فلا يُعرف أيّها أيّ. هنا عنوان القسم (useLayoutEffect)، والشاشة الأعمق (Screen في ui.jsx، useEffect
+     يعمل بعده) تكتب عنوانها هي فوقه. */
+  const path = segments.join("/");
+  useLayoutEffect(() => {
+    const label = SECTIONS.find((s) => s.key === section)?.label;
+    document.title = `${!me ? "تسجيل الدخول" : label || "نظرة عامة"} · ${PANEL_TITLE}`;
+  }, [section, path, me]);
 
   const toast = useCallback((m) => {
     setToastMsg(m);
