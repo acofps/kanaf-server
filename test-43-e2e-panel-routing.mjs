@@ -95,7 +95,7 @@ try {
   const ctx2 = await browser.newContext({ viewport: { width: 1360, height: 860 } });
   const p2 = await ctx2.newPage();
   await p2.goto(copied);
-  ok("U2 سياق جديد بلا جلسة: العنوان المنسوخ يطلب الدخول", await p2.isVisible('input[type="password"]'));
+  ok("U2 سياق جديد بلا جلسة: العنوان المنسوخ يطلب الدخول", await p2.waitForSelector('input[type="password"]', { timeout: 15000 }).then(() => true, () => false));
   await login(p2, "e2e-owner@kanaf.test");
   await p2.waitForSelector(`a[href="/users/${u.id}"]`, { timeout: 15000 });
   ok("U3 وبعد الدخول: الشاشة نفسها بفلترها، والنتيجة نفسها", new URL(p2.url()).pathname === "/users" && (await p2.inputValue('input[placeholder="اسم أو بريد أو معرّف…"]')) === "سارة" && (await p2.$$eval("tbody tr", (t) => t.length)) === 1, p2.url());

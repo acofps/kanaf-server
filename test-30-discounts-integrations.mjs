@@ -104,8 +104,19 @@ try {
   /* ================= L) لا ربط بالدفع ================= */
   const scan = ["payments", "invoicing", "mail", "notifications", "auth", "userdata", "content"].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".js")).map((f) => path.join(d, f)))
     .concat(["billing/subscription.js", "billing/config.js", "index.js"]);
-  const linked = scan.filter((f) => /from\s+["'][^"']*(billing\/discounts|integrations\/)/.test(fs.readFileSync(f, "utf8")));
-  ok(`L1 🔴 لا ملف تشغيلي يستورد الخصم أو التكاملات (${scan.length} ملفاً)`, linked.length === 0, linked.join(" "));
+  /* استثناء واحد صريح (KANAF-ORD-0013 §4.4 و§9.5): قنوات المراسلة تقرأ اعتماداتها المحفوظة (واتساب/SMS)
+     لتعمل أو تُعرض معطّلة — notifications/channels.js يستورد integrations/crypto.js وحده. لا علاقة له بالدفع،
+     وأي استيراد آخر منه (الخصم، أو غير crypto) يُسقط الفحص. */
+  const ALLOWED = { "notifications/channels.js": /from\s+["']\.\.\/integrations\/crypto\.js["']/g };
+  const linked = scan.filter((f) => {
+    const src = fs.readFileSync(f, "utf8").replace(ALLOWED[f] || /$^/, "");
+    return /from\s+["'][^"']*(billing\/discounts|integrations\/)/.test(src);
+  });
+  ok(`L1 🔴 لا ملف تشغيلي يستورد الخصم أو التكاملات (${scan.length} ملفاً؛ استثناء قنوات المراسلة لـcrypto وحده)`, linked.length === 0, linked.join(" "));
+  /* L1b — مسار الدفع كله (ومعه التجديد التلقائي §7) لا يستورد أكواد الخصم ولا كتالوج اعتمادات التكاملات. */
+  const payPath = ["payments", "invoicing", "billing"].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".js") && f !== "discounts.js").map((f) => path.join(d, f)));
+  const payLinked = payPath.filter((f) => /from\s+["'][^"']*(billing\/discounts|\/discounts\.js|integrations\/catalog)/.test(fs.readFileSync(f, "utf8")));
+  ok(`L1b 🔴 مسار الدفع (${payPath.length} ملفاً) بلا أكواد خصم ولا اعتمادات تكاملات`, payLinked.length === 0, payLinked.join(" "));
 
   /* ================= K) التكاملات ================= */
   const SECRET = `sk_test_${"Q".repeat(12)}Zx9WAbcd`;
