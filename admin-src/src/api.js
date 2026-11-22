@@ -75,6 +75,8 @@ export class ApiError extends Error {
       invalid_phone: "الجوال بصيغة دولية: + ثم 8 إلى 15 رقماً.",
       email_already_exists: "هذا البريد مسجّل لحساب آخر.",
       cannot_change_own_pages: "لا تقدر تضيّق صفحاتك بنفسك.",
+      no_open_deletion_request: "لا طلب حذف مفتوح لهذا الحساب — أُتمّ محوه سابقاً أو لم يطلب صاحبه الحذف.",
+      account_not_deactivated: "الحساب غير معطّل — المحو النهائي لحساب طلب صاحبه حذفه فقط.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -194,6 +196,9 @@ export const api = {
   /* KANAF-ORD-0013 §11 */
   listSystemErrors: (params) => req("/system-errors", { params }),
   clearSystemError: (id, reason) => req(`/system-errors/${id}`, { method: "DELETE", params: { reason } }),
+  /* KANAF-ORD-0013 §8 */
+  listCancelledMembers: (params) => req("/cancelled-members", { params }),
+  purgeMember: (id, reason) => req(`/users/${id}/purge`, { method: "POST", body: { reason, confirm: "PURGE" } }),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),

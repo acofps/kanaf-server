@@ -218,12 +218,62 @@ userAccountRouter.post("/account/delete", requireVerifiedUser, async (req, res) 
  * invoices/payments/credit_notes/refunds/subscriptions والسجلات
  * الإدارية، مرتبطة بمعرّف بلا اسم ولا بريد.
  */
+/* ------------------------------------------------------------
+   السجلّ المجهول — KANAF-ORD-0013 §8 (قرار المالك: الاحتفاظ بلا هوية).
+   أعداد وأشهر ومفاتيح محتوى فقط. لا user_id ولا بريد ولا اسم ولا طابع زمني دقيق،
+   والمعرّف gen_random_uuid() من القاعدة لا من أي قيمة أصلية.
+   ------------------------------------------------------------ */
+async function recordCancelledMember(client, userId) {
+  const one = async (sql) => (await client.query(sql, [userId])).rows[0] || {};
+  const month = (col) => `to_char(${col}, 'YYYY-MM')`;
+  const usage = async (table, col) => {
+    const r = await one(`SELECT count(*)::int AS n, ${month(`min(${col})`)} AS f, ${month(`max(${col})`)} AS l FROM ${table} WHERE user_id = $1`);
+    return r.n ? { count: r.n, first_month: r.f, last_month: r.l } : { count: 0 };
+  };
+  const base = await one(`SELECT ${month("created_at")} AS joined, ${month("COALESCE(deleted_at, now())")} AS cancelled,
+                                 GREATEST(0, (COALESCE(deleted_at, now())::date - created_at::date))::int AS days
+                            FROM users WHERE id = $1`);
+  const sub = await one(`SELECT (SELECT plan_id FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1) AS plan,
+                                COALESCE(sum(GREATEST(0, (COALESCE(canceled_at, current_period_end, now())::date - started_at::date))), 0)::int AS days,
+                                bool_or(status = 'canceled') AS any_canceled
+                           FROM subscriptions WHERE user_id = $1`);
+  const services = {
+    daily_logs: await usage("daily_logs", "created_at"),
+    screenings: await usage("screenings", "created_at"),
+    notebooks: await usage("user_notebook_entries", "started_at"),
+    cbt_sessions: await usage("user_cbt_sessions", "started_at"),
+    journeys: await usage("user_journey_enrollments", "started_at"),
+    plans: await usage("user_plans", "created_at"),
+  };
+  const agg = async (sql) => Object.fromEntries((await client.query(sql, [userId])).rows.map((r) => [r.k, r.n]));
+  const completed = {
+    journeys: await agg(`SELECT journey_key AS k, count(*)::int AS n FROM user_journey_enrollments WHERE user_id = $1 AND status = 'completed' GROUP BY 1`),
+    tools: await agg(`SELECT tool_id AS k, count(*)::int AS n FROM user_cbt_sessions WHERE user_id = $1 AND status = 'completed' GROUP BY 1`),
+  };
+  await client.query(
+    `INSERT INTO cancelled_members (joined_month, cancelled_month, membership_days, plan_key, subscription_days, cancel_reason, services, completed, recorded_month)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_char(now(), 'YYYY-MM'))`,
+    [base.joined, base.cancelled, base.days ?? 0, sub.plan || null, sub.plan ? sub.days : null,
+     sub.any_canceled ? "account_deleted_after_subscription_cancel" : "account_deleted_by_member",
+     JSON.stringify(services), JSON.stringify(completed)]);
+}
+
 export async function purgeDeletedAccount(userId, { policy } = {}) {
   if (!policy || typeof policy !== "string") throw new Error("purge_policy_required");
   return withTransaction(async (client) => {
     const { rows: u } = await client.query(`SELECT id, email, deleted_at FROM users WHERE id = $1 FOR UPDATE`, [userId]);
     if (!u[0]) throw new Error("user_not_found");
     if (!u[0].deleted_at) throw new Error("account_not_deactivated");
+    /* KANAF-ORD-0013 §8: محو واحد لكل طلب. بلا هذا الحارس كان محو ثانٍ للحساب نفسه
+       يكتب سجلاً مجهولاً ثانياً لشخص واحد (ويحرّف أعداد «الأعضاء الملغون»). */
+    const { rows: open } = await client.query(
+      `SELECT id FROM account_deletion_requests WHERE user_id = $1 AND status = 'deactivated' FOR UPDATE`, [userId]);
+    if (!open[0]) throw new Error("no_open_deletion_request");
+
+    /* KANAF-ORD-0013 §8: السجلّ المجهول يُكتب قبل المحو، في المعاملة نفسها — يُحفظ ما
+       قرّر المالك إبقاءه (أعداد وأشهر ومفاتيح محتوى) ولا شيء يربطه بالحساب. */
+    await recordCancelledMember(client, userId);
+
     const counts = {};
     const del = async (label, sql, params = [userId]) => { counts[label] = (await client.query(sql, params)).rowCount; };
     await del("daily_logs", `DELETE FROM daily_logs WHERE user_id = $1`);
@@ -249,9 +299,11 @@ export async function purgeDeletedAccount(userId, { policy } = {}) {
       `UPDATE users SET name = 'حساب محذوف', email = $2, password_hash = '!deleted', photo_url = NULL,
          age_range = NULL, gender = NULL, pin_hash = NULL, reminders_on = false, marketing_opt_out = true, updated_at = now()
        WHERE id = $1`, [userId, `deleted+${userId}@deleted.invalid`]);
+    /* purge_counts: أسماء الجداول التي مُحيت وحدها، بلا أعداد. الأعداد كانت ستطابق
+       أعداد الخدمات في السجل المجهول فتربطه بالحساب بالمقارنة (KANAF-ORD-0013 §8.1). */
     await client.query(
       `UPDATE account_deletion_requests SET status = 'purged', purged_at = now(), purge_policy = $2, purge_counts = $3
-       WHERE user_id = $1 AND status = 'deactivated'`, [userId, policy, JSON.stringify(counts)]);
+       WHERE user_id = $1 AND status = 'deactivated'`, [userId, policy, JSON.stringify({ tables: Object.keys(counts).filter((k) => counts[k] > 0).sort() })]);
     return counts;
   });
 }

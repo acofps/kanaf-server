@@ -118,6 +118,8 @@ try {
   await call("POST", "/api/me/screenings", { ...SCR, clientRef: crypto.randomUUID() }, C.token);
   const before = await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [C.id]);
   await query(`UPDATE users SET deleted_at = now() WHERE id = $1`, [C.id]); // fixture: حساب معطَّل بانتظار الحذف النهائي
+  // ORD-0013 §8: مسار الحذف الحقيقي يكتب طلب الحذف في المعاملة نفسها، والمحو يشترطه الآن (محو واحد لكل طلب).
+  await query(`INSERT INTO account_deletion_requests (user_id) VALUES ($1)`, [C.id]);
   const pc = await purgeDeletedAccount(C.id, { policy: "TEST_ONLY_not_an_approved_policy" });
   ok("W11 purge removes the account's receipts (1 → 0) and reports the count", before === 1 && pc.user_write_receipts === 1
     && await count(`SELECT count(*) n FROM user_write_receipts WHERE user_id = $1`, [C.id]) === 0, JSON.stringify(pc));

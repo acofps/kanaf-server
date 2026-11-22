@@ -347,6 +347,21 @@ function UserDetail({ id, tab, me, toast }) {
                 </Row>
               )}
 
+              {/* KANAF-ORD-0013 §8: المحو النهائي لحساب طلب صاحبه حذفه — للمالك وحده، ولا رجعة. */}
+              {u.account_status === "deleted" && can(me, "members:purge") && (
+                <div className="mt-4 rounded-xl p-3" style={{ background: C.surfaceAlt }}>
+                  <p className="text-[11px] leading-6 mb-2" style={{ color: C.textMuted }}>
+                    طلب العضو حذف حسابه فعُطّل. المحو النهائي يمحو بياناته النفسية والشخصية ويكتب سجلاً مجهولاً في «الأعضاء الملغون».
+                    الفواتير الصادرة تبقى. <b>لا رجعة فيه.</b>
+                  </p>
+                  <Button variant="danger" onClick={() => setReason({
+                    title: "إتمام الحذف النهائي", danger: true, confirmLabel: "محو نهائي",
+                    description: "يُمحى كل ما يخص العضو ولا يمكن استرجاعه. يبقى سجل مجهول لا يُردّ إليه، والفواتير كما صدرت.",
+                    run: async (r) => { await api.purgeMember(id, r); toast("أُتمّ المحو النهائي."); state.reload(); },
+                  })}>إتمام الحذف النهائي</Button>
+                </div>
+              )}
+
               {canSuspend && u.account_status !== "deleted" && (
                 <div className="flex gap-2 mt-4">
                   {u.account_status === "suspended" ? (

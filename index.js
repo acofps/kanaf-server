@@ -11,6 +11,7 @@ import { ADMIN_MIN_PASSWORD_LENGTH } from "./admin/password-rule.js";
 import { subscribersRouter } from "./admin/subscribers.js";
 import { recordError } from "./ops/error-log.js";
 import { systemErrorsRouter } from "./admin/system-errors.js";
+import { membersRouter } from "./admin/members.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
 import { sendEmail, verifySmtpConnection } from "./mail/send.js";
@@ -984,6 +985,7 @@ app.use("/admin", integrationsRouter); // KANAF-ORD-0008 §7 — اعتمادا�
 app.use("/admin", userEditRouter); // KANAF-ORD-0013 §4.3 — تعديل ملف العميل
 app.use("/admin", subscribersRouter); // KANAF-ORD-0013 §6 — الاشتراكات
 app.use("/admin", systemErrorsRouter); // KANAF-ORD-0013 §11 — سجلّ أخطاء النظام
+app.use("/admin", membersRouter); // KANAF-ORD-0013 §8 — الأعضاء الملغون
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
