@@ -6,6 +6,7 @@ import { withDocumentSlot } from "../invoicing/slot.js";
 import { recordRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "./refund.js";
 import { activateOrExtendSubscription, markPastDueIfEntitled } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
+import { captureCardAfterPayment } from "../billing/payment-methods.js";
 
 /* ============================================================
    معالج الـWebhook — المكان الوحيد الذي تتغيّر فيه الحالة المالية
@@ -482,6 +483,12 @@ export async function settlePaymentEvent({ eventType, body, source, webhookEvent
     result.invoiceNumber = await issueInvoiceDocument(result.invoiceId);
     result.documentIssued = Boolean(result.invoiceNumber);
     delete result.needsInvoiceDocument;
+  }
+  /* KANAF-ORD-0013 §7.1: رمز البطاقة (إن طلب التطبيق حفظها) يُحفظ بعد تثبيت المال، في معاملته
+     المستقلة، ولا يرمي. خلف AUTORENEW_ENABLED — معطَّل = لا شيء يُحفظ. */
+  if (eventType === "payment_paid" && (result.outcome === "subscription_activated" || result.outcome === "renewal_activated")) {
+    const card = await captureCardAfterPayment(result.invoiceId, body?.data);
+    if (card.saved) result.cardSaved = true;
   }
   if (result.needsCreditNote) {
     result.creditNoteNumber = await issueCreditNoteDocument(result.refundId);

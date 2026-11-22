@@ -13,6 +13,8 @@ import { recordError } from "./ops/error-log.js";
 import { systemErrorsRouter } from "./admin/system-errors.js";
 import { membersRouter } from "./admin/members.js";
 import { messageCatalogRouter } from "./admin/message-catalog.js";
+import { adminAutorenewRouter } from "./admin/autorenew.js";
+import { autorenewRouter } from "./billing/autorenew-routes.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
 import { sendEmail, verifySmtpConnection } from "./mail/send.js";
@@ -988,6 +990,7 @@ app.use("/admin", subscribersRouter); // KANAF-ORD-0013 §6 — الاشتراك
 app.use("/admin", systemErrorsRouter); // KANAF-ORD-0013 §11 — سجلّ أخطاء النظام
 app.use("/admin", membersRouter); // KANAF-ORD-0013 §8 — الأعضاء الملغون
 app.use("/admin", messageCatalogRouter); // KANAF-ORD-0013 §9 — محتوى الإشعارات وقوالبها
+app.use("/admin", adminAutorenewRouter); // KANAF-ORD-0013 §7.8 — التجديد التلقائي (عرض وإيقاف)
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
@@ -1089,6 +1092,7 @@ app.post("/api/setup/run-migrations", async (req, res) => {
 });
 
 app.use("/api/payments", paymentsRouter);
+app.use("/api/billing/autorenew", autorenewRouter); // KANAF-ORD-0013 §7 — خلف AUTORENEW_ENABLED (الإلغاء متاح دائماً)
 
 /* ---------------------------------------------------------
    Admin UI — served from this same origin, on purpose.

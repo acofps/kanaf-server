@@ -289,6 +289,12 @@ export async function purgeDeletedAccount(userId, { policy } = {}) {
     await del("user_reminder_prefs", `DELETE FROM user_reminder_prefs WHERE user_id = $1`);
     await del("user_notifications", `DELETE FROM user_notifications WHERE user_id = $1`);
     await del("push_subscriptions", `DELETE FROM push_subscriptions WHERE user_id = $1`);
+    /* KANAF-ORD-0013 §7: رمز البطاقة ونصّ الموافقة (يذكر آخر أربعة أرقام) يُمحيان. الفواتير والدفعات
+       الناتجة عن تجديدات سابقة باقية كما صدرت (سجلات مالية)، ودورات التجديد أثر تشغيلي يُمحى معها. */
+    await del("renewal_attempts", `DELETE FROM renewal_attempts WHERE cycle_key IN (SELECT cycle_key FROM renewal_cycles WHERE user_id = $1)`);
+    await del("renewal_cycles", `DELETE FROM renewal_cycles WHERE user_id = $1`);
+    await del("autorenew_consents", `DELETE FROM autorenew_consents WHERE user_id = $1`);
+    await del("payment_methods", `DELETE FROM payment_methods WHERE user_id = $1`);
     await del("user_sessions", `DELETE FROM user_sessions WHERE user_id = $1`);
     // إيصالات منع التكرار (014): معرّفات فقط، لكن الحذف النهائي يشملها — الحساب يُجهَّل لا يُحذف فلا يعمل CASCADE.
     await del("user_write_receipts", `DELETE FROM user_write_receipts WHERE user_id = $1`);

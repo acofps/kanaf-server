@@ -114,7 +114,7 @@ export const MESSAGES = {
   renewal_stopped: { label: "توقّف التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "توقّف التجديد التلقائي — تنفس", body: RENEWAL_STOPPED, vars: ["name", "plan"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية" } },
 };
 
-const PH = /\{\{\s*([a-z_]+)\s*\}\}/g;
+const PH = /\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g;
 
 /** 9.2: يعيد رمز الخطأ أو null. */
 export function validateMessageText(key, subject, body) {

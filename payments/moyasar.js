@@ -120,6 +120,31 @@ export async function refundPayment(paymentId, amountSar) {
 }
 
 /**
+ * خصم بالرمز المحفوظ — KANAF-ORD-0013 §7 (التجديد التلقائي، خلف AUTORENEW_ENABLED).
+ *
+ * ⚠️ غير مُختبَر على Moyasar الحقيقي (الجلسة بلا وصول إلى المزوّد ولا إلى توثيقه).
+ *    ثلاث نقاط يجب التحقق منها في بيئة sk_test_ قبل أي تفعيل:
+ *    1) source.type = "token" هو شكل الخصم بالرمز لدى Moyasar،
+ *    2) given_id يجعل الطلب آمناً للتكرار (نفس المعرّف = نفس الدفعة، لا دفعة ثانية)،
+ *    3) هل يُطلب callback_url أو 3-D Secure لخصم يبدؤه التاجر بلا حضور العميل.
+ *    لا يُمرَّر callback_url هنا: ضبط عنوان الرجوع وإعداد المزوّد خارج هذا الأمر (§7).
+ */
+export async function createTokenPayment({ token, amountHalalas, currency = "SAR", givenId, description, metadata }) {
+  if (!Number.isInteger(amountHalalas) || amountHalalas <= 0) throw new Error("createTokenPayment: مبلغ غير صالح");
+  return moyasarRequest("/payments", {
+    method: "POST",
+    body: {
+      given_id: givenId,
+      amount: amountHalalas,
+      currency,
+      description,
+      source: { type: "token", token },
+      ...(metadata ? { metadata } : {}),
+    },
+  });
+}
+
+/**
  * قائمة الأحداث التي يدعمها المزوّد فعلاً.
  *
  * موجودة لأن سكربت تسجيل الـwebhook كان يسجّل حدثين فقط

@@ -4,6 +4,7 @@ import net from "node:net";
 
 export async function startSmtpSink() {
   const inbox = [];
+  const ctl = { reject: null }; // ctl.reject = (rcptLine) => true يرفض المستلم بـ550 (فشل تسليم حقيقي)
   const smtp = net.createServer((sock) => {
     let buf = "", state = "cmd", msg = { from: "", to: [], data: "" };
     const say = (s) => sock.write(s + "\r\n");
@@ -29,7 +30,7 @@ export async function startSmtpSink() {
         else if (cmd.startsWith("AUTH PLAIN")) say("235 ok");
         else if (cmd.startsWith("AUTH LOGIN")) { state = "auth-user"; say("334 VXNlcm5hbWU6"); }
         else if (cmd.startsWith("MAIL FROM")) { msg.from = line; say("250 OK"); }
-        else if (cmd.startsWith("RCPT TO")) { msg.to.push(line); say("250 OK"); }
+        else if (cmd.startsWith("RCPT TO")) { if (ctl.reject && ctl.reject(line)) say("550 mailbox unavailable"); else { msg.to.push(line); say("250 OK"); } }
         else if (cmd === "DATA") { state = "data"; say("354 end with ."); }
         else if (cmd === "QUIT") { say("221 bye"); sock.end(); }
         else say("250 OK");
@@ -42,7 +43,7 @@ export async function startSmtpSink() {
     EMAIL_FROM: "تنفس <noreply@tanfs.net>",
   });
   const waitMail = async (n) => { for (let i = 0; i < 150 && inbox.length < n; i++) await new Promise((r) => setTimeout(r, 30)); };
-  return { inbox, waitMail, close: () => smtp.close() };
+  return { inbox, waitMail, ctl, close: () => smtp.close() };
 }
 
 /** أجزاء الرسالة بعد فكّ ترميزها: [{type, head, text}] */
