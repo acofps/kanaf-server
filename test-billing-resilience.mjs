@@ -67,7 +67,7 @@ try {
   await query(`INSERT INTO subscription_plans (plan_key,name,price_sar,duration_days,display_order)
                VALUES ('monthly','الباقة الشهرية',29.00,30,1) ON CONFLICT (plan_key) DO NOTHING`);
   await query(`INSERT INTO billing_settings (singleton) VALUES (true) ON CONFLICT (singleton) DO NOTHING`);
-  await query(`INSERT INTO tax_settings (singleton,legal_name,vat_number) VALUES (true,'مؤسسة كنف','300000000000003')
+  await query(`INSERT INTO tax_settings (singleton,legal_name,vat_number) VALUES (true,'مؤسسة تنفس بحرية','300000000000003')
                ON CONFLICT (singleton) DO UPDATE SET legal_name=EXCLUDED.legal_name`);
   await query(`INSERT INTO admin_users (id,name,email,password_hash,role) VALUES ($1,'م','o@k.test','x','owner')`, [ADMIN_ID]);
   CURRENT_ADMIN = { id: ADMIN_ID, role: "owner" };

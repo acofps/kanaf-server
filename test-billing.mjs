@@ -78,7 +78,7 @@ function makeWebhookBody(type, { providerInvoiceId, amountSar, metadata, payment
     refunded: refundedSar !== undefined ? Math.round(refundedSar * 100) : 0,
     refunded_amount: refundedSar !== undefined ? Math.round(refundedSar * 100) : 0,
     invoice_id: providerInvoiceId || null,
-    description: "اشتراك كنف+",
+    description: "اشتراك تنفس+",
     source: { type: "creditcard", company: "mada", number: "XXXXXXXXXXXX4444", message: message || null },
     metadata: metadata || {},
   };
@@ -192,7 +192,7 @@ async function run() {
   await query(`INSERT INTO billing_settings (singleton) VALUES (true) ON CONFLICT (singleton) DO UPDATE SET vat_rate = 0.15, currency = 'SAR', reporting_timezone = 'Asia/Riyadh'`);
   await query(`INSERT INTO admin_users (id, name, email, password_hash, role) VALUES ($1,'مالك','owner@kanaf.test','x','owner')`, [ADMIN_ID]);
   await query(`INSERT INTO tax_settings (singleton, legal_name, vat_number, address)
-               VALUES (true,'مؤسسة كنف','300000000000003','الرياض')
+               VALUES (true,'مؤسسة تنفس بحرية','300000000000003','الرياض')
                ON CONFLICT (singleton) DO UPDATE SET legal_name = EXCLUDED.legal_name`);
   CURRENT_ADMIN = { id: ADMIN_ID, role: "owner" };
 

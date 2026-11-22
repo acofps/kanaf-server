@@ -109,7 +109,7 @@ export async function generateAndStoreInvoice({
   // لقطة ما طُبع فعلاً — مجمَّدة، لا تتأثر بأي تعديل لاحق على
   // الإعدادات الضريبية أو على اسم الباقة أو سعرها.
   const lineItems = [{
-    description: `اشتراك كنف+ — ${planName}`,
+    description: `اشتراك تنفس+ — ${planName}`,
     plan_key: planKey || null,
     quantity: 1,
     unit_price_sar: Number(totalFormatted) + discount,

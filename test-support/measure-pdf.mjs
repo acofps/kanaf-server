@@ -46,7 +46,7 @@ await import("../index.js");
 const { query, pool } = await import("../db/pool.js");
 const B = "http://127.0.0.1:4651";
 await new Promise((r) => setTimeout(r, 500));
-await query(`INSERT INTO tax_settings (singleton, legal_name, vat_number, address) VALUES (true, 'مؤسسة اختبار كنف', '399999999900003', 'جدة') ON CONFLICT (singleton) DO NOTHING`);
+await query(`INSERT INTO tax_settings (singleton, legal_name, vat_number, address) VALUES (true, 'مؤسسة اختبار تنفس بحرية', '399999999900003', 'جدة') ON CONFLICT (singleton) DO NOTHING`);
 
 /* PSS لشجرة العمليات: هذه العملية + أبناؤها (Chromium) */
 function treeRssMB() {

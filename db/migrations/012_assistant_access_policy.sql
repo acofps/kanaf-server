@@ -10,5 +10,5 @@
 -- ============================================================
 INSERT INTO app_settings (key, value, category, description) VALUES
   ('assistant_access_policy', '"all_verified"'::jsonb, 'general',
-   'من يصل إلى سند والخطة الأسبوعية: all_verified (أي حساب موثّق) أو plus_only (مشترك كنف+ مستحق)')
+   'من يصل إلى سند والخطة الأسبوعية: all_verified (أي حساب موثّق) أو plus_only (مشترك تنفس+ مستحق)')
 ON CONFLICT (key) DO NOTHING;

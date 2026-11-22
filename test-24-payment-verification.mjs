@@ -123,7 +123,7 @@ try {
   await query(`INSERT INTO subscription_plans (plan_key,name,price_sar,duration_days,display_order)
                VALUES ('monthly','الباقة الشهرية',29.00,30,1), ('yearly','الباقة السنوية',290.00,365,2) ON CONFLICT (plan_key) DO NOTHING`);
   await query(`INSERT INTO billing_settings (singleton) VALUES (true) ON CONFLICT (singleton) DO NOTHING`);
-  await query(`INSERT INTO tax_settings (singleton,legal_name,vat_number) VALUES (true,'مؤسسة كنف','300000000000003')
+  await query(`INSERT INTO tax_settings (singleton,legal_name,vat_number) VALUES (true,'مؤسسة تنفس بحرية','300000000000003')
                ON CONFLICT (singleton) DO UPDATE SET legal_name=EXCLUDED.legal_name`);
   for (const role of ["owner", "admin", "accountant", "support", "content_manager"]) {
     ADMINS[role] = crypto.randomUUID();

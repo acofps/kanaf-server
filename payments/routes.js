@@ -111,7 +111,7 @@ paymentsRouter.post("/create-invoice", requireVerifiedUser, async (req, res) => 
     const invoice = await createInvoice({
       amountSar: Number(plan.price_sar),
       currency: settings.currency,
-      description: `اشتراك كنف+ — ${plan.name}`,
+      description: `اشتراك تنفس+ — ${plan.name}`,
       callbackUrl: `${process.env.SERVER_BASE_URL || "http://localhost:3001"}/api/payments/webhook`,
       successUrl: `${BASE_URL}/subscription/success?invoice=${invoiceId}`,
       backUrl: `${BASE_URL}/subscription/canceled`,

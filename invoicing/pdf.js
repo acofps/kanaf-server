@@ -96,7 +96,7 @@ export async function generateInvoicePdf({ taxSettings, invoice, settings = BILL
     paymentMethod: PAYMENT_METHOD_LABEL,
     paymentInstrument: instrument,
     items: [{
-      description: `اشتراك كنف+ ${"—"} ${invoice.planName}`,
+      description: `اشتراك تنفس+ ${"—"} ${invoice.planName}`,
       period: periodLabel(invoice.periodStart, invoice.periodEnd),
       quantity: 1,
       paymentMethod: PAYMENT_METHOD_LABEL,
@@ -157,7 +157,7 @@ export async function generateCreditNotePdf({ taxSettings, creditNote, settings 
     paymentMethod: PAYMENT_METHOD_LABEL,
     paymentInstrument: instrument,
     items: [{
-      description: `استرداد اشتراك كنف+ ${"—"} ${creditNote.planName}`,
+      description: `استرداد اشتراك تنفس+ ${"—"} ${creditNote.planName}`,
       period: null,
       quantity: 1,
       paymentMethod: PAYMENT_METHOD_LABEL,
