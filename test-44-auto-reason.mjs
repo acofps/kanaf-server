@@ -90,6 +90,26 @@ try {
   ok("C3 القراءة العادية لا تُعطى سبباً", autoReasonFor("GET", "/users") === null);
   ok("C4 لا نصّ في الجدول فارغ أو شرطة، ولا نصّان متطابقان لمسارين مختلفين بلا قصد", AUTO_REASONS.every(([, , t]) => !BAD(t) && t.length >= 8));
 
+  /* ---------- C5/C6 — KANAF-ORD-0014 §2.6 ---------- */
+  const { logAdminAction: lA, logSensitiveAccess: lS } = await import("./admin/middleware.js");
+  const rejects = async (fn) => { try { await fn(); return false; } catch { return true; } };
+  ok("C5 كاتبا السجلين يرفضان سبباً فارغاً أو شرطةً وحدها (لا يُكتب «—» أبداً)",
+    (await rejects(() => lA({ adminUserId: null, action: "x", reason: "—" }))) && (await rejects(() => lA({ adminUserId: null, action: "x", reason: " - " })))
+    && (await rejects(() => lS({ adminUserId: null, action: "x", reason: "" }))) && (await rejects(() => lS({ adminUserId: null, action: "x", reason: "–" }))));
+  const callSites = ["admin", "billing", "notifications", "userdata", "auth", "ops"].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".js")).map((f) => `${d}/${f}`));
+  /* داخل وسائط كاتبَي السجلين وحدها: ما يُمرَّر reason لهما لا يحمل شرطة أو فراغاً احتياطياً. */
+  const auditCalls = [];
+  for (const f of callSites) {
+    const src = fs.readFileSync(f, "utf8");
+    for (const m of src.matchAll(/\b(logAdminAction|logSensitiveAccess)\(\{/g)) {
+      let d = 0, j = src.indexOf("{", m.index);
+      for (let k = j; k < src.length; k++) { if (src[k] === "{") d++; else if (src[k] === "}" && --d === 0) { j = k; break; } }
+      auditCalls.push([`${f}:${src.slice(0, m.index).split("\n").length}`, src.slice(m.index, j + 1)]);
+    }
+  }
+  const dashFallback = auditCalls.filter(([, body]) => /\breason\s*:[^,\n]*\|\|\s*["'`][\s\-–—]*["'`]/.test(body)).map(([w]) => w);
+  ok(`C6 لا نداء من ${auditCalls.length} لكاتبَي السجلين يضع شرطة أو فراغاً احتياطياً للسبب`, auditCalls.length >= 50 && dashFallback.length === 0, dashFallback.join(" "));
+
   /* ---------- N) ---------- */
   const { rows: [nb] } = await query(`SELECT
       (SELECT count(*)::int FROM admin_action_log WHERE btrim(reason) IN ('', '-', '—', '–')) AS actions,

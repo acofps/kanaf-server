@@ -217,8 +217,11 @@ export function requireUuidParam(name = "id") {
  * التطبيق، وهي خطوة يملكها مالك القاعدة وحده — موثّقة في
  * الترحيل 008 §5 وفي البند 12.19.
  */
+/* KANAF-ORD-0014 §2.6: سبب من شرطة وحدها («-» أو «—») فراغ مقنَّع — يُرفض كالفارغ. */
+const BLANK_REASON = (r) => !r || !String(r).trim() || /^[\s\-–—]+$/.test(String(r));
+
 export async function logSensitiveAccess({ adminUserId, targetUserId = null, action, reason, ipAddress = null }) {
-  if (!reason || !reason.trim()) {
+  if (BLANK_REASON(reason)) {
     throw new Error("logSensitiveAccess: a non-empty reason is required");
   }
   await query(
@@ -269,7 +272,7 @@ export async function logAdminAction({
   entity = null, entityId = null,
   oldValue = null, newValue = null, reason, metadata = null, ipAddress = null,
 }) {
-  if (!reason || !String(reason).trim()) {
+  if (BLANK_REASON(reason)) {
     throw new Error("logAdminAction: a non-empty reason is required");
   }
 

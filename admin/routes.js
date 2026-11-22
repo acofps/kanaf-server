@@ -829,7 +829,7 @@ adminRouter.post(
         entity: "subscription", entityId: result.subscriptionId,
         oldValue: { status: result.previousStatus },
         newValue: { mode: result.mode, status: result.mode === "immediate" ? "canceled" : "canceling" },
-        reason: reason || "—", metadata: { user_id: req.params.id }, ipAddress: req.ip,
+        reason: reason || "إجراء على اشتراك العميل من اللوحة", metadata: { user_id: req.params.id }, ipAddress: req.ip,
       });
 
       res.json({ ok: true, ...result });
@@ -883,7 +883,7 @@ adminRouter.post(
         entity: "payment", entityId: payment.id,
         oldValue: { payment_status: payment.status, refunded_amount: Number(payment.refunded_amount) },
         newValue: { kind: result.kind, refunded_amount: result.totalRefunded, credit_note: result.creditNoteNumber },
-        reason: reason || "—", metadata: { user_id: req.params.id }, ipAddress: req.ip,
+        reason: reason || "إجراء على اشتراك العميل من اللوحة", metadata: { user_id: req.params.id }, ipAddress: req.ip,
       });
 
       res.json({ ok: true, kind: result.kind, amount: result.amount, creditNoteNumber: result.creditNoteNumber || null });

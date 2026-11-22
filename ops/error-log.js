@@ -34,8 +34,15 @@ const RULES = [
   [/=\((?:[^()]|\([^()]*\))*\)/g, "=([…])"],
   [/\b\d{1,3}(\.\d{1,3}){3}(:\d+)?\b/g, "[ip]"],
   [/\+?\b\d[\d\s-]{7,}\d\b/g, "[number]"],
+  /* KANAF-ORD-0014 §2.6: رمز تحقق أو استعادة (4–8 أرقام مستقلة) كان يمرّ — القاعدة السابقة تبدأ من 9.
+     ما يتبع «:» يبقى (موضع السطر والعمود في مسار الاستدعاء: routes.js:1146:12). */
+  [/(?<![:\w.\/-])\d{4,8}(?![\w:])/g, "[number]"],
+  /* ونصّ المستخدم في هذا التطبيق عربي: كان يُحذف مقتبساً فقط، ويمرّ إن جاء بلا علامتي تنصيص. */
+  [/[\u0600-\u06FF]+(?:[\s\u060C\u061B\u061F.!—-]+[\u0600-\u06FF]+)*/g, "[نص]"],
   [/\b[A-Fa-f0-9]{24,}\b/g, "[hex]"],
-  [/\b[A-Za-z0-9+/_-]{32,}={0,2}/g, "[secret]"],
+  /* بلا «/»: مسار ملف طويل (/opt/render/project/src/admin/routes.js) كان يُبتلع كله «[secret]»
+     فيفقد مسار الاستدعاء أسماء ملفاته. الرموز ذات الشكل المعروف (JWT، sk_…، Bearer) لها قواعدها أعلاه. */
+  [/\b[A-Za-z0-9+_-]{32,}={0,2}/g, "[secret]"],
 ];
 
 /** تنقية نصّ خطأ — مُصدَّرة ليختبرها test-39 مباشرةً. */
@@ -68,7 +75,9 @@ async function cleanupIfDue() {
 export function recordError(err, { location, status = null } = {}) {
   return (async () => {
     try {
-      const kind = sanitizeErrorText(err?.code || err?.name || "Error", 60);
+      // رمز الخطأ (23505، ECONNREFUSED، TypeError) تشخيص لا بيانات: يبقى كما هو إن كان بهذا الشكل وحده.
+      const rawKind = String(err?.code || err?.name || "Error");
+      const kind = /^[A-Za-z0-9_]{1,40}$/.test(rawKind) ? rawKind : sanitizeErrorText(rawKind, 60);
       const message = sanitizeErrorText(err?.message || err, 500);
       const stack = err?.stack ? sanitizeErrorText(String(err.stack).split("\n").slice(1, 15).join("\n"), 4000) : null;
       const where = normalizeLocation(location);
