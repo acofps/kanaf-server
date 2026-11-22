@@ -201,7 +201,7 @@ export default function App() {
         <button onClick={() => setNavOpen((v) => !v)} aria-label="القائمة">
           {navOpen ? <X size={18} color={C.text} /> : <Menu size={18} color={C.text} />}
         </button>
-        <span className="text-sm font-bold" style={{ color: C.text }}>لوحة تنفس</span>
+        <span className="text-sm font-bold" style={{ color: C.text }}>لوحة تنفس بحرية</span>
         <div className="flex items-center gap-2">
           <ThemeToggle mode={mode} onToggle={toggleMode} />
           <button onClick={logout} aria-label="خروج"><LogOut size={16} color={C.textMuted} /></button>
@@ -216,7 +216,7 @@ export default function App() {
           <div className="hidden lg:flex items-center gap-2.5 mb-6 px-1">
             <img src="/favicon.svg" alt="" width="36" height="36" className="shrink-0" />
             <div className="min-w-0">
-              <h1 className="text-base font-bold leading-tight" style={{ color: C.text }}>لوحة تنفس</h1>
+              <h1 className="text-base font-bold leading-tight" style={{ color: C.text }}>لوحة تنفس بحرية</h1>
               <p className="text-[11px] mt-0.5 truncate" style={{ color: C.textFaint }}>
                 {me.name} · {ROLE_LABEL[me.role] || me.role}
               </p>

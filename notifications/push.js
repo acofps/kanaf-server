@@ -39,8 +39,8 @@ let configured = null;
 
    كان: VAPID_SUBJECT || `mailto:${EMAIL_FROM || "support@kanaf.me"}`.
    وVAPID_SUBJECT لم يكن موثَّقاً في .env.example، فالعامل فعلياً هو
-   الاحتياطي. وEMAIL_FROM حقل عرض («تنفس <noreply@…>»)، فيخرج
-   «mailto:تنفس <noreply@…>». ومكتبة web-push **تقبله بصمت** وتوقّع به
+   الاحتياطي. وEMAIL_FROM حقل عرض («تنفس بحرية <noreply@…>»)، فيخرج
+   «mailto:تنفس بحرية <noreply@…>». ومكتبة web-push **تقبله بصمت** وتوقّع به
    كل إشعار (تحقّقتُ: الـJWT يحمل sub بهذا النص حرفياً)، ثم يرفضه مزوّد
    الإشعار عند التسليم. أي أن العطل لا يظهر عند الإقلاع بل كإشعارات لا تصل.
 

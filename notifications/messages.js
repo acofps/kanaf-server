@@ -5,7 +5,7 @@ import { renderEmail, footerLinks } from "./email-template.js";
    رسائل النظام: النص والقالب والقنوات — KANAF-ORD-0013 §9
 
    سجلّ واحد لكل رسالة يرسلها النظام (الجرد في docs/ord-0013/MESSAGES_INVENTORY.md).
-   لكل رسالة: نصّ افتراضي في الكود (مطابق حرفاً لما كان يُرسل قبل هذا الأمر)،
+   لكل رسالة: نصّ افتراضي في الكود (كان مطابقاً حرفاً لما يُرسل قبل هذا الأمر، ثم صار الاسم فيه «تنفس بحرية» — ملحق ORD-0013 الثاني، القرار 5)،
    ومواضع ({{code}}…) معروفة، وأخرى إلزامية، وقنوات مسموحة وأخرى إلزامية.
 
    ما يحفظه المالك في message_definitions يعلو الافتراضي. وغياب الصف = الافتراضي،
@@ -18,37 +18,37 @@ import { renderEmail, footerLinks } from "./email-template.js";
 
 const VERIFY = `أهلاً {{name}}،
 
-كود تأكيد بريدك في تنفس: {{code}}
+كود تأكيد بريدك في تنفس بحرية: {{code}}
 
 الكود صالح لمدة {{minutes}} دقائق.
 إذا ما طلبت هذا الكود، تجاهل الرسالة ولا تشاركها مع أحد.
 
-فريق تنفس
+فريق تنفس بحرية
 tanfs.net`;
 
 const RESET = `أهلاً {{name}}،
 
-كود استعادة كلمة المرور في تنفس: {{code}}
+كود استعادة كلمة المرور في تنفس بحرية: {{code}}
 
 الكود صالح لمدة {{minutes}} دقائق، ويُستخدم مرة واحدة.
 إذا ما طلبت استعادة كلمة المرور، تجاهل الرسالة — كلمة مرورك ما تغيّرت ولا يحتاج منك أي إجراء.
 
-فريق تنفس
+فريق تنفس بحرية
 tanfs.net`;
 
 const EXISTING = `أهلاً {{name}}،
 
-وصلنا طلب إنشاء حساب في تنفس بهذا البريد، وعندك حساب مسجّل مسبقاً.
+وصلنا طلب إنشاء حساب في تنفس بحرية بهذا البريد، وعندك حساب مسجّل مسبقاً.
 
 لو كنت أنت: سجّل الدخول مباشرة من app.tanfs.net
 لو ما كنت أنت: ما صار شيء، حسابك بأمان ولا يحتاج أي إجراء.
 
-فريق تنفس
+فريق تنفس بحرية
 tanfs.net`;
 
 const ADMIN_INVITE = `مرحباً {{name}}،
 
-أُنشئ لك حساب في لوحة إدارة تنفس بصلاحية «{{role}}».
+أُنشئ لك حساب في لوحة إدارة تنفس بحرية بصلاحية «{{role}}».
 
 لتفعيل حسابك واختيار كلمة مرورك، افتح الرابط التالي:
 
@@ -58,11 +58,11 @@ const ADMIN_INVITE = `مرحباً {{name}}،
 
 إذا ما كنت تتوقع هذه الرسالة، تجاهلها — الحساب لا يعمل قبل فتح الرابط.
 
-فريق تنفس`;
+فريق تنفس بحرية`;
 
 const ADMIN_RESET = `مرحباً {{name}}،
 
-وصلنا طلب لإعادة ضبط كلمة مرور حسابك في لوحة إدارة تنفس.
+وصلنا طلب لإعادة ضبط كلمة مرور حسابك في لوحة إدارة تنفس بحرية.
 
 {{url}}
 
@@ -70,7 +70,7 @@ const ADMIN_RESET = `مرحباً {{name}}،
 
 إذا ما طلبت هذا، تجاهل الرسالة — كلمة مرورك الحالية ما زالت تعمل، ويُستحسن تخبر المالك.
 
-فريق تنفس`;
+فريق تنفس بحرية`;
 
 const RENEWAL_NOTICE = `أهلاً {{name}}،
 
@@ -78,13 +78,13 @@ const RENEWAL_NOTICE = `أهلاً {{name}}،
 
 لو ما تبغى التجديد، ألغِ التجديد التلقائي من صفحتك الشخصية في التطبيق قبل هذا التاريخ. اشتراكك الحالي يبقى إلى نهايته.
 
-فريق تنفس`;
+فريق تنفس بحرية`;
 
 const RENEWAL_SUCCEEDED = `أهلاً {{name}}،
 
 تجدّد اشتراكك في «{{plan}}» حتى {{date}}، وخُصم {{amount}}. فاتورتك: {{invoice_number}}.
 
-فريق تنفس`;
+فريق تنفس بحرية`;
 
 const RENEWAL_FAILED = `أهلاً {{name}}،
 
@@ -92,26 +92,26 @@ const RENEWAL_FAILED = `أهلاً {{name}}،
 
 نحاول مرة أخرى في {{next_attempt}}. تقدر تحدّث بطاقتك أو تجدّد يدوياً من التطبيق.
 
-فريق تنفس`;
+فريق تنفس بحرية`;
 
 const RENEWAL_STOPPED = `أهلاً {{name}}،
 
 توقّف التجديد التلقائي لاشتراكك في «{{plan}}» بعد محاولات لم تنجح. اشتراكك يبقى حتى نهاية فترته، وتقدر تجدّد يدوياً من التطبيق في أي وقت.
 
-فريق تنفس`;
+فريق تنفس بحرية`;
 
 /** السجلّ. audience: member (عضو) أو staff (موظف). push/in_app يستعملان subject عنواناً وbody نصاً. */
 export const MESSAGES = {
-  email_verification: { label: "كود التحقق من البريد", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "كود التحقق — تنفس", body: VERIFY, vars: ["name", "code", "minutes"], must: ["code"], sample: { name: "سارة", code: "482913", minutes: 10 } },
-  password_reset: { label: "كود استعادة كلمة المرور", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "استعادة كلمة المرور — تنفس", body: RESET, vars: ["name", "code", "minutes"], must: ["code"], sample: { name: "سارة", code: "482913", minutes: 10 } },
-  existing_account_notice: { label: "إشعار «عندك حساب مسبقاً»", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "محاولة إنشاء حساب — تنفس", body: EXISTING, vars: ["name"], must: [], sample: { name: "سارة" } },
-  admin_invite: { label: "دعوة حساب إدارة", audience: "staff", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "دعوة إلى لوحة إدارة تنفس", body: ADMIN_INVITE, vars: ["name", "url", "hours", "role"], must: ["url"], sample: { name: "أحمد", url: "https://kanaf-server.onrender.com/?setup=example", hours: 48, role: "محاسب" } },
-  admin_password_reset: { label: "إعادة ضبط كلمة مرور الإدارة", audience: "staff", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "إعادة ضبط كلمة مرور لوحة تنفس", body: ADMIN_RESET, vars: ["name", "url", "hours"], must: ["url"], sample: { name: "أحمد", url: "https://kanaf-server.onrender.com/?setup=example", hours: 2 } },
+  email_verification: { label: "كود التحقق من البريد", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "كود التحقق — تنفس بحرية", body: VERIFY, vars: ["name", "code", "minutes"], must: ["code"], sample: { name: "سارة", code: "482913", minutes: 10 } },
+  password_reset: { label: "كود استعادة كلمة المرور", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "استعادة كلمة المرور — تنفس بحرية", body: RESET, vars: ["name", "code", "minutes"], must: ["code"], sample: { name: "سارة", code: "482913", minutes: 10 } },
+  existing_account_notice: { label: "إشعار «عندك حساب مسبقاً»", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "محاولة إنشاء حساب — تنفس بحرية", body: EXISTING, vars: ["name"], must: [], sample: { name: "سارة" } },
+  admin_invite: { label: "دعوة حساب إدارة", audience: "staff", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "دعوة إلى لوحة إدارة تنفس بحرية", body: ADMIN_INVITE, vars: ["name", "url", "hours", "role"], must: ["url"], sample: { name: "أحمد", url: "https://kanaf-server.onrender.com/?setup=example", hours: 48, role: "محاسب" } },
+  admin_password_reset: { label: "إعادة ضبط كلمة مرور الإدارة", audience: "staff", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "إعادة ضبط كلمة مرور لوحة تنفس بحرية", body: ADMIN_RESET, vars: ["name", "url", "hours"], must: ["url"], sample: { name: "أحمد", url: "https://kanaf-server.onrender.com/?setup=example", hours: 2 } },
   daily_reminder: { label: "التذكير اليومي", audience: "member", allowed: ["in_app", "push"], required: ["in_app"], defaults: ["in_app", "push"], subject: "وقت تسجيل يومك", body: "دقيقة وحدة بس: سجّل مزاجك ونومك وطاقتك، وخلّ بوصلتك تقرأ أسبوعك صح.", vars: [], must: [], sample: {} },
-  renewal_notice: { label: "إشعار قبل التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تجديد اشتراكك قريباً — تنفس", body: RENEWAL_NOTICE, vars: ["name", "plan", "date", "amount", "card_last4"], must: ["date", "amount"], sample: { name: "سارة", plan: "الباقة الشهرية", date: "2026-12-20", amount: "29.00 ر.س", card_last4: "4242" } },
-  renewal_succeeded: { label: "تمّ التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تجدّد اشتراكك — تنفس", body: RENEWAL_SUCCEEDED, vars: ["name", "plan", "date", "amount", "invoice_number"], must: ["invoice_number"], sample: { name: "سارة", plan: "الباقة الشهرية", date: "2027-01-20", amount: "29.00 ر.س", invoice_number: "TNFS-INV-000042" } },
-  renewal_failed: { label: "فشل التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تعذّر تجديد اشتراكك — تنفس", body: RENEWAL_FAILED, vars: ["name", "plan", "card_last4", "next_attempt"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية", card_last4: "4242", next_attempt: "2026-12-22" } },
-  renewal_stopped: { label: "توقّف التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "توقّف التجديد التلقائي — تنفس", body: RENEWAL_STOPPED, vars: ["name", "plan"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية" } },
+  renewal_notice: { label: "إشعار قبل التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تجديد اشتراكك قريباً — تنفس بحرية", body: RENEWAL_NOTICE, vars: ["name", "plan", "date", "amount", "card_last4"], must: ["date", "amount"], sample: { name: "سارة", plan: "الباقة الشهرية", date: "2026-12-20", amount: "29.00 ر.س", card_last4: "4242" } },
+  renewal_succeeded: { label: "تمّ التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تجدّد اشتراكك — تنفس بحرية", body: RENEWAL_SUCCEEDED, vars: ["name", "plan", "date", "amount", "invoice_number"], must: ["invoice_number"], sample: { name: "سارة", plan: "الباقة الشهرية", date: "2027-01-20", amount: "29.00 ر.س", invoice_number: "TNFS-INV-000042" } },
+  renewal_failed: { label: "فشل التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تعذّر تجديد اشتراكك — تنفس بحرية", body: RENEWAL_FAILED, vars: ["name", "plan", "card_last4", "next_attempt"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية", card_last4: "4242", next_attempt: "2026-12-22" } },
+  renewal_stopped: { label: "توقّف التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "توقّف التجديد التلقائي — تنفس بحرية", body: RENEWAL_STOPPED, vars: ["name", "plan"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية" } },
 };
 
 const PH = /\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g;

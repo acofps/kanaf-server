@@ -40,7 +40,7 @@ export async function startSmtpSink() {
   await new Promise((r) => smtp.listen(0, "127.0.0.1", r));
   Object.assign(process.env, {
     SMTP_HOST: "127.0.0.1", SMTP_PORT: String(smtp.address().port), SMTP_USER: "noreply@tanfs.net", SMTP_PASS: "local-sink",
-    EMAIL_FROM: "تنفس <noreply@tanfs.net>",
+    EMAIL_FROM: "تنفس بحرية <noreply@tanfs.net>",
   });
   const waitMail = async (n) => { for (let i = 0; i < 150 && inbox.length < n; i++) await new Promise((r) => setTimeout(r, 30)); };
   return { inbox, waitMail, ctl, close: () => smtp.close() };

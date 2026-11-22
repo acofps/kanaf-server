@@ -184,7 +184,7 @@ async function run() {
   requireDedicatedDatabase(import.meta.url);
   await query(
     `INSERT INTO subscription_plans (plan_key, name, price_sar, duration_days, features, display_order) VALUES
-       ('monthly', 'الباقة الشهرية', 29.00, 30, ARRAY['كل أدوات تنفس الأربع'], 1),
+       ('monthly', 'الباقة الشهرية', 29.00, 30, ARRAY['كل أدوات تنفس بحرية الأربع'], 1),
        ('6_months', 'باقة 6 أشهر', 139.00, 182, ARRAY['خصم مقارنة بالدفع الشهري'], 2),
        ('annual', 'الباقة السنوية', 229.00, 365, ARRAY['أكبر خصم متاح'], 3)
      ON CONFLICT (plan_key) DO NOTHING`

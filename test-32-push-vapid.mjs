@@ -2,7 +2,7 @@ import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // يجب �
 /**
  * اختبارات قبول KANAF-ORD-0010 §2 و§8.6 — موضوع VAPID وإشعار يُسجَّل ويُرسل.
  *
- *  V) الموضوع يُفحص بصرامة: «mailto:تنفس <noreply@…>» (ما كان يُشتق من EMAIL_FROM)
+ *  V) الموضوع يُفحص بصرامة: «mailto:تنفس بحرية <noreply@…>» (ما كان يُشتق من EMAIL_FROM)
  *     مرفوض، وmailto نظيف وhttps مقبولان. وبقيمة فاسدة لا يُعدّ Push مضبوطاً
  *     ويُطبع السبب (عملية فرعية بحالة نظيفة).
  *  E) من طرف إلى طرف على loopback: مستخدم موثَّق يسجّل اشتراك جهاز عبر المسار
@@ -41,13 +41,13 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "push-"));
 const servers = [];
 try {
   /* ---- V) الفحص الصارم ---- */
-  ok("V1 «mailto:تنفس <noreply@tanfs.net>» (المشتقّ من EMAIL_FROM) مرفوض", push.validVapidSubject("mailto:تنفس <noreply@tanfs.net>") === null);
+  ok("V1 «mailto:تنفس بحرية <noreply@tanfs.net>» (المشتقّ من EMAIL_FROM) مرفوض", push.validVapidSubject("mailto:تنفس بحرية <noreply@tanfs.net>") === null);
   ok("V2 mailto نظيف وhttps مقبولان", push.validVapidSubject(SUBJECT) === SUBJECT && push.validVapidSubject("https://tanfs.net/contact") === "https://tanfs.net/contact");
   ok("V3 بريد بلا mailto، أو بمسافة، أو localhost — مرفوض", ["support@tanfs.net", "mailto:a b@x.net", "https://localhost/x", ""].every((s) => push.validVapidSubject(s) === null));
   const child = (subject) => spawnSync(process.execPath, ["--input-type=module", "-e",
     `const m = await import(${JSON.stringify(path.resolve("notifications/push.js"))}); console.log("CONFIGURED=" + m.isPushConfigured());`],
     { env: { PATH: process.env.PATH, VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey, ...(subject === undefined ? {} : { VAPID_SUBJECT: subject }) }, encoding: "utf8" });
-  const bad = child("mailto:تنفس <noreply@tanfs.net>"), none = child(undefined), good = child(SUBJECT);
+  const bad = child("mailto:تنفس بحرية <noreply@tanfs.net>"), none = child(undefined), good = child(SUBJECT);
   ok("V4 قيمة فاسدة → Push غير مضبوط، والسبب في السجل باسم المتغيّر", bad.stdout.includes("CONFIGURED=false") && bad.stderr.includes("VAPID_SUBJECT"), bad.stdout + bad.stderr.slice(0, 200));
   ok("V5 غياب VAPID_SUBJECT → غير مضبوط (لا اشتقاق من EMAIL_FROM)", none.stdout.includes("CONFIGURED=false"), none.stdout);
   ok("V6 قيمة نظيفة → مضبوط", good.stdout.includes("CONFIGURED=true"), good.stdout + good.stderr.slice(0, 200));
@@ -80,7 +80,7 @@ try {
   const saved = (await query(`SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1 AND disabled_at IS NULL`, [u.id])).rows[0].n;
   ok("E2 الاشتراك يُسجَّل عبر المسار الحقيقي (201، وصف واحد فعّال)", r.status === 201 && saved === 1, `${r.status} rows=${saved} ${await r.text().catch(() => "")}`);
 
-  const result = await push.sendPushToUser(u.id, { title: "تنفس", body: "اختبار وصول الإشعار", url: "/" });
+  const result = await push.sendPushToUser(u.id, { title: "تنفس بحرية", body: "اختبار وصول الإشعار", url: "/" });
   ok("E3 الإرسال ينجح: sent=1", result.ok === true && result.sent === 1, JSON.stringify(result));
   const got = received[0];
   ok("E4 وصل طلب واحد إلى مسار الجهاز نفسه", received.length === 1 && got.path === "/push/device-1");
@@ -92,7 +92,7 @@ try {
   ok("E7 الحمولة مشفّرة aes128gcm", got?.headers?.["content-encoding"] === "aes128gcm" && !got.body.toString("latin1").includes("اختبار"));
   let plain = null;
   try { plain = JSON.parse(ece.decrypt(got.body, { version: "aes128gcm", privateKey: device, authSecret: authSecret.toString("base64url") }).toString("utf8")); } catch (e) { plain = { error: String(e.message) }; }
-  ok("E8 الحمولة تُفكّ بمفتاح الجهاز وتطابق ما أُرسل", plain?.title === "تنفس" && plain?.body === "اختبار وصول الإشعار", JSON.stringify(plain));
+  ok("E8 الحمولة تُفكّ بمفتاح الجهاز وتطابق ما أُرسل", plain?.title === "تنفس بحرية" && plain?.body === "اختبار وصول الإشعار", JSON.stringify(plain));
 } catch (e) { R.push(["!! stopped: " + String(e.stack || e).slice(0, 300), false]); }
 
 let p = 0, f = 0;

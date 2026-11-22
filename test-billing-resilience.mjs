@@ -75,7 +75,7 @@ try {
   const EMAIL = `res-${Date.now()}@kanaf.test`;
   const reg = await req("POST", "/api/auth/register", { name: "عادل التجريبي", email: EMAIL, password: "Kanaf-Test-2026-a", confirmedAdult: true, agreedPolicy: true });
   ok("التسجيل", reg.status===201, JSON.stringify(reg.body).slice(0,120));
-  const code = /كود تأكيد بريدك في تنفس: (\d{6})/.exec([...sent].reverse().find((m) => m.includes(EMAIL)))[1];
+  const code = /كود تأكيد بريدك في تنفس بحرية: (\d{6})/.exec([...sent].reverse().find((m) => m.includes(EMAIL)))[1];
   const v = await req("POST", "/api/auth/verify-email", { email: EMAIL, code });
   const token = v.body.accessToken;
   ok("التحقق أصدر جلسة", !!token, JSON.stringify(v.body).slice(0,150));

@@ -113,7 +113,7 @@ export const CONTENT_TYPE_LABEL = {
   journey: "رحلة",
   overlay: "نسخة سياقية",
   notebook: "دفتر",
-  cbt_tool: "أداة تنفس",
+  cbt_tool: "أداة تنفس بحرية",
   library_article: "مقالة مكتبة",
 };
 

@@ -67,7 +67,7 @@ export function renderEmail({ title, text, kind = "service", unsubscribeUrl = nu
 <body style="margin:0;padding:0;background:#F6F2FA;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F6F2FA;"><tr><td align="center" style="padding:24px 12px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;font-family:Tahoma,Arial,sans-serif;direction:rtl;text-align:right;">
-    <tr><td align="center" style="padding:0 0 16px;"><img src="cid:${LOGO_CID}" alt="تنفس" width="40" height="61" style="display:block;border:0;"></td></tr>
+    <tr><td align="center" style="padding:0 0 16px;"><img src="cid:${LOGO_CID}" alt="تنفس بحرية" width="40" height="61" style="display:block;border:0;"></td></tr>
     <tr><td style="background:#FFFFFF;border:1px solid #ECE4F4;border-radius:14px;padding:24px;color:#1C1626;font-size:15px;line-height:1.8;">
       <h1 style="margin:0 0 14px;font-size:18px;color:${accent};">${esc(title)}</h1>
       ${paragraphs}

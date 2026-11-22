@@ -49,10 +49,10 @@ try {
   await fetch(`${B}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "قبل", email: "before-mt@example.com", password: "Tanfs-Template-2026-a", confirmedAdult: true, agreedPolicy: true }) });
   await sink.waitMail(1);
   const before = lastMail();
-  ok("D2 بلا تعديل: رسالة التحقق بالنص السابق حرفاً (أهلاً … كود تأكيد بريدك في تنفس: ######)", /أهلاً قبل،/.test(before.text) && /كود تأكيد بريدك في تنفس: \d{6}/.test(before.text) && /tanfs\.net/.test(before.text) && /color:#735890/.test(before.html), before.text.slice(0, 120));
+  ok("D2 بلا تعديل: رسالة التحقق بالنص السابق حرفاً (أهلاً … كود تأكيد بريدك في تنفس بحرية: ######)", /أهلاً قبل،/.test(before.text) && /كود تأكيد بريدك في تنفس بحرية: \d{6}/.test(before.text) && /tanfs\.net/.test(before.text) && /color:#735890/.test(before.html), before.text.slice(0, 120));
 
   /* ---------- G) 🔴 العناصر الإلزامية ---------- */
-  r = await call("PUT", "/admin/message-catalog/email_verification", { body: "أهلاً {{name}}، أهلاً بك في تنفس.", reason: "تجربة" });
+  r = await call("PUT", "/admin/message-catalog/email_verification", { body: "أهلاً {{name}}، أهلاً بك في تنفس بحرية.", reason: "تجربة" });
   const saved = (await query(`SELECT count(*)::int n FROM message_definitions WHERE key = 'email_verification'`)).rows[0].n;
   ok("G1 🔴 نص تحقق بلا موضع الرمز → 400 required_placeholder_missing، ولا شيء محفوظ", r.status === 400 && r.body.error === "required_placeholder_missing" && r.body.detail?.[0] === "{{code}}" && saved === 0, r.raw);
   r = await call("PUT", "/admin/message-catalog/email_verification", { body: "{{code}} وكلمة مرورك {{password}}", reason: "r" });
@@ -61,7 +61,7 @@ try {
   ok("G3 دعوة الإدارة بلا {{url}} → 400 (رابط الدعوة إلزامي)", r.status === 400 && r.body.detail?.[0] === "{{url}}");
 
   /* ---------- T) 🔴 قالب ثانٍ ---------- */
-  r = await call("POST", "/admin/message-templates", { name: "قالب رمضان", accent: "#402F53", footerNote: "رمضان كريم من فريق تنفس", showStoreLinks: false, reason: "موسم رمضان" });
+  r = await call("POST", "/admin/message-templates", { name: "قالب رمضان", accent: "#402F53", footerNote: "رمضان كريم من فريق تنفس بحرية", showStoreLinks: false, reason: "موسم رمضان" });
   const tid = r.body.template?.id;
   ok("T1 إنشاء قالب ثانٍ وتسميته", r.status === 201 && tid);
   r = await call("POST", "/admin/message-templates", { name: "قالب رمضان", reason: "r" });
@@ -69,14 +69,14 @@ try {
   r = await call("POST", "/admin/message-templates", { name: "لون خارج اللوحة", accent: "#FF0000", reason: "r" });
   ok("T1c لون خارج اللوحة المقيسة → 400", r.status === 400 && r.body.error === "invalid_accent");
   r = await call("PUT", "/admin/message-catalog/email_verification", {
-    subject: "رمزك في تنفس", body: "يا {{name}}، رمزك هو {{code}} وصالح {{minutes}} دقائق.", templateId: tid, reason: "نص أوضح",
+    subject: "رمزك في تنفس بحرية", body: "يا {{name}}، رمزك هو {{code}} وصالح {{minutes}} دقائق.", templateId: tid, reason: "نص أوضح",
   });
   ok("T2 حفظ نص التحقق مع الرمز وربطه بالقالب الثاني → 200", r.status === 200 && r.body.message.templateId === tid, r.raw);
   await fetch(`${B}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "بعد", email: "after-mt@example.com", password: "Tanfs-Template-2026-a", confirmedAdult: true, agreedPolicy: true }) });
   await sink.waitMail(2);
   const after = lastMail();
-  ok("T3 🔴 البريد المرسَل فعلاً بالنص الجديد والرمز مستبدَل", /يا بعد، رمزك هو \d{6} وصالح \d+ دقائق\./.test(after.text) && /Subject: =\?UTF-8|رمزك في تنفس/.test(after.raw), after.text.slice(0, 120));
-  ok("T4 🔴 والمبنيّ على القالب الثاني: لونه وتذييله، وبلا روابط المتجرين", /color:#402F53/.test(after.html) && after.html.includes("رمضان كريم من فريق تنفس") && !/color:#735890;">/.test(after.html.split("<h1")[1]?.slice(0, 80) || ""), after.html.slice(after.html.indexOf("<h1"), after.html.indexOf("<h1") + 120));
+  ok("T3 🔴 البريد المرسَل فعلاً بالنص الجديد والرمز مستبدَل", /يا بعد، رمزك هو \d{6} وصالح \d+ دقائق\./.test(after.text) && /Subject: =\?UTF-8|رمزك في تنفس بحرية/.test(after.raw), after.text.slice(0, 120));
+  ok("T4 🔴 والمبنيّ على القالب الثاني: لونه وتذييله، وبلا روابط المتجرين", /color:#402F53/.test(after.html) && after.html.includes("رمضان كريم من فريق تنفس بحرية") && !/color:#735890;">/.test(after.html.split("<h1")[1]?.slice(0, 80) || ""), after.html.slice(after.html.indexOf("<h1"), after.html.indexOf("<h1") + 120));
   ok("T5 والقالب الافتراضي لم يتغيّر لرسالة أخرى (استعادة كلمة المرور)", (await (async () => {
     const { renderMessage } = await import("./notifications/messages.js");
     const m = await renderMessage("password_reset", { name: "س", code: "111111", minutes: 10 });

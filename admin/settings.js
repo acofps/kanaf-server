@@ -335,7 +335,7 @@ function normalizeHandle(v) {
   const handle = v.trim().replace(/^@+/, "");
   /* نفس القائمة البيضاء المستعملة في بناء الرابط في index.js.
      بدونها تقدر قيمة مثل "x.com/other" أو "../evil" أن تصنع رابطاً
-     لموقع آخر يظهر للمستخدم داخل تطبيق تنفس. */
+     لموقع آخر يظهر للمستخدم داخل تطبيق تنفس بحرية. */
   if (!/^[A-Za-z0-9._]{1,30}$/.test(handle)) return { error: "invalid_handle" };
   return { value: `@${handle}` };
 }

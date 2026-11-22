@@ -103,7 +103,7 @@ export default function Setup({ token, onDone }) {
       <div className="flex items-center gap-2 mb-1">
         <KeyRound size={16} color={C.teal} />
         <h1 className="text-base font-bold" style={{ color: C.text }}>
-          {isInvite ? "تفعيل حسابك في لوحة تنفس" : "إعادة ضبط كلمة المرور"}
+          {isInvite ? "تفعيل حسابك في لوحة تنفس بحرية" : "إعادة ضبط كلمة المرور"}
         </h1>
       </div>
       <p className="text-xs leading-6 mb-4" style={{ color: C.textMuted }}>

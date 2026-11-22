@@ -5,7 +5,7 @@ import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // يجب �
  *  لا نرسم القالب وحده: نشغّل مسار الإرسال الفعلي (sendSystemEmail ← mail/send.js
  *  ← nodemailer ← SMTP) إلى خادم SMTP محلي على loopback يستقبل الرسالة كاملة (MIME)،
  *  ثم نقرأ ما وصل فعلاً:
- *   M1 التسجيل يُخرج رسالة تحقق، ونصّها وجزء HTML منها موقَّعان «فريق تنفس / tanfs.net»
+ *   M1 التسجيل يُخرج رسالة تحقق، ونصّها وجزء HTML منها موقَّعان «فريق تنفس بحرية / tanfs.net»
  *   M2 لا «kanaf.me» ولا «كنف» في أي جزء من الرسالة
  *   M3 إشعار «عندك حساب مسبقاً» يحيل إلى app.tanfs.net
  *   M4 المُرسِل من EMAIL_FROM والشعار مرفق cid
@@ -57,7 +57,7 @@ const smtp = net.createServer((sock) => {
 await new Promise((r) => smtp.listen(0, "127.0.0.1", r));
 Object.assign(process.env, {
   SMTP_HOST: "127.0.0.1", SMTP_PORT: String(smtp.address().port), SMTP_USER: "noreply@tanfs.net", SMTP_PASS: "local-sink",
-  EMAIL_FROM: "تنفس <noreply@tanfs.net>",
+  EMAIL_FROM: "تنفس بحرية <noreply@tanfs.net>",
 });
 
 const express = (await import("express")).default;
@@ -104,8 +104,8 @@ try {
   const textPart = ps.find((p) => p.type === "text/plain")?.text || "";
   const htmlPart = ps.find((p) => p.type === "text/html")?.text || "";
   if (process.env.KANAF_EVIDENCE_DIR) fs.writeFileSync(path.join(process.env.KANAF_EVIDENCE_DIR, "verification-email.eml"), raw);
-  ok("M1 النص موقَّع «فريق تنفس» ثم «tanfs.net» في سطرين متتاليين", /فريق تنفس\r?\ntanfs\.net\s*$/.test(textPart.trim() + "\n"), JSON.stringify(textPart.slice(-60)));
-  ok("M1b وجزء HTML يحمل التوقيع نفسه", htmlPart.includes("فريق تنفس") && htmlPart.includes("tanfs.net"));
+  ok("M1 النص موقَّع «فريق تنفس بحرية» ثم «tanfs.net» في سطرين متتاليين", /فريق تنفس بحرية\r?\ntanfs\.net\s*$/.test(textPart.trim() + "\n"), JSON.stringify(textPart.slice(-60)));
+  ok("M1b وجزء HTML يحمل التوقيع نفسه", htmlPart.includes("فريق تنفس بحرية") && htmlPart.includes("tanfs.net"));
   const all = textPart + htmlPart + raw;
   ok("M2 🔴 لا «kanaf.me» ولا «كنف» في أي جزء من الرسالة", !/kanaf\.me/i.test(all) && !all.includes("كنف"), (all.match(/.{0,30}(kanaf\.me|كنف).{0,30}/i) || [""])[0]);
   ok("M4 المُرسِل noreply@tanfs.net والشعار مرفق cid", /^from:.*noreply@tanfs\.net/im.test(raw) && /content-id:\s*<tanaffus-logo>/i.test(raw) && /cid:tanaffus-logo/.test(htmlPart));

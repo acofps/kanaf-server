@@ -25,7 +25,7 @@ const SOURCE_LABEL = {
   daily_log: "تدوين يومي",
   manual: "زر الأزمة",
   notebook: "دفتر",
-  cbt: "أداة تنفس",
+  cbt: "أداة تنفس بحرية",
 };
 
 /* tone = لون القسم (sectionTone) — يتكرر في القائمة وفي بطاقة الرقم.

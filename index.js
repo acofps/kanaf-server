@@ -893,7 +893,8 @@ app.get("/api/support-info", async (req, res) => {
     res.json({
       supportEmail: s.support_email ?? null,
       supportHours: s.support_hours ?? null,
-      appName: s.app_public_name ?? "تنفس",
+      // الاحتياطي وحده — القيمة الحية من الإعداد app_public_name أولاً (ملحق ORD-0013 الثاني، القرار 5).
+      appName: s.app_public_name ?? "تنفس بحرية",
       whatsapp: {
         enabled: whatsappUsable,
         url: whatsappUsable ? `https://wa.me/${digits}` : null,
@@ -910,7 +911,7 @@ app.get("/api/support-info", async (req, res) => {
        قراءة الإعداد لا يجوز أن يُظهر زراً برقم لا نعرفه. */
     console.error("[support-info] تعذّرت القراءة:", err.message);
     res.json({
-      supportEmail: null, supportHours: null, appName: "تنفس",
+      supportEmail: null, supportHours: null, appName: "تنفس بحرية",
       whatsapp: { enabled: false, url: null },
       social: { x: null, instagram: null },
       dailyReminderTime: "20:00",
@@ -938,7 +939,7 @@ app.get("/api/unsubscribe", (req, res) => {
       <p>الرابط غير صالح أو منتهي.</p></body></html>`);
   }
   res.send(`<!DOCTYPE html><html dir="rtl" lang="ar"><body style="font-family:Arial;text-align:center;padding:40px;">
-    <p>تأكيد إلغاء الاشتراك من رسائل تنفس التسويقية؟</p>
+    <p>تأكيد إلغاء الاشتراك من رسائل تنفس بحرية التسويقية؟</p>
     <form method="POST" action="/api/unsubscribe">
       <input type="hidden" name="token" value="${String(req.query.token).replace(/"/g, "&quot;")}">
       <button type="submit" style="padding:10px 24px;border-radius:8px;background:#735890;color:#fff;border:none;font-size:14px;">تأكيد إلغاء الاشتراك</button>
