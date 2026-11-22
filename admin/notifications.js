@@ -103,6 +103,28 @@ adminNotificationsRouter.get("/notifications", requireAdminAuth, requirePermissi
 });
 
 /* ------------------------------------------------------------
+   GET /admin/notifications/:id — حملة واحدة. KANAF-ORD-0013 §3.2: «تفاصيل الحملة»
+   صارت صفحة بعنوانها (/notifications/<id>)، فتُفتح من رابط مباشر بلا القائمة.
+   الأعمدة نفسها التي تعيدها القائمة، لا حقل جديد.
+   ------------------------------------------------------------ */
+adminNotificationsRouter.get("/notifications/:id", requireAdminAuth, requirePermission("notifications:view"), requireUuidParam("id"), async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT c.id, c.title, c.audience, c.channels, c.status, c.scheduled_at,
+              c.started_at, c.finished_at, c.recipient_count, c.sent_count, c.failed_count,
+              c.last_error, c.created_at, au.name AS created_by_name
+       FROM notification_campaigns c
+       LEFT JOIN admin_users au ON au.id = c.created_by
+       WHERE c.id = $1`, [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: "not_found" });
+    res.json({ campaign: rows[0] });
+  } catch (err) {
+    console.error("[admin/notifications] get failed:", err);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+/* ------------------------------------------------------------
    GET /admin/notifications/:id/deliveries?status=
 
    الشاشة التي كانت مستحيلة قبل هذه المرحلة: من استلم، بأي قناة،

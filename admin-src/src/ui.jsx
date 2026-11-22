@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { Loader2, X, AlertTriangle, Search } from "lucide-react";
+import { Loader2, X, AlertTriangle, Search, ArrowRight } from "lucide-react";
 import { C } from "./theme.js";
+import { Link } from "./router.js";
 
 /* ============================================================
    مكوّنات مشتركة — تُبنى مرة وتُستخدم في كل الشاشات، فلا يختلف
@@ -157,6 +158,32 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
         </div>
         <div className="p-5">{children}</div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------
+   شاشة — KANAF-ORD-0013 §3.2: ما كان نافذة منبثقة للمحتوى (ملف،
+   تفاصيل، تحرير، إنشاء) صار صفحة بعنوانها. «رجوع» رابط حقيقي إلى
+   الصفحة الأم، فيعمل معه زر الرجوع في المتصفّح والفتح في تبويب.
+   تبقى Modal لصناديق التأكيد القصيرة وحدها (ReasonPrompt وما شابه).
+   ------------------------------------------------------------ */
+export function Screen({ title, back, backLabel = "رجوع", children, actions }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          {back && (
+            <Link to={back} className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold shrink-0"
+              style={{ color: C.textMuted, background: C.surface, border: `1px solid ${C.line}` }}>
+              <ArrowRight size={13} /> {backLabel}
+            </Link>
+          )}
+          <h2 className="text-lg font-bold truncate" style={{ color: C.text }}>{title}</h2>
+        </div>
+        {actions && <div className="flex gap-2">{actions}</div>}
+      </div>
+      <Card>{children}</Card>
     </div>
   );
 }

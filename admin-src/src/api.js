@@ -152,6 +152,7 @@ export const api = {
 
   /* ---------- الإشعارات ---------- */
   listCampaigns: (params) => req("/notifications", { params }),
+  getCampaign: (id) => req(`/notifications/${id}`),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),

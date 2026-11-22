@@ -8,8 +8,10 @@ import {
 } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox,
-  Spinner, Empty, ErrorBar, Modal, ReasonPrompt, Table, Td, useAsync,
+  Spinner, Empty, ErrorBar, Screen, ReasonPrompt, Table, Td, useAsync,
 } from "../ui.jsx";
+import { Link, navigate, useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 
 /* ============================================================
    الإشعارات.
@@ -33,15 +35,23 @@ const AUDIENCES = ["all", "active_subscribers", "trial_or_free", "account_status
 const MARKETING_ONLY = new Set(["abandoned_carts", "inactive"]);
 const ACCOUNT_STATUSES = ["active", "suspended", "pending_verification"];
 
-export default function Notifications({ me, toast }) {
-  const [status, setStatus] = useState("");
-  const [channel, setChannel] = useState("");
-  const [search, setSearch] = useState("");
-  const [offset, setOffset] = useState(0);
+export default function Notifications({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: «حملة جديدة» و«تفاصيل الحملة» صفحتان بعنوانين */
+  if (route[0] === "new") {
+    return <Compose open back="/notifications" onClose={() => navigate("/notifications")}
+      onDone={(msg) => { toast(msg); navigate("/notifications"); }} />;
+  }
+  if (route[0]) return <CampaignDetail id={route[0]} />;
+  return <CampaignList me={me} toast={toast} />;
+}
+
+function CampaignList({ me, toast }) {
+  const [status, setStatus] = useQueryState("status", "");
+  const [channel, setChannel] = useQueryState("channel", "");
+  const [search, setSearch] = useQueryState("q", "");
+  const [offset, setOffset] = useQueryState("offset", 0);
   const limit = 25;
 
-  const [compose, setCompose] = useState(false);
-  const [detail, setDetail] = useState(null);
   const [reason, setReason] = useState(null);
 
   const list = useAsync(
@@ -110,9 +120,9 @@ export default function Notifications({ me, toast }) {
           <Button size="sm" variant="ghost" onClick={reloadAll}>
             <RefreshCw size={13} /> تحديث
           </Button>
-          <Button size="sm" onClick={() => setCompose(true)}>
-            <Plus size={13} /> حملة جديدة
-          </Button>
+          <Link to="/notifications/new">
+            <Button size="sm"><Plus size={13} /> حملة جديدة</Button>
+          </Link>
         </div>
       </PageTitle>
 
@@ -182,9 +192,9 @@ export default function Notifications({ me, toast }) {
                   </Td>
                   <Td>
                     <div className="flex gap-1.5 justify-end">
-                      <Button size="sm" variant="ghost" onClick={() => setDetail(c)}>
-                        <Eye size={12} /> التفاصيل
-                      </Button>
+                      <Link to={`/notifications/${c.id}`}>
+                        <Button size="sm" variant="ghost"><Eye size={12} /> التفاصيل</Button>
+                      </Link>
                       {retryable && (
                         <Button size="sm" variant="soft" onClick={() => doSend(c, true)}>
                           <RefreshCw size={12} /> إعادة محاولة الفاشلة
@@ -221,13 +231,6 @@ export default function Notifications({ me, toast }) {
         </div>
       </Card>
 
-      <Compose
-        open={compose}
-        onClose={() => setCompose(false)}
-        onDone={(msg) => { toast(msg); reloadAll(); }}
-      />
-
-      <DeliveriesModal campaign={detail} onClose={() => setDetail(null)} />
 
       <ReasonPrompt
         open={!!reason}
@@ -297,7 +300,7 @@ function SchedulerCard({ state, onSweep, sweeping }) {
    السبب: "أرسل للكل" في نظام فيه 4000 مستخدم قرار مختلف تماماً
    عنه في نظام فيه 12.
    ------------------------------------------------------------ */
-export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
+export function Compose({ open, onClose, onDone, initialAudience = "all", back, title: screenTitle = "حملة إشعارات جديدة" }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [audience, setAudience] = useState(initialAudience);
@@ -382,7 +385,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="حملة إشعارات جديدة" width={640}>
+    <Screen title={screenTitle} back={back}>
       <div className="grid gap-3">
         <Field label="العنوان">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} />
@@ -481,7 +484,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 
@@ -491,26 +494,25 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
    البريد مُقنَّع من الخادم لا من الواجهة — إخفاء في المتصفح يبقى
    كشفاً في الشبكة.
    ------------------------------------------------------------ */
-function DeliveriesModal({ campaign, onClose }) {
-  const [fStatus, setFStatus] = useState("");
-  const [fChannel, setFChannel] = useState("");
-  const [offset, setOffset] = useState(0);
+function CampaignDetail({ id }) {
+  const [fStatus, setFStatus] = useQueryState("status", "");
+  const [fChannel, setFChannel] = useQueryState("channel", "");
+  const [offset, setOffset] = useQueryState("offset", 0);
   const limit = 100;
 
-  useEffect(() => { setFStatus(""); setFChannel(""); setOffset(0); }, [campaign?.id]);
-
+  const head = useAsync(() => api.getCampaign(id), [id]);
   const state = useAsync(
-    () => (campaign ? api.campaignDeliveries(campaign.id, { status: fStatus, channel: fChannel, limit, offset })
-                    : Promise.resolve(null)),
-    [campaign?.id, fStatus, fChannel, offset]
+    () => api.campaignDeliveries(id, { status: fStatus, channel: fChannel, limit, offset }),
+    [id, fStatus, fChannel, offset]
   );
-
-  if (!campaign) return null;
+  const campaign = head.data?.campaign;
+  if (head.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+  if (!campaign) return <Screen title="الحملة" back="/notifications"><ErrorBar error={head.error || "الحملة غير موجودة."} /></Screen>;
   const rows = state.data?.deliveries || [];
   const summary = state.data?.summary || [];
 
   return (
-    <Modal open onClose={onClose} title={`تفاصيل: ${campaign.title}`} width={860}>
+    <Screen title={`تفاصيل: ${campaign.title}`} back="/notifications" backLabel="الإشعارات والتسويق">
       <p className="text-[11px] leading-6 mb-3" style={{ color: C.textFaint }}>
         {AUDIENCE_LABEL[campaign.audience] || campaign.audience} ·{" "}
         {(campaign.channels || []).map((ch) => CHANNEL_LABEL[ch] || ch).join(" · ")} ·{" "}
@@ -556,7 +558,7 @@ function DeliveriesModal({ campaign, onClose }) {
             return (
               <tr key={r.id}>
                 <Td>
-                  <div>{r.user_name || "—"}</div>
+                  <div><UserLink id={r.user_id} name={r.user_name} /></div>
                   <div className="text-[10px]" style={{ color: C.textFaint }}>{r.user_email_masked}</div>
                 </Td>
                 <Td>{CHANNEL_LABEL[r.channel] || r.channel}</Td>
@@ -585,6 +587,6 @@ function DeliveriesModal({ campaign, onClose }) {
         <Button size="sm" variant="ghost" disabled={rows.length < limit}
           onClick={() => setOffset(offset + limit)}>التالي</Button>
       </div>
-    </Modal>
+    </Screen>
   );
 }

@@ -33,7 +33,7 @@ cartsRouter.get("/abandoned-carts", requireAdminAuth, requirePermission("carts:v
        FROM invoices i JOIN users u ON u.id = i.user_id WHERE ${where}`
     );
     const { rows } = await query(
-      `SELECT i.id, i.plan_id, i.amount_sar, i.created_at,
+      `SELECT i.id, i.user_id, i.plan_id, i.amount_sar, i.created_at,
               floor(extract(epoch FROM now() - i.created_at) / 60)::int AS minutes_since,
               ${purchasedLaterSql("i")} AS purchased_later,
               sp.name AS plan_name, u.name AS user_name,
@@ -55,7 +55,7 @@ cartsRouter.get("/abandoned-carts", requireAdminAuth, requirePermission("carts:v
       carts: rows.map((r) => ({
         invoiceId: r.id, planKey: r.plan_id, planName: r.plan_name, amountSar: Number(r.amount_sar),
         createdAt: r.created_at, minutesSince: r.minutes_since, purchasedLater: r.purchased_later,
-        customer: { name: r.user_name, emailMasked: r.user_email_masked }, marketingOptOut: r.marketing_opt_out,
+        customer: { id: r.user_id, name: r.user_name, emailMasked: r.user_email_masked }, marketingOptOut: r.marketing_opt_out, // id: §4.2 اسم العميل رابط
       })),
       page, pageSize, total: summary.total, totalPages: Math.max(1, Math.ceil(summary.total / pageSize)),
     });

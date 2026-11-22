@@ -4,8 +4,9 @@ import { api } from "../api.js";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync, ValueDiff,
+  ErrorBar, Screen, ReasonPrompt, Table, Td, Pager, useAsync, ValueDiff,
 } from "../ui.jsx";
+import { Link, useQueryState } from "../router.js";
 
 /* ============================================================
    المستخدمون.
@@ -87,15 +88,21 @@ const ACCOUNT_STATUS = {
   deleted: { label: "محذوف", color: "textFaint" },
 };
 
-export default function Users({ me, toast }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [subscription, setSubscription] = useState("all");
-  const [sort, setSort] = useState("created_at");
-  const [dir, setDir] = useState("desc");
-  const [page, setPage] = useState(1);
+export default function Users({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3/§4.1: الملف صفحة بعنوانها /users/<id>/<تبويب> */
+  if (route[0]) return <UserDetail id={route[0]} tab={route[1] || "profile"} me={me} toast={toast} />;
+  return <UsersList me={me} />;
+}
+
+function UsersList({ me }) {
+  /* الفلاتر في العنوان: الرابط المنسوخ يفتح القائمة نفسها (§3.1) */
+  const [search, setSearch] = useQueryState("q", "");
+  const [status, setStatus] = useQueryState("status", "all");
+  const [subscription, setSubscription] = useQueryState("sub", "all");
+  const [sort, setSort] = useQueryState("sort", "created_at");
+  const [dir, setDir] = useQueryState("dir", "desc");
+  const [page, setPage] = useQueryState("page", 1);
   const pageSize = 25;
-  const [open, setOpen] = useState(null);
 
   const state = useAsync(
     () => api.listUsers({ search, status, subscription, sort, dir, page, pageSize }),
@@ -152,7 +159,7 @@ export default function Users({ me, toast }) {
               return (
                 <tr key={u.id}>
                   <Td><Avatar id={u.id} name={u.name} hasPhoto={u.has_photo === true} /></Td>
-                  <Td className="font-bold">{u.name || "—"}</Td>
+                  <Td className="font-bold"><UserLink id={u.id} name={u.name} /></Td>
                   <Td>{u.email}</Td>
                   <Td><Badge color={s.color}>{s.label}</Badge></Td>
                   <Td>
@@ -164,9 +171,10 @@ export default function Users({ me, toast }) {
                   <Td>{u.last_login_at ? fmtDate(u.last_login_at) : "—"}</Td>
                   <Td>
                     <div className="flex justify-end">
-                      <Button size="sm" variant="ghost" onClick={() => setOpen(u.id)}>
+                      <Link to={`/users/${u.id}`} className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-bold"
+                        style={{ color: C.textMuted, border: `1px solid ${C.line}` }}>
                         <Eye size={12} /> الملف
-                      </Button>
+                      </Link>
                     </div>
                   </Td>
                 </tr>
@@ -179,13 +187,6 @@ export default function Users({ me, toast }) {
           total={state.data?.total} onPage={setPage} />
       </Card>
 
-      {open && (
-        <UserDetail
-          id={open} me={me} toast={toast}
-          onClose={() => setOpen(null)}
-          onChanged={() => state.reload()}
-        />
-      )}
     </div>
   );
 }
@@ -201,10 +202,10 @@ function Row({ label, children }) {
   );
 }
 
-function UserDetail({ id, me, toast, onClose, onChanged }) {
+function UserDetail({ id, tab, me, toast }) {
   const state = useAsync(() => api.getUser(id), [id]);
   const [reason, setReason] = useState(null);
-  const [tab, setTab] = useState("profile");   // profile | sensitive | actions | billing
+  const onChanged = () => {};
 
   const u = state.data;
   const countryName = useCountryNames();
@@ -233,7 +234,7 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={u ? (u.name || u.email) : "ملف المستخدم"} width={720}>
+    <Screen title={u ? (u.name || u.email) : "ملف المستخدم"} back="/users" backLabel="المستخدمون">
       {state.loading ? <div className="py-10 flex justify-center"><Spinner /></div> : state.error ? (
         <ErrorBar error={state.error} />
       ) : (
@@ -245,14 +246,15 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
               ["sensitive", "المتابعة اليومية", canSensitive],
               ["actions", "سجل الإجراءات", canActions],
             ].filter(([, , show]) => show).map(([k, label]) => (
-              <button key={k} onClick={() => setTab(k)}
+              <Link key={k} to={`/users/${id}${k === "profile" ? "" : `/${k}`}`} replace
+                aria-current={tab === k ? "page" : undefined}
                 className="px-3 py-1.5 rounded-xl text-xs font-bold"
                 style={{
                   background: tab === k ? C.tealSoft : C.surfaceAlt,
                   color: tab === k ? C.teal : C.textMuted,
                 }}>
                 {label}
-              </button>
+              </Link>
             ))}
           </div>
 
@@ -365,7 +367,18 @@ function UserDetail({ id, me, toast, onClose, onChanged }) {
         confirmLabel={reason?.confirmLabel} danger={reason?.danger}
         onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)}
       />
-    </Modal>
+    </Screen>
+  );
+}
+
+/** اسم العميل رابط إلى ملفه — KANAF-ORD-0013 §4.2. يُستورد من كل صفحة تعرض اسم عميل. */
+export function UserLink({ id, name, email }) {
+  const label = name || email || "—";
+  if (!id) return <span>{label}</span>;
+  return (
+    <Link to={`/users/${id}`} className="font-bold underline-offset-2 hover:underline" style={{ color: C.teal }}>
+      {label}
+    </Link>
   );
 }
 

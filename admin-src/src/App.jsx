@@ -7,6 +7,7 @@ import {
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
 import { Spinner } from "./ui.jsx";
+import { Link, navigate, useSegments } from "./router.js";
 
 import Login from "./pages/Login.jsx";
 import Overview from "./pages/Overview.jsx";
@@ -95,7 +96,9 @@ export default function App() {
   );
   const [me, setMe] = useState(null);
   const [booting, setBooting] = useState(true);
-  const [section, setSection] = useState("overview");
+  /* KANAF-ORD-0013 §3.1: القسم من العنوان لا من الذاكرة — /<قسم>/<ما بعده> */
+  const segments = useSegments();
+  const section = segments[0] || "overview";
   const [navOpen, setNavOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [mode, setMode] = useState(readTheme);
@@ -126,11 +129,11 @@ export default function App() {
 
   const allowed = SECTIONS.filter((s) => canAny(me, s.perms));
 
-  /* لو تغيّرت الصلاحية وصار القسم المفتوح خارجها، نعود لأول مسموح. */
+  /* قسم غير معروف أو خارج الصلاحية: إلى أول مسموح، بلا إضافة إلى سجلّ «رجوع». */
   useEffect(() => {
-    if (me && !allowed.some((s) => s.key === section)) setSection(allowed[0]?.key || "overview");
+    if (me && !allowed.some((s) => s.key === section)) navigate(`/${allowed[0]?.key || "overview"}`, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me]);
+  }, [me, section]);
 
   const logout = async () => {
     try { await api.logout(); } catch { /* الخروج محلي على أي حال */ }
@@ -156,7 +159,8 @@ export default function App() {
   if (booting) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: C.bg }}><Spinner /></div>;
   }
-  if (!me) return <Login onDone={(a) => { setMe(a); setSection("overview"); }} />;
+  /* بعد الدخول نبقى على العنوان المطلوب أصلاً: رابط مفضَّل يفتح الشاشة نفسها بعد تسجيل الدخول. */
+  if (!me) return <Login onDone={(a) => setMe(a)} />;
 
   const Page = {
     overview: Overview,
@@ -223,7 +227,7 @@ export default function App() {
                       const on = s.key === section;
                       const tone = sectionTone(s.key);
                       return (
-                        <button key={s.key} onClick={() => { setSection(s.key); setNavOpen(false); }}
+                        <Link key={s.key} to={`/${s.key}`} onClick={() => setNavOpen(false)}
                           aria-current={on ? "page" : undefined}
                           className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-[13px] font-bold text-right"
                           style={{ background: on ? C.tealSoft : "transparent", color: on ? C.text : C.textMuted }}>
@@ -231,7 +235,7 @@ export default function App() {
                             <Icon size={16} strokeWidth={1.75} color={tone.fg} />
                           </span>
                           {s.label}
-                        </button>
+                        </Link>
                       );
                     })}
                   </div>
@@ -259,7 +263,8 @@ export default function App() {
             <ThemeToggle mode={mode} onToggle={toggleMode} />
           </div>
           <div className="p-4 lg:p-6">
-            <Page me={me} toast={toast} />
+            {/* key: الانتقال بين قسمين يبدأ الصفحة من جديد؛ route: ما بعد اسم القسم في المسار */}
+            <Page key={section} me={me} toast={toast} route={segments.slice(1)} />
           </div>
         </main>
       </div>

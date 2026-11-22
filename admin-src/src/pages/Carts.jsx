@@ -4,6 +4,8 @@ import { api } from "../api.js";
 import { C, fmtDateTime, can } from "../theme.js";
 import { Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync } from "../ui.jsx";
 import { Compose } from "./Notifications.jsx";
+import { UserLink } from "./Users.jsx";
+import { Link, navigate, useQueryState } from "../router.js";
 
 /* ============================================================
    السلات المتروكة — KANAF-ORD-0008 §4
@@ -18,10 +20,20 @@ import { Compose } from "./Notifications.jsx";
 
 const ago = (m) => (m < 60 ? `${m} دقيقة` : m < 1440 ? `${Math.floor(m / 60)} ساعة` : `${Math.floor(m / 1440)} يوم`);
 
-export default function Carts({ me, toast }) {
-  const [page, setPage] = useState(1);
-  const [hidePurchased, setHidePurchased] = useState(true);
-  const [compose, setCompose] = useState(false);
+export default function Carts({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: نموذج الحملة صفحة لا نافذة */
+  if (route[0] === "campaign") {
+    return <Compose open back="/carts" title="حملة لأصحاب السلات" initialAudience="abandoned_carts"
+      onClose={() => navigate("/carts")} onDone={(m) => { toast?.(m); navigate("/carts"); }} />;
+  }
+  return <CartList me={me} />;
+}
+
+function CartList({ me }) {
+  const [page, setPage] = useQueryState("page", 1);
+  const [hideRaw, setHideRaw] = useQueryState("hide", "1");
+  const hidePurchased = hideRaw === "1";
+  const setHidePurchased = (v) => setHideRaw(v ? "1" : "0");
   const state = useAsync(() => api.listAbandonedCarts({ page, hidePurchased: hidePurchased ? "1" : "" }), [page, hidePurchased]);
   const d = state.data;
   const rows = d?.carts || [];
@@ -30,9 +42,11 @@ export default function Carts({ me, toast }) {
     <div>
       <PageTitle title="السلات المتروكة" subtitle={`فاتورة طُلب دفعها ولم تُدفع بعد ${d?.afterMinutes ?? 20} دقيقة. تُحسب عند فتح الصفحة.`}>
         {can(me, "notifications:create") && (
-          <Button size="sm" onClick={() => setCompose(true)}>
-            <span className="inline-flex items-center gap-1.5"><Megaphone size={14} strokeWidth={1.75} /> حملة لأصحاب السلات</span>
-          </Button>
+          <Link to="/carts/campaign">
+            <Button size="sm">
+              <span className="inline-flex items-center gap-1.5"><Megaphone size={14} strokeWidth={1.75} /> حملة لأصحاب السلات</span>
+            </Button>
+          </Link>
         )}
       </PageTitle>
 
@@ -60,7 +74,7 @@ export default function Carts({ me, toast }) {
               {rows.map((r) => (
                 <tr key={r.invoiceId}>
                   <Td>
-                    <div className="font-bold">{r.customer.name || "—"}</div>
+                    <div className="font-bold"><UserLink id={r.customer.id} name={r.customer.name} /></div>
                     <div className="text-[11px]" dir="ltr" style={{ color: C.textFaint }}>{r.customer.emailMasked}</div>
                   </Td>
                   <Td>{r.planName || r.planKey}</Td>
@@ -77,8 +91,6 @@ export default function Carts({ me, toast }) {
         )}
       </Card>
 
-      <Compose open={compose} onClose={() => setCompose(false)} initialAudience="abandoned_carts"
-        onDone={(m) => { toast?.(m); }} />
     </div>
   );
 }

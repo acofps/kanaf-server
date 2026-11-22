@@ -1092,12 +1092,16 @@ app.use("/api/payments", paymentsRouter);
 --------------------------------------------------------- */
 const adminUiPath = path.join(__dirname, "admin-ui");
 app.use(express.static(adminUiPath));
-// SPA catch-all: any GET that isn't an API route falls through to
-// index.html so client-side routing (React state, not real URLs)
-// still works correctly on a hard refresh or direct link.
-app.get(/^(?!\/admin|\/api).*/, (req, res) => {
+/* SPA catch-all — KANAF-ORD-0013 §3.1. اللوحة صارت توجّه بعناوين حقيقية
+   (/users/<id>، /admin-users …)، فتحديث الصفحة على أي منها يجب أن يعيد index.html.
+   🔴 ويُستثنى /admin و/api **كمقطع كامل** لا كبادئة: النمط القديم ^(?!\/admin|\/api)
+   كان يستثني /admin-users و/apix أيضاً فيردّ 404 على شاشة حقيقية، ولا يستثني شيئاً
+   خطأً في الاتجاه الآخر. ومسارات الـAPI المجهولة تردّ JSON 404 أدناه، لا صفحة HTML. */
+export const SPA_PATH = /^\/(?!(?:admin|api)(?:\/|$))[^.]*$/;
+app.get(SPA_PATH, (req, res) => {
   res.sendFile(path.join(adminUiPath, "index.html"));
 });
+app.use(["/admin", "/api"], (req, res) => res.status(404).json({ error: "not_found" }));
 
 /* ---------------------------------------------------------
    معالج الأخطاء النهائي.
