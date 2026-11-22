@@ -30,7 +30,10 @@ const GUARDS = new Set(["test-33-system-mail-mime.mjs", "test-45-brand-naming.mj
 const APPLIED = ["db/migrations/007_content_and_notifications.sql", "db/migrations/008_rbac_audit_settings.sql",
   "db/migrations/012_assistant_access_policy.sql", "db/migrations/DB006_invoice_presentation.sql", "db/schema.sql"];
 const NAME_FIX_MIGRATIONS = ["db/migrations/027_official_name.sql", "db/migrations/DB007_official_seller_suffix.sql"];
-const EXEMPT = new Set([...GUARDS, ...APPLIED, ...NAME_FIX_MIGRATIONS]);
+/* KANAF-ORD-0014: ما يزرع الاسم القديم أو يبحث عنه ليثبت أنه يُستبدل — لا يعرضه لأحد:
+   اختبار الترحيلة، وبروفتا الترحيل والكرّاس (حالة الإنتاج القديمة)، وأداة الفحص (نمط بحث). */
+const NAME_FIX_PROOFS = ["test-47-official-name-migration.mjs", "test-support/ord14-migration-drill.mjs", "test-support/ord14-runbook-drill.mjs", "ops/check-0013.mjs"];
+const EXEMPT = new Set([...GUARDS, ...APPLIED, ...NAME_FIX_MIGRATIONS, ...NAME_FIX_PROOFS]);
 const hits = [];
 for (const f of files) {
   if (EXEMPT.has(f)) continue;
