@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
@@ -28,6 +28,7 @@ import SentMessages from "./pages/SentMessages.jsx";
 import Carts from "./pages/Carts.jsx";
 import Discounts from "./pages/Discounts.jsx";
 import Integrations from "./pages/Integrations.jsx";
+import Subscribers from "./pages/Subscribers.jsx";
 
 /* ============================================================
    هيكل اللوحة.
@@ -64,6 +65,7 @@ const SECTIONS = [
   { key: "notifications",group: "ops",   label: "الإشعارات والتسويق", icon: Bell,          perms: ["notifications:view"] },
   { key: "carts",        group: "ops",   label: "السلات المتروكة", icon: ShoppingCart,      perms: ["carts:view"] },
   { key: "plans",        group: "ops",   label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
+  { key: "subscribers",  group: "ops",   label: "الاشتراكات",     icon: BadgeCheck,        perms: ["subscriptions:view"] }, // KANAF-ORD-0013 §6
   { key: "discounts",    group: "ops",   label: "أكواد الخصم",    icon: TicketPercent,     perms: ["discounts:view"] },
   { key: "invoices",     group: "ops",   label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
   // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
@@ -173,6 +175,7 @@ export default function App() {
     content: Content,
     notifications: Notifications,
     plans: Plans,
+    subscribers: Subscribers,
     invoices: Invoices,
     billing: Billing,
     "break-glass": BreakGlass,

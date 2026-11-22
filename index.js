@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import Anthropic from "@anthropic-ai/sdk";
 import { adminRouter } from "./admin/routes.js";
 import { userEditRouter } from "./admin/user-edit.js";
+import { subscribersRouter } from "./admin/subscribers.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
 import { sendEmail, verifySmtpConnection } from "./mail/send.js";
@@ -978,6 +979,7 @@ app.use("/admin", cartsRouter); // KANAF-ORD-0008 §4
 app.use("/admin", discountsRouter); // KANAF-ORD-0008 §6 — غير مربوط بالدفع
 app.use("/admin", integrationsRouter); // KANAF-ORD-0008 §7 — اعتمادات لا تكامل
 app.use("/admin", userEditRouter); // KANAF-ORD-0013 §4.3 — تعديل ملف العميل
+app.use("/admin", subscribersRouter); // KANAF-ORD-0013 §6 — الاشتراكات
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------

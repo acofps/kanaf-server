@@ -179,6 +179,9 @@ export const api = {
   listCampaigns: (params) => req("/notifications", { params }),
   getCampaign: (id) => req(`/notifications/${id}`),
   channelAvailability: () => req("/notifications-channels"),
+  /* KANAF-ORD-0013 §6 */
+  listSubscribers: (params) => req("/subscribers", { params }),
+  subscriberRecipients: (params) => req("/subscribers/recipients", { params }),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),
