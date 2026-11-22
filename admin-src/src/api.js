@@ -191,6 +191,9 @@ export const api = {
   /* KANAF-ORD-0013 §5 */
   createAdminDirect: (body) => req("/admin-users/direct", { method: "POST", body }),
   updateAdminPages: (id, body) => req(`/admin-users/${id}/pages`, { method: "PATCH", body }),
+  /* KANAF-ORD-0013 §11 */
+  listSystemErrors: (params) => req("/system-errors", { params }),
+  clearSystemError: (id, reason) => req(`/system-errors/${id}`, { method: "DELETE", params: { reason } }),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),

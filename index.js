@@ -9,6 +9,8 @@ import { adminRouter } from "./admin/routes.js";
 import { userEditRouter } from "./admin/user-edit.js";
 import { ADMIN_MIN_PASSWORD_LENGTH } from "./admin/password-rule.js";
 import { subscribersRouter } from "./admin/subscribers.js";
+import { recordError } from "./ops/error-log.js";
+import { systemErrorsRouter } from "./admin/system-errors.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
 import { sendEmail, verifySmtpConnection } from "./mail/send.js";
@@ -981,6 +983,7 @@ app.use("/admin", discountsRouter); // KANAF-ORD-0008 §6 — غير مربوط 
 app.use("/admin", integrationsRouter); // KANAF-ORD-0008 §7 — اعتمادات لا تكامل
 app.use("/admin", userEditRouter); // KANAF-ORD-0013 §4.3 — تعديل ملف العميل
 app.use("/admin", subscribersRouter); // KANAF-ORD-0013 §6 — الاشتراكات
+app.use("/admin", systemErrorsRouter); // KANAF-ORD-0013 §11 — سجلّ أخطاء النظام
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
@@ -1122,6 +1125,7 @@ app.use(["/admin", "/api"], (req, res) => res.status(404).json({ error: "not_fou
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   console.error("[unhandled]", req.method, req.originalUrl, err);
+  if (!(err?.status && err.status < 500)) recordError(err, { location: `${req.method} ${req.originalUrl}`, status: 500 }); // ORD-0013 §11
   res.status(err?.status && err.status < 600 ? err.status : 500).json({ error: "internal_error" });
 });
 
@@ -1149,6 +1153,12 @@ const server = app.listen(PORT, async () => {
       );
     }
   }
+});
+
+/* KANAF-ORD-0013 §11: الرفض غير المعالَج يُسجَّل منقّى أيضاً — ولا يغيّر سلوك العملية. */
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+  recordError(reason instanceof Error ? reason : new Error(String(reason)), { location: "process:unhandledRejection" });
 });
 
 // إغلاق نظيف: Render يرسل SIGTERM عند كل نشر. متصفّح لا يُغلق

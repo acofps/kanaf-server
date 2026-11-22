@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck, Bug,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
@@ -29,6 +29,7 @@ import Carts from "./pages/Carts.jsx";
 import Discounts from "./pages/Discounts.jsx";
 import Integrations from "./pages/Integrations.jsx";
 import Subscribers from "./pages/Subscribers.jsx";
+import SystemErrors from "./pages/SystemErrors.jsx";
 
 /* ============================================================
    هيكل اللوحة.
@@ -76,6 +77,7 @@ const SECTIONS = [
   { key: "admin-users",  group: "gov",   label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
   { key: "audit-log",    group: "gov",   label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
   { key: "access-log",   group: "gov",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
+  { key: "errors",       group: "gov",   label: "أخطاء النظام",   icon: Bug,               perms: ["errors:view"] }, // KANAF-ORD-0013 §11
 ];
 
 /* زر الوضع — الفاتح افتراضي، والاختيار يُحفظ في هذا المتصفّح وحده. */
@@ -176,6 +178,7 @@ export default function App() {
     notifications: Notifications,
     plans: Plans,
     subscribers: Subscribers,
+    errors: SystemErrors,
     invoices: Invoices,
     billing: Billing,
     "break-glass": BreakGlass,

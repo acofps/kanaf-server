@@ -143,6 +143,7 @@ export const PERMISSION_CATALOG = {
   "subscriptions:view":       "قائمة الاشتراكات",
   "subscriptions:cancel":     "إلغاء اشتراك يدوياً",
   "subscriptions:edit":       "تعديل باقة الاشتراك ومدته وحالته يدوياً (بلا حركة مال، ويُسجَّل بالقيمتين)",
+  "errors:view":              "سجلّ أخطاء النظام المنقّى (KANAF-ORD-0013 §11) — للمالك والمدير وحدهما",
   "payments:view":            "قائمة المدفوعات",
   "payments:refund":          "تنفيذ استرداد — نقل مال حقيقي",
   /* المطابقة تسأل المزوّد عن حالة الدفعة الحقيقية وتطبّقها. صلاحية
@@ -298,6 +299,7 @@ const MATRIX = {
     "reports:view_kpis", "reports:view_integrity",
     "exports:billing", "exports:users",
     "break_glass:request", "break_glass:view",
+    "errors:view",
   ],
 
   /* المالك — كل ما في السجل. تُحسب من ALL_PERMISSIONS لا تُكتب
@@ -394,6 +396,7 @@ export const PERMISSION_PAGES = {
   "integrations:manage": ["integrations"],
   "admins:view": ["admin-users"], "admins:invite": ["admin-users"], "admins:change_role": ["admin-users"], "admins:deactivate": ["admin-users"],
   "audit_log:view_actions": ["audit-log"], "exports:audit": ["audit-log"], "audit_log:view_reads": ["access-log"],
+  "errors:view": ["errors"],
 };
 export const PAGE_KEYS = PANEL_PAGES.map((p) => p.key);
 export const isValidPageList = (v) => Array.isArray(v) && v.length > 0 && v.every((k) => PAGE_KEYS.includes(k));

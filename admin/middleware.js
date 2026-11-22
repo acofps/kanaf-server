@@ -1,5 +1,6 @@
 import { verifyToken } from "./auth.js";
 import { query } from "../db/pool.js";
+import { recordError } from "../ops/error-log.js";
 import { can, canAny, permissionsFor, isValidRole, canWithGrants, permissionsWithGrants } from "./permissions.js";
 
 /* ============================================================
@@ -380,6 +381,8 @@ export function fail(res, err, where, req = null) {
     `admin=${req?.admin?.id || "-"} (${req?.admin?.role || "-"}): ${err?.message || err}`,
     err?.stack || ""
   );
+  // KANAF-ORD-0013 §11: منقّى، ولا يُنتظر ولا يرمي — لا يُسقط الطلب.
+  recordError(err, { location: `${where} · ${req?.method || ""} ${req?.originalUrl || ""}`, status: 500 });
 
   res.status(500).json({ error: "internal_error", message: ARABIC_FALLBACK });
 }
