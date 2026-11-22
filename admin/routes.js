@@ -505,7 +505,7 @@ adminRouter.get(
       const { rows } = await query(
         `SELECT u.id, u.name, u.email, u.age_range, u.gender, u.confirmed_adult,
                 u.created_at, u.updated_at, u.email_verified_at, u.deleted_at,
-                u.reminders_on,
+                u.reminders_on, u.marketing_opt_out,
                 s.last_login_at, s.suspended_at, s.suspended_reason,
                 COALESCE(s.failed_login_count, 0) AS failed_login_count,
                 s.locked_until,
@@ -545,8 +545,10 @@ adminRouter.get(
          رقمين. */
       if (canSeeContact && row.phone_dial && row.phone_national) {
         row.phone = `+${row.phone_dial}${row.phone_national}`;
+        row.phone_parts = { dial: row.phone_dial, national: row.phone_national }; // ORD-0013 §4.3: لنموذج التعديل، بنفس الصلاحية
       } else if (canSeeContact) {
         row.phone = null;
+        row.phone_parts = null;
       }
       delete row.phone_dial;
       delete row.phone_national;

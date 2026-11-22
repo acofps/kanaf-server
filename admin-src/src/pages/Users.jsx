@@ -242,6 +242,7 @@ function UserDetail({ id, tab, me, toast }) {
           <div className="flex gap-1.5 mb-4 flex-wrap">
             {[
               ["profile", "الملف", true],
+              ["edit", "تعديل", can(me, "users:edit")],
               ["billing", "الاشتراك", canBilling],
               ["sensitive", "المتابعة اليومية", canSensitive],
               ["actions", "سجل الإجراءات", canActions],
@@ -356,7 +357,9 @@ function UserDetail({ id, tab, me, toast }) {
             </div>
           )}
 
+          {tab === "edit" && can(me, "users:edit") && <EditUser u={u} toast={toast} onSaved={() => state.reload()} />}
           {tab === "billing" && <Billing user={u} me={me} toast={toast} onChanged={() => { state.reload(); onChanged(); }} />}
+          {tab === "billing" && can(me, "subscriptions:edit") && <EditSubscription user={u} toast={toast} onSaved={() => state.reload()} />}
           {tab === "sensitive" && <Sensitive id={id} />}
           {tab === "actions" && <Actions id={id} />}
         </>
@@ -561,6 +564,157 @@ function Billing({ user, me, toast, onChanged }) {
         confirmLabel={reason?.confirmLabel} danger={reason?.danger}
         onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)}
       />
+    </div>
+  );
+}
+
+
+/* ============================================================
+   تعديل الملف — KANAF-ORD-0013 §4.3
+   كل حفظ بسبب يُكتب في سجل الإجراءات بالقيمة قبل وبعد. يُرسَل ما تغيّر
+   فقط. والمحجوب (D-ADM-01) ليس هنا: لا حقل ولا مسار.
+   ============================================================ */
+const AGE_RANGES = ["20-30", "30-40", "40-50", "50-60"];
+function useCountries() {
+  const [list, setList] = useState([]);
+  useEffect(() => { fetch("/api/countries").then((r) => (r.ok ? r.json() : null)).then((d) => d && setList(d.countries || [])).catch(() => {}); }, []);
+  return list;
+}
+
+function EditUser({ u, toast, onSaved }) {
+  const countries = useCountries();
+  const canContact = "phone" in u;
+  const init = {
+    name: u.name || "", email: u.email || "", ageRange: u.age_range || "", gender: u.gender || "",
+    remindersOn: !!u.reminders_on, reminderTime: u.reminder_local_time || "", reminderTimezone: u.reminder_timezone || "",
+    marketingOptOut: !!u.marketing_opt_out,
+    country: u.country || "", dial: u.phone_parts?.dial || "", national: u.phone_parts?.national || "",
+  };
+  const [f, setF] = useState(init);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k) => (e) => setF((x) => ({ ...x, [k]: e?.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e }));
+
+  const patch = () => {
+    const b = {};
+    if (f.name !== init.name) b.name = f.name;
+    if (f.email.trim().toLowerCase() !== init.email.toLowerCase()) b.email = f.email.trim();
+    if (f.ageRange !== init.ageRange) b.ageRange = f.ageRange || null;
+    if (f.gender !== init.gender) b.gender = f.gender || null;
+    if (f.remindersOn !== init.remindersOn) b.remindersOn = f.remindersOn;
+    if (f.reminderTime !== init.reminderTime && f.reminderTime) b.reminderTime = f.reminderTime;
+    if (f.reminderTimezone !== init.reminderTimezone && f.reminderTimezone) b.reminderTimezone = f.reminderTimezone;
+    if (f.marketingOptOut !== init.marketingOptOut) b.marketingOptOut = f.marketingOptOut;
+    if (canContact) {
+      if (f.country !== init.country) b.country = f.country || null;
+      if (f.dial !== init.dial || f.national !== init.national) b.phone = f.dial || f.national ? { dial: f.dial, national: f.national } : null;
+    }
+    return b;
+  };
+
+  const save = async () => {
+    const b = patch();
+    if (!Object.keys(b).length) { setErr("لا تغيير لحفظه."); return; }
+    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل مع القيمتين قبل وبعد."); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await api.editUserProfile(u.id, { ...b, reason: reason.trim() });
+      toast(r.verification === "sent" ? "حُفظ. البريد الجديد يحتاج تحقّقاً، وأُرسل إليه رمز."
+        : r.verification === "send_failed" ? "حُفظ، لكن تعذّر إرسال رمز التحقق إلى البريد الجديد."
+        : `حُفظ: ${r.changed.length} حقل.`);
+      setReason(""); onSaved();
+    } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
+    finally { setBusy(false); }
+  };
+
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photo = async (file) => {
+    if (!reason.trim()) { setErr("اكتب السبب أولاً — يُسجَّل مع تغيير الصورة."); return; }
+    setPhotoBusy(true); setErr("");
+    try { file ? await api.setUserAvatar(u.id, file, reason.trim()) : await api.deleteUserAvatar(u.id, reason.trim()); toast(file ? "حُفظت الصورة." : "حُذفت الصورة."); onSaved(); }
+    catch (e) { setErr(e?.arabic || "تعذّر."); }
+    finally { setPhotoBusy(false); }
+  };
+
+  const emailChanging = f.email.trim().toLowerCase() !== init.email.toLowerCase();
+  return (
+    <div className="grid gap-3" style={{ maxWidth: 560 }}>
+      <Field label="الاسم"><Input value={f.name} onChange={set("name")} maxLength={80} /></Field>
+      <Field label="البريد" hint={emailChanging ? "⚠️ تغيير البريد يُلغي تفعيله وكل جلسات العميل، ويُرسل رمز تحقق إلى البريد الجديد." : "هوية الدخول."}>
+        <Input value={f.email} onChange={set("email")} dir="ltr" type="email" />
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="الفئة العمرية"><Select value={f.ageRange} onChange={set("ageRange")}><option value="">—</option>{AGE_RANGES.map((a) => <option key={a} value={a}>{a}</option>)}</Select></Field>
+        <Field label="الجنس"><Select value={f.gender} onChange={set("gender")}><option value="">—</option><option value="male">ذكر</option><option value="female">أنثى</option></Select></Field>
+      </div>
+      {canContact && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="الدولة"><Select value={f.country} onChange={(e) => { const c = countries.find((x) => x.code === e.target.value); setF((x) => ({ ...x, country: e.target.value, dial: c ? c.dial : x.dial })); }}>
+            <option value="">—</option>{countries.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</Select></Field>
+          <Field label="رمز الاتصال"><Input value={f.dial} onChange={set("dial")} dir="ltr" /></Field>
+          <Field label="الرقم بلا صفر"><Input value={f.national} onChange={set("national")} dir="ltr" /></Field>
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field label="التذكير اليومي"><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={f.remindersOn} onChange={set("remindersOn")} /> مفعّل</label></Field>
+        <Field label="وقت التذكير"><Input type="time" value={f.reminderTime} onChange={set("reminderTime")} dir="ltr" /></Field>
+        <Field label="المنطقة الزمنية"><Input value={f.reminderTimezone} onChange={set("reminderTimezone")} placeholder="Asia/Riyadh" dir="ltr" /></Field>
+      </div>
+      <label className="flex items-center gap-2 text-xs" style={{ color: C.textMuted }}>
+        <input type="checkbox" checked={f.marketingOptOut} onChange={set("marketingOptOut")} /> أوقف الرسائل التسويقية
+      </label>
+      <Field label="الصورة">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Avatar id={u.id} name={u.name} size={40} hasPhoto={u.has_photo === true} />
+          <input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusy} onChange={(e) => e.target.files?.[0] && photo(e.target.files[0])} />
+          {u.has_photo && <Button size="sm" variant="ghost" busy={photoBusy} onClick={() => photo(null)}>حذف الصورة</Button>}
+        </div>
+      </Field>
+      <Field label="السبب" hint="يُكتب في سجل الإجراءات باسمك مع القيمة قبل وبعد.">
+        <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Field>
+      <ErrorBar error={err} />
+      <div><Button onClick={save} busy={busy}>حفظ التعديلات</Button></div>
+    </div>
+  );
+}
+
+/* الباقة وحالة الاشتراك ومدته — يدوياً بلا حركة مال (subscriptions:edit). */
+function EditSubscription({ user, toast, onSaved }) {
+  const plans = useAsync(() => api.listPlans(), []);
+  const [planId, setPlanId] = useState(user.subscription_plan || "");
+  const [periodEnd, setPeriodEnd] = useState(user.subscription_renews_at ? String(user.subscription_renews_at).slice(0, 10) : "");
+  const [status, setStatus] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    const b = {};
+    if (planId && planId !== user.subscription_plan) b.planId = planId;
+    if (periodEnd && periodEnd !== String(user.subscription_renews_at || "").slice(0, 10)) b.periodEnd = `${periodEnd}T23:59:59+03:00`;
+    if (status) b.status = status;
+    if (!Object.keys(b).length) { setErr("لا تغيير لحفظه."); return; }
+    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
+    setBusy(true); setErr("");
+    try { const r = await api.editUserSubscription(user.id, { ...b, reason: reason.trim() }); toast(r.created ? "مُنح اشتراك يدوي." : "عُدّل الاشتراك."); setReason(""); onSaved(); }
+    catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-6 pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+      <h4 className="text-xs font-bold mb-1" style={{ color: C.text }}>تعديل الاشتراك يدوياً</h4>
+      <p className="text-[11px] leading-6 mb-3" style={{ color: C.textFaint }}>بلا حركة مال: لا فاتورة ولا استرداد. يُسجَّل بالقيمتين قبل وبعد. ولا اشتراك سابق = منح يدوي.</p>
+      <div className="grid gap-3 sm:grid-cols-3" style={{ maxWidth: 680 }}>
+        <Field label="الباقة"><Select value={planId} onChange={(e) => setPlanId(e.target.value)}><option value="">—</option>{(plans.data?.plans || []).map((p) => <option key={p.plan_key} value={p.plan_key}>{p.name}</option>)}</Select></Field>
+        <Field label="ينتهي في"><Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} dir="ltr" /></Field>
+        <Field label="الحالة"><Select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">بلا تغيير</option><option value="active">نشط</option><option value="canceled">ملغى</option></Select></Field>
+      </div>
+      <div className="grid gap-3 mt-3" style={{ maxWidth: 680 }}>
+        <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <ErrorBar error={err} />
+        <div><Button onClick={save} busy={busy}>حفظ الاشتراك</Button></div>
+      </div>
     </div>
   );
 }

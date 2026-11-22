@@ -51,6 +51,22 @@ export class ApiError extends Error {
       hold_not_open: "هذا الحدث لم يعد مفتوحاً.",
       session_minutes_must_be_5_to_60: "عمر الجلسة عدد صحيح من 5 إلى 60 دقيقة.",
       invalid_assistant_policy: "القيمة يجب أن تكون all_verified أو plus_only.",
+      /* KANAF-ORD-0013 §4.3 */
+      email_taken: "هذا البريد مسجّل لحساب آخر.",
+      invalid_email: "صيغة البريد غير صحيحة.",
+      invalid_name: "الاسم مطلوب، وبحد أقصى 80 حرفاً.",
+      invalid_saudi_phone: "الرقم السعودي تسع خانات ويبدأ بـ5، بلا الصفر ولا مفتاح الدولة.",
+      dial_country_mismatch: "رمز الاتصال لا يطابق الدولة المختارة.",
+      phone_incomplete: "أدخل رمز الدولة والرقم معاً.",
+      invalid_phone_length: "طول الرقم غير صالح.",
+      invalid_reminder_time: "الوقت بصيغة HH:MM بنظام 24 ساعة.",
+      invalid_timezone: "منطقة زمنية غير معروفة.",
+      nothing_to_update: "لا تغيير لحفظه.",
+      unknown_plan: "الباقة غير موجودة.",
+      invalid_period_end: "تاريخ انتهاء غير صالح.",
+      grant_requires_plan_and_period_end: "لا اشتراك سابق: المنح اليدوي يحتاج باقة وتاريخ انتهاء.",
+      unsupported_image: "نوع الصورة غير مدعوم (JPEG أو PNG أو WebP).",
+      image_too_large: "الصورة أكبر من الحد المسموح.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -70,7 +86,7 @@ function refreshOnce() {
   return refreshing;
 }
 
-async function req(path, { method = "GET", body, params, retried = false } = {}) {
+async function req(path, { method = "GET", body, params, retried = false, raw = null } = {}) {
   const url = new URL(`${BASE}${path}`, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
@@ -80,14 +96,15 @@ async function req(path, { method = "GET", body, params, retried = false } = {})
   const res = await fetch(url.toString(), {
     method,
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
+    /* raw: ملف كما هو (صورة) بنوعه — KANAF-ORD-0013 §4.3 */
+    headers: { "Content-Type": raw ? (raw.type || "application/octet-stream") : "application/json" },
+    body: raw || (body ? JSON.stringify(body) : undefined),
   });
 
   if (res.status === 401 && !retried && path !== "/auth/refresh" && path !== "/auth/login") {
     try {
       await refreshOnce();
-      return req(path, { method, body, params, retried: true });
+      return req(path, { method, body, params, retried: true, raw });
     } catch {
       window.dispatchEvent(new CustomEvent("kanaf-admin-session-expired"));
       throw new ApiError(401, { error: "session_expired" });
@@ -125,6 +142,11 @@ export const api = {
   deleteIntegrationKey: (service, key, reason) => req(`/integrations/${service}/${key}`, { method: "DELETE", body: { reason } }),
   testIntegration: (service, reason) => req(`/integrations/${service}/test`, { method: "POST", body: { reason } }),
   getUser: (id) => req(`/users/${id}`),
+  /* KANAF-ORD-0013 §4.3 — تعديل الملف بسبب يُسجَّل بالقيمتين */
+  editUserProfile: (id, body) => req(`/users/${id}/profile`, { method: "PATCH", body }),
+  setUserAvatar: (id, file, reason) => req(`/users/${id}/avatar`, { method: "PUT", raw: file, params: { reason } }),
+  deleteUserAvatar: (id, reason) => req(`/users/${id}/avatar`, { method: "DELETE", params: { reason } }),
+  editUserSubscription: (id, body) => req(`/users/${id}/subscription`, { method: "PATCH", body }),
   getUserActions: (id) => req(`/users/${id}/actions`),
   getUserSensitive: (id, reason) => req(`/users/${id}/sensitive`, { params: { reason } }),
   suspendUser: (id, reason) => req(`/users/${id}/suspend`, { method: "POST", body: { reason } }),
