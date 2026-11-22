@@ -9,7 +9,7 @@ import {
   requireAdminAuth, requirePermission, requireReasonAndLog, requireUuidParam,
   logAdminAction, loadEffectiveAdmin, fail, httpError,
 } from "./middleware.js";
-import { permissionsFor, ROLE_LABEL } from "./permissions.js";
+import { permissionsFor, permissionsWithGrants, ROLE_LABEL } from "./permissions.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { withDocumentSlot } from "../invoicing/slot.js";
 import { executeRefund } from "../payments/refund.js";
@@ -85,6 +85,7 @@ const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 120, standardH
 
 /** الشكل الذي تراه اللوحة عن نفسها — الدور وصلاحياته معاً.
     اللوحة لا تحمل مصفوفة صلاحيات خاصة بها؛ ترسم مما يصلها هنا. */
+const grantsOf = (a) => (Array.isArray(a.pageGrants) ? a.pageGrants : Array.isArray(a.page_grants) ? a.page_grants : null);
 function selfPayload(admin) {
   return {
     id: admin.id,
@@ -92,7 +93,9 @@ function selfPayload(admin) {
     email: admin.email,
     role: admin.role,
     roleLabel: ROLE_LABEL[admin.role] || admin.role,
-    permissions: permissionsFor(admin.role),
+    // ORD-0013 §5.2: req.admin يحمل pageGrants، وصف القاعدة يحمل page_grants — والاثنان يمرّان من هنا.
+    permissions: permissionsWithGrants(admin.role, grantsOf(admin)),
+    pageGrants: grantsOf(admin),
   };
 }
 

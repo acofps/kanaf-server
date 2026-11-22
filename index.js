@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import Anthropic from "@anthropic-ai/sdk";
 import { adminRouter } from "./admin/routes.js";
 import { userEditRouter } from "./admin/user-edit.js";
+import { ADMIN_MIN_PASSWORD_LENGTH } from "./admin/password-rule.js";
 import { subscribersRouter } from "./admin/subscribers.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
@@ -1023,7 +1024,7 @@ app.post("/api/setup/create-first-admin", async (req, res) => {
     if (!name?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ error: "name_email_password_required" });
     }
-    if (password.length < 15) {
+    if (password.length < ADMIN_MIN_PASSWORD_LENGTH) { // ORD-0013 §5.4: موضع واحد
       return res.status(400).json({ error: "password_must_be_at_least_15_chars" });
     }
 

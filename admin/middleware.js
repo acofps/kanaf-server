@@ -1,6 +1,6 @@
 import { verifyToken } from "./auth.js";
 import { query } from "../db/pool.js";
-import { can, canAny, permissionsFor, isValidRole } from "./permissions.js";
+import { can, canAny, permissionsFor, isValidRole, canWithGrants, permissionsWithGrants } from "./permissions.js";
 
 /* ============================================================
    وسيطة الإدارة — المصادقة، والصلاحية، وسجل التدقيق.
@@ -23,7 +23,7 @@ import { can, canAny, permissionsFor, isValidRole } from "./permissions.js";
    نفسه لا على إسناد دوره.
    ------------------------------------------------------------ */
 const EFFECTIVE_ADMIN_SQL = `
-  SELECT au.id, au.name, au.email, au.active,
+  SELECT au.id, au.name, au.email, au.active, au.page_grants,
          COALESCE(ra.role, au.role) AS role,
          au.role                    AS base_role,
          ra.role                    AS assigned_role
@@ -97,14 +97,17 @@ export async function requireAdminAuth(req, res, next) {
       return res.status(403).json({ error: "unknown_role" });
     }
 
-    const permissions = permissionsFor(admin.role);
+    /* KANAF-ORD-0013 §5.2: منح الصفحات يضيّق ولا يوسّع — canWithGrants = الدور «و» الصفحة. */
+    const grants = Array.isArray(admin.page_grants) ? admin.page_grants : null;
+    const permissions = permissionsWithGrants(admin.role, grants);
     req.admin = {
       id: admin.id,
       name: admin.name,
       email: admin.email,
       role: admin.role,
+      pageGrants: grants,
       permissions,
-      can: (p) => can(admin.role, p),
+      can: (p) => canWithGrants(admin.role, grants, p),
     };
     next();
   } catch (err) {
@@ -137,7 +140,7 @@ export function requirePermission(permission) {
 /** يكفي امتلاك واحدة من عدة صلاحيات — لمسار يخدم غرضين. */
 export function requireAnyPermission(...permissions) {
   const mw = (req, res, next) => {
-    if (!canAny(req.admin?.role, permissions)) {
+    if (!permissions.some((p) => req.admin?.can(p))) { // ORD-0013 §5.2: عبر can المضيَّقة
       return res.status(403).json({ error: "insufficient_permission", requiredAny: permissions });
     }
     next();
