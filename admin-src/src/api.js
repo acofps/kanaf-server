@@ -196,6 +196,15 @@ export const api = {
   /* KANAF-ORD-0013 §11 */
   listSystemErrors: (params) => req("/system-errors", { params }),
   clearSystemError: (id, reason) => req(`/system-errors/${id}`, { method: "DELETE", params: { reason } }),
+  /* KANAF-ORD-0013 §9 */
+  messageCatalog: () => req("/message-catalog"),
+  saveMessage: (key, body) => req(`/message-catalog/${key}`, { method: "PUT", body }),
+  resetMessage: (key, reason) => req(`/message-catalog/${key}`, { method: "DELETE", params: { reason } }),
+  previewMessage: (key, body) => req(`/message-catalog/${key}/preview`, { method: "POST", body }),
+  testSendMessage: (key, body) => req(`/message-catalog/${key}/test-send`, { method: "POST", body }),
+  createTemplate: (body) => req("/message-templates", { method: "POST", body }),
+  updateTemplate: (id, body) => req(`/message-templates/${id}`, { method: "PUT", body }),
+  deleteTemplate: (id, reason) => req(`/message-templates/${id}`, { method: "DELETE", params: { reason } }),
   /* KANAF-ORD-0013 §8 */
   listCancelledMembers: (params) => req("/cancelled-members", { params }),
   purgeMember: (id, reason) => req(`/users/${id}/purge`, { method: "POST", body: { reason, confirm: "PURGE" } }),

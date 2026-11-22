@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
   FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck, Bug, UserMinus,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck, Bug, UserMinus, LayoutTemplate,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
@@ -30,6 +30,7 @@ import Discounts from "./pages/Discounts.jsx";
 import Integrations from "./pages/Integrations.jsx";
 import Subscribers from "./pages/Subscribers.jsx";
 import SystemErrors from "./pages/SystemErrors.jsx";
+import Templates from "./pages/Templates.jsx";
 import CancelledMembers from "./pages/CancelledMembers.jsx";
 
 /* ============================================================
@@ -79,6 +80,7 @@ const SECTIONS = [
   { key: "admin-users",  group: "gov",   label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
   { key: "audit-log",    group: "gov",   label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
   { key: "access-log",   group: "gov",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
+  { key: "templates",    group: "gov",   label: "قوالب الرسائل",  icon: LayoutTemplate,    perms: ["app_settings:view"] }, // KANAF-ORD-0013 §9
   { key: "errors",       group: "gov",   label: "أخطاء النظام",   icon: Bug,               perms: ["errors:view"] }, // KANAF-ORD-0013 §11
 ];
 
@@ -181,6 +183,7 @@ export default function App() {
     plans: Plans,
     subscribers: Subscribers,
     errors: SystemErrors,
+    templates: Templates,
     "cancelled-members": CancelledMembers,
     invoices: Invoices,
     billing: Billing,
