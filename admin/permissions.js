@@ -99,6 +99,10 @@ export const PERMISSION_CATALOG = {
   "users:view_sensitive":     "درجات اليوميات ونتائج الفرز — بسبب مكتوب يُسجَّل",
   "users:view_actions":       "سجل الإجراءات الإدارية على مستخدم بعينه",
   "users:suspend":            "تعليق حساب ورفع التعليق",
+  /* KANAF-ORD-0013 §4.3: تعديل الملف. لا يفتح المحجوب (D-ADM-01): نص اليومية والدفاتر
+     ومحادثات سند والإجابات التفصيلية لا مسار تعديل ولا قراءة لها هنا أصلاً.
+     والجوال والدولة يشترطان users:view_contact معه — من لا يرى الحقل لا يعدّله. */
+  "users:edit":               "تعديل بيانات العميل: الاسم والبريد والفئة العمرية والجنس والصورة والتذكير (والجوال والدولة مع users:view_contact)",
 
   /* --- الرسائل --- */
   "messages:view":            "رسائل التواصل الواردة",
@@ -138,6 +142,7 @@ export const PERMISSION_CATALOG = {
   /* --- المالية --- */
   "subscriptions:view":       "قائمة الاشتراكات",
   "subscriptions:cancel":     "إلغاء اشتراك يدوياً",
+  "subscriptions:edit":       "تعديل باقة الاشتراك ومدته وحالته يدوياً (بلا حركة مال، ويُسجَّل بالقيمتين)",
   "payments:view":            "قائمة المدفوعات",
   "payments:refund":          "تنفيذ استرداد — نقل مال حقيقي",
   /* المطابقة تسأل المزوّد عن حالة الدفعة الحقيقية وتطبّقها. صلاحية
@@ -277,7 +282,7 @@ const MATRIX = {
   */
   admin: [
     "overview:view", "overview:view_revenue",
-    "users:view", "users:view_sensitive", "users:view_actions", "users:suspend",
+    "users:view", "users:view_sensitive", "users:view_actions", "users:suspend", "users:edit",
     "messages:view", "messages:update_status",
     "content:view", "content:edit_presentation", "content:review",
     "content:toggle_launch", "content:schedule", "content:change_tier",
@@ -285,7 +290,7 @@ const MATRIX = {
     "notifications:cancel", "notifications:sweep",
     "plans:view", "plans:edit",
     "tax_settings:view", "billing_settings:view", "app_settings:view",
-    "subscriptions:view", "subscriptions:cancel",
+    "subscriptions:view", "subscriptions:cancel", "subscriptions:edit",
     "payments:view", "payments:refund", "payments:reconcile", "billing:view_user",
     "invoices:view", "invoices:regenerate",
     "credit_notes:view", "refunds:view",

@@ -80,7 +80,15 @@ async function issueSession(user, req) {
   return { accessToken, refreshToken, expiresIn: ACCESS_TOKEN_TTL };
 }
 
-function verificationEmailBody(name, code, ttlMinutes) {
+/* KANAF-ORD-0013 §4.3: تغيير البريد من اللوحة يشترط تحقّقاً من البريد الجديد —
+   بنفس الرمز ونفس الرسالة التي يصل بها التسجيل، لا نسخة ثانية. */
+export async function sendVerificationEmail(email, name) {
+  const cleanEmail = normalizeEmail(email);
+  const { code, ttlMinutes } = await issueCode(cleanEmail, "signup");
+  await sendSystemEmail("email_verification", cleanEmail, "كود التحقق — تنفس", verificationEmailBody(name || "", code, ttlMinutes));
+}
+
+export function verificationEmailBody(name, code, ttlMinutes) {
   return `أهلاً ${name}،
 
 كود تأكيد بريدك في تنفس: ${code}
