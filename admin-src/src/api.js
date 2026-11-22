@@ -69,6 +69,12 @@ export class ApiError extends Error {
       image_too_large: "الصورة أكبر من الحد المسموح.",
       channel_unavailable: "قناة معطّلة — اعتمادها غير مضبوط. أزلها أو اضبطها من «التكاملات».",
       audience_count_changed: "تغيّر عدد المستلمين منذ عرضه — راجع العدد الجديد وأكّد من جديد.",
+      password_too_short: "الرقم السري خمسة عشر حرفاً على الأقل.",
+      invalid_duties: "اختر مهام إدارية أو مالية.",
+      invalid_pages: "صفحة غير معروفة.",
+      invalid_phone: "الجوال بصيغة دولية: + ثم 8 إلى 15 رقماً.",
+      email_already_exists: "هذا البريد مسجّل لحساب آخر.",
+      cannot_change_own_pages: "لا تقدر تضيّق صفحاتك بنفسك.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -182,6 +188,9 @@ export const api = {
   /* KANAF-ORD-0013 §6 */
   listSubscribers: (params) => req("/subscribers", { params }),
   subscriberRecipients: (params) => req("/subscribers/recipients", { params }),
+  /* KANAF-ORD-0013 §5 */
+  createAdminDirect: (body) => req("/admin-users/direct", { method: "POST", body }),
+  updateAdminPages: (id, body) => req(`/admin-users/${id}/pages`, { method: "PATCH", body }),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),
