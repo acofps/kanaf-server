@@ -1,7 +1,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { query, withTransaction } from "../db/pool.js";
-import { sendSystemEmail } from "../notifications/system-log.js";
+import { sendSystemEmail, sendSystemMessageEmail } from "../notifications/system-log.js"; // §9: النص من سجلّ الرسائل
 import {
   validatePassword, hashPassword, comparePassword,
   issueAccessToken, issueRefreshToken, rotateRefreshToken,
@@ -85,44 +85,11 @@ async function issueSession(user, req) {
 export async function sendVerificationEmail(email, name) {
   const cleanEmail = normalizeEmail(email);
   const { code, ttlMinutes } = await issueCode(cleanEmail, "signup");
-  await sendSystemEmail("email_verification", cleanEmail, "كود التحقق — تنفس", verificationEmailBody(name || "", code, ttlMinutes));
+  await sendSystemMessageEmail("email_verification", cleanEmail, { name: name || "", code, minutes: ttlMinutes });
 }
 
-export function verificationEmailBody(name, code, ttlMinutes) {
-  return `أهلاً ${name}،
 
-كود تأكيد بريدك في تنفس: ${code}
 
-الكود صالح لمدة ${ttlMinutes} دقائق.
-إذا ما طلبت هذا الكود، تجاهل الرسالة ولا تشاركها مع أحد.
-
-فريق تنفس
-tanfs.net`;
-}
-
-function resetEmailBody(name, code, ttlMinutes) {
-  return `أهلاً ${name}،
-
-كود استعادة كلمة المرور في تنفس: ${code}
-
-الكود صالح لمدة ${ttlMinutes} دقائق، ويُستخدم مرة واحدة.
-إذا ما طلبت استعادة كلمة المرور، تجاهل الرسالة — كلمة مرورك ما تغيّرت ولا يحتاج منك أي إجراء.
-
-فريق تنفس
-tanfs.net`;
-}
-
-function existingAccountEmailBody(name) {
-  return `أهلاً ${name}،
-
-وصلنا طلب إنشاء حساب في تنفس بهذا البريد، وعندك حساب مسجّل مسبقاً.
-
-لو كنت أنت: سجّل الدخول مباشرة من app.tanfs.net
-لو ما كنت أنت: ما صار شيء، حسابك بأمان ولا يحتاج أي إجراء.
-
-فريق تنفس
-tanfs.net`;
-}
 
 /* =========================================================
    POST /api/auth/register
@@ -210,7 +177,7 @@ authRouter.post("/register", async (req, res) => {
       // Mail failure here must not change the response shape, or the
       // timing/status difference re-leaks what the branch exists to hide.
       try {
-        await sendSystemEmail("existing_account_notice", cleanEmail, "محاولة إنشاء حساب — تنفس", existingAccountEmailBody(cleanName));
+        await sendSystemMessageEmail("existing_account_notice", cleanEmail, { name: cleanName });
       } catch (err) {
         console.error("existing-account notice failed:", err.message);
       }
@@ -235,7 +202,7 @@ authRouter.post("/register", async (req, res) => {
     const { code, ttlMinutes } = await issueCode(cleanEmail, "signup");
 
     try {
-      await sendSystemEmail("email_verification", cleanEmail, "كود التحقق — تنفس", verificationEmailBody(cleanName, code, ttlMinutes));
+      await sendSystemMessageEmail("email_verification", cleanEmail, { name: cleanName, code, minutes: ttlMinutes });
     } catch (err) {
       // The row exists and the code is stored, so the account is
       // recoverable via resend — but say so plainly rather than
@@ -333,7 +300,7 @@ authRouter.post("/resend-code", async (req, res) => {
 
     const { code, ttlMinutes } = await issueCode(cleanEmail, "signup");
     try {
-      await sendSystemEmail("email_verification", cleanEmail, "كود التحقق — تنفس", verificationEmailBody(user.name, code, ttlMinutes));
+      await sendSystemMessageEmail("email_verification", cleanEmail, { name: user.name, code, minutes: ttlMinutes });
     } catch (err) {
       console.error("resend failed:", err.message);
       return res.status(502).json({ error: "email_send_failed" });
@@ -537,7 +504,7 @@ authRouter.post("/forgot-password", async (req, res) => {
     if (!rate.allowed) return;
 
     const { code, ttlMinutes } = await issueCode(cleanEmail, "password_reset");
-    await sendSystemEmail("password_reset", cleanEmail, "استعادة كلمة المرور — تنفس", resetEmailBody(user.name, code, ttlMinutes));
+    await sendSystemMessageEmail("password_reset", cleanEmail, { name: user.name, code, minutes: ttlMinutes });
   } catch (err) {
     console.error("forgot-password:", err.message);
   }

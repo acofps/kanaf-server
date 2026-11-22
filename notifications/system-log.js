@@ -55,3 +55,10 @@ export async function sendSystemEmail(kind, to, subject, text, extra = {}) {
   });
   return result;
 }
+
+/* KANAF-ORD-0013 §9: رسالة نظام من السجلّ (النص والقالب كما حفظهما المالك، أو الافتراضي). */
+export async function sendSystemMessageEmail(key, to, vars) {
+  const { renderMessage } = await import("./messages.js");
+  const m = await renderMessage(key, vars);
+  return sendSystemEmail(key, to, m.subject, m.text, m.extra);
+}

@@ -51,7 +51,11 @@ export async function footerLinks() {
  * يبني البريد. kind: "service" (تحقق، استعادة، دعوة…) أو "marketing" (حملة).
  * يعيد { html, attachments } لتمريرهما إلى sendEmail كما هما.
  */
-export function renderEmail({ title, text, kind = "service", unsubscribeUrl = null, footerNote = "", links = { appStore: null, googlePlay: null, social: [] } }) {
+/* KANAF-ORD-0013 §9: accent من قالب مختار — لوحة مقيدة بقيد في القاعدة (الترحيل 025)، كلها داكنة
+   تباينها على الأبيض فوق 4.5:1. الافتراضي هو اللون نفسه الذي كان ثابتاً هنا. */
+const ACCENTS = new Set(["#735890", "#594372", "#402F53", "#1C1626"]);
+export function renderEmail({ title, text, kind = "service", unsubscribeUrl = null, footerNote = "", links = { appStore: null, googlePlay: null, social: [] }, accent = "#735890" }) {
+  if (!ACCENTS.has(accent)) accent = "#735890";
   if (kind === "marketing" && !unsubscribeUrl) throw new Error("renderEmail: marketing e-mail requires an unsubscribe link");
   const paragraphs = String(text || "").split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px;">${linkify(esc(p)).replace(/\n/g, "<br>")}</p>`).join("");
   const storeBtn = (url, label) => url
@@ -65,7 +69,7 @@ export function renderEmail({ title, text, kind = "service", unsubscribeUrl = nu
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;font-family:Tahoma,Arial,sans-serif;direction:rtl;text-align:right;">
     <tr><td align="center" style="padding:0 0 16px;"><img src="cid:${LOGO_CID}" alt="تنفس" width="40" height="61" style="display:block;border:0;"></td></tr>
     <tr><td style="background:#FFFFFF;border:1px solid #ECE4F4;border-radius:14px;padding:24px;color:#1C1626;font-size:15px;line-height:1.8;">
-      <h1 style="margin:0 0 14px;font-size:18px;color:#735890;">${esc(title)}</h1>
+      <h1 style="margin:0 0 14px;font-size:18px;color:${accent};">${esc(title)}</h1>
       ${paragraphs}
     </td></tr>
     ${stores ? `<tr><td align="center" style="padding:18px 0 4px;">${stores}</td></tr>` : ""}

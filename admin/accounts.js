@@ -12,7 +12,7 @@ import { ROLES, ROLE_LABEL, isValidRole, baseRoleFor, needsAssignmentRow, PANEL_
 import { adminPasswordError } from "./password-rule.js";
 import { sendEmail } from "../mail/send.js";
 import { ADMIN_MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH } from "./password-rule.js"; // ORD-0013 §5.4: موضع واحد
-import { serviceEmailExtra } from "../notifications/email-template.js";
+import { renderMessage } from "../notifications/messages.js"; // §9: النص والقالب من سجلّ الرسائل
 
 export const adminAccountsRouter = express.Router();
 
@@ -101,35 +101,7 @@ function setupUrl(token) {
   return `${base}/?setup=${token}`;
 }
 
-function inviteEmailBody(name, url, hours, roleLabel) {
-  return `مرحباً ${name}،
 
-أُنشئ لك حساب في لوحة إدارة تنفس بصلاحية «${roleLabel}».
-
-لتفعيل حسابك واختيار كلمة مرورك، افتح الرابط التالي:
-
-${url}
-
-الرابط صالح ${hours} ساعة ولمرة واحدة. لو انتهى، اطلب من المالك إعادة إرسال الدعوة.
-
-إذا ما كنت تتوقع هذه الرسالة، تجاهلها — الحساب لا يعمل قبل فتح الرابط.
-
-فريق تنفس`;
-}
-
-function resetEmailBody(name, url, hours) {
-  return `مرحباً ${name}،
-
-وصلنا طلب لإعادة ضبط كلمة مرور حسابك في لوحة إدارة تنفس.
-
-${url}
-
-الرابط صالح ${hours} ساعة ولمرة واحدة.
-
-إذا ما طلبت هذا، تجاهل الرسالة — كلمة مرورك الحالية ما زالت تعمل، ويُستحسن تخبر المالك.
-
-فريق تنفس`;
-}
 
 /* ------------------------------------------------------------
    كتابة الدور — في مكانين لا مكان واحد
@@ -274,9 +246,8 @@ adminAccountsRouter.post(
       let emailed = false;
       let emailError = null;
       try {
-        const subject = "دعوة إلى لوحة إدارة تنفس";
-        const text = inviteEmailBody(created.admin.name, url, created.expiresInHours, ROLE_LABEL[role] || role);
-        await sendEmail(created.admin.email, subject, text, await serviceEmailExtra(subject, text));
+        const m = await renderMessage("admin_invite", { name: created.admin.name, url, hours: created.expiresInHours, role: ROLE_LABEL[role] || role });
+        await sendEmail(created.admin.email, m.subject, m.text, m.extra);
         emailed = true;
       } catch (err) {
         /* ليس فشلاً صامتاً ولا فشلاً للطلب: الحساب أُنشئ فعلاً
@@ -431,8 +402,8 @@ adminAccountsRouter.post(
       const url = setupUrl(issued.token);
       let emailed = false, emailError = null;
       try {
-        const text = inviteEmailBody(admin.name, url, issued.expiresInHours, "");
-        await sendEmail(admin.email, "دعوة إلى لوحة إدارة تنفس", text, await serviceEmailExtra("دعوة إلى لوحة إدارة تنفس", text));
+        const m = await renderMessage("admin_invite", { name: admin.name, url, hours: issued.expiresInHours, role: "" });
+        await sendEmail(admin.email, m.subject, m.text, m.extra);
         emailed = true;
       } catch (err) { emailError = err.message; console.error("[admin/accounts] تعذّر إعادة الإرسال:", err.message); }
 
@@ -469,8 +440,8 @@ adminAccountsRouter.post(
       const url = setupUrl(issued.token);
       let emailed = false, emailError = null;
       try {
-        const text = resetEmailBody(admin.name, url, issued.expiresInHours);
-        await sendEmail(admin.email, "إعادة ضبط كلمة مرور لوحة تنفس", text, await serviceEmailExtra("إعادة ضبط كلمة مرور لوحة تنفس", text));
+        const m = await renderMessage("admin_password_reset", { name: admin.name, url, hours: issued.expiresInHours });
+        await sendEmail(admin.email, m.subject, m.text, m.extra);
         emailed = true;
       } catch (err) { emailError = err.message; console.error("[admin/accounts] تعذّر إرسال الاستعادة:", err.message); }
 
