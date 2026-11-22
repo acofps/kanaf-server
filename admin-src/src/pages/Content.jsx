@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { Check, X, Power, CalendarClock, Pencil, History, Rocket } from "lucide-react";
 import { api } from "../api.js";
+import { Link, navigate, useQueryState } from "../router.js";
 import { C, CONTENT_TYPE_LABEL, REVIEW_LABEL, can, fmtDateTime, toIsoWithOffset, toLocalInput } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync,
+  ErrorBar, Modal, Screen, ReasonPrompt, Table, Td, Pager, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -25,18 +26,33 @@ import {
 const TYPES = ["", "journey", "overlay", "notebook", "cbt_tool", "library_article"];
 const STATUSES = ["", "review_required", "approved", "rejected", "retired"];
 
-export default function Content({ me, toast }) {
-  const [type, setType] = useState("");
-  const [status, setStatus] = useState("");
-  const [published, setPublished] = useState("");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+export default function Content({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: التحرير والجدولة والسجل صفحات: /content/<type>/<key>/<edit|schedule|history> */
+  if (route.length >= 3) return <ContentItemScreen type={route[0]} ckey={route[1]} action={route[2]} me={me} toast={toast} />;
+  return <ContentList me={me} toast={toast} />;
+}
+
+function ContentItemScreen({ type, ckey, action, me, toast }) {
+  const st = useAsync(() => api.getContentItem(type, ckey), [type, ckey]);
+  const item = st.data?.item;
+  const done = (msg) => { toast(msg); navigate("/content"); };
+  const close = () => navigate("/content");
+  if (st.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+  if (!item) return <Screen title="المحتوى" back="/content"><ErrorBar error={st.error || "العنصر غير موجود."} /></Screen>;
+  if (action === "edit") return <EditPresentation item={item} me={me} onClose={close} onDone={() => done("حُدّث العرض.")} />;
+  if (action === "schedule") return <ScheduleContent item={item} onClose={close} onDone={() => done("حُفظت الجدولة.")} />;
+  return <HistoryScreen item={item} onClose={close} />;
+}
+
+function ContentList({ me, toast }) {
+  const [type, setType] = useQueryState("type", "");
+  const [status, setStatus] = useQueryState("status", "");
+  const [published, setPublished] = useQueryState("published", "");
+  const [search, setSearch] = useQueryState("q", "");
+  const [page, setPage] = useQueryState("page", 1);
   const pageSize = 25;
 
   const [reason, setReason] = useState(null);   // { title, description, danger, run }
-  const [editing, setEditing] = useState(null);
-  const [scheduling, setScheduling] = useState(null);
-  const [history, setHistory] = useState(null);
   const [bulk, setBulk] = useState(false);
   const [err, setErr] = useState("");
 
@@ -166,9 +182,9 @@ export default function Content({ me, toast }) {
                             <Power size={12} /> {it.launch_enabled ? "إيقاف" : "نشر"}
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={() => setEditing(it)}><Pencil size={12} /></Button>
-                        {canSchedule && <Button size="sm" variant="ghost" onClick={() => setScheduling(it)}><CalendarClock size={12} /></Button>}
-                        <Button size="sm" variant="ghost" onClick={() => setHistory(it)}><History size={12} /></Button>
+                        <Link to={`/content/${encodeURIComponent(it.content_type)}/${encodeURIComponent(it.content_key)}/edit`} title="تحرير"><Button size="sm" variant="ghost"><Pencil size={12} /></Button></Link>
+                        {canSchedule && <Link to={`/content/${encodeURIComponent(it.content_type)}/${encodeURIComponent(it.content_key)}/schedule`} title="جدولة"><Button size="sm" variant="ghost"><CalendarClock size={12} /></Button></Link>}
+                        <Link to={`/content/${encodeURIComponent(it.content_type)}/${encodeURIComponent(it.content_key)}/history`} title="السجل"><Button size="sm" variant="ghost"><History size={12} /></Button></Link>
                       </div>
                     </Td>
                   </tr>
@@ -188,13 +204,8 @@ export default function Content({ me, toast }) {
         onClose={() => setReason(null)}
       />
 
-      {editing && <EditPresentation item={editing} me={me} onClose={() => setEditing(null)}
-        onDone={() => { setEditing(null); list.reload(); toast("حُدّث العرض."); }} />}
 
-      {scheduling && <ScheduleContent item={scheduling} onClose={() => setScheduling(null)}
-        onDone={() => { setScheduling(null); list.reload(); toast("حُفظت الجدولة."); }} />}
 
-      {history && <HistoryModal item={history} onClose={() => setHistory(null)} />}
 
       <BulkPublish open={bulk} onClose={() => setBulk(false)}
         onDone={(n) => { setBulk(false); list.reload(); toast(`نُشر ${n} عنصراً.`); }} />
@@ -231,7 +242,7 @@ function EditPresentation({ item, me, onClose, onDone }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={`تحرير «${item.content_key}»`}>
+    <Screen title={`تحرير «${item.content_key}»`} back="/content" backLabel="المحتوى">
       <div className="space-y-3">
         <Field label="العنوان"><Input value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
         <Field label="التصنيف"><Input value={category} onChange={(e) => setCategory(e.target.value)} /></Field>
@@ -249,7 +260,7 @@ function EditPresentation({ item, me, onClose, onDone }) {
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 
@@ -284,7 +295,7 @@ function ScheduleContent({ item, onClose, onDone }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={`جدولة «${item.content_key}»`}>
+    <Screen title={`جدولة «${item.content_key}»`} back="/content" backLabel="المحتوى">
       <div className="space-y-3">
         <p className="text-xs leading-6" style={{ color: C.textMuted }}>
           الجدولة وحدها لا تنشر — لا بد أن يكون العنصر معتمداً ومفتاح الإطلاق مرفوعاً أيضاً.
@@ -303,12 +314,12 @@ function ScheduleContent({ item, onClose, onDone }) {
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 
 /** سجل تغييرات العنصر — يُكتب صف لكل تغيير ولا يُعدَّل ولا يُحذف. */
-function HistoryModal({ item, onClose }) {
+function HistoryScreen({ item, onClose }) {
   const h = useAsync(() => api.getContentItem(item.content_type, item.content_key), [item.content_key]);
   const rows = h.data?.history || [];
   const KIND = {
@@ -316,7 +327,7 @@ function HistoryModal({ item, onClose }) {
     schedule: "جدولة", tier_change: "تغيير طبقة", presentation: "تحرير عرض", seed: "بذر",
   };
   return (
-    <Modal open onClose={onClose} title={`سجل «${item.content_key}»`} width={640}>
+    <Screen title={`سجل «${item.content_key}»`} back="/content" backLabel="المحتوى">
       {h.loading ? <div className="py-6 flex justify-center"><Spinner /></div>
         : rows.length === 0 ? <Empty>ما فيه تغييرات مسجّلة.</Empty>
         : (
@@ -335,7 +346,7 @@ function HistoryModal({ item, onClose }) {
             ))}
           </div>
         )}
-    </Modal>
+    </Screen>
   );
 }
 

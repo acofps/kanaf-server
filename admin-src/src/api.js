@@ -118,6 +118,7 @@ export const api = {
   createDiscountCode: (body) => req("/discount-codes", { method: "POST", body }),
   setDiscountActive: (id, active, reason) => req(`/discount-codes/${id}/active`, { method: "POST", body: { active, reason } }),
   checkDiscountCode: (body) => req("/discount-codes/check", { method: "POST", body }),
+  discountRedemptions: (id) => req(`/discount-codes/${id}/redemptions`),
   // KANAF-ORD-0008 §7 — اعتمادات لا تكامل؛ لا مسار يعيد سرّاً
   listIntegrations: () => req("/integrations"),
   setIntegrationKey: (service, key, value, reason) => req(`/integrations/${service}/${key}`, { method: "PUT", body: { value, reason } }),

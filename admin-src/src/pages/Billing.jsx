@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { Download, RotateCcw, RefreshCw, Eye, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { api } from "../api.js";
+import { Link, useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync,
-  Field, Input, Select, SearchBox, Modal, ReasonPrompt,
+  Field, Input, Select, SearchBox, Modal, Screen, ReasonPrompt,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -41,19 +43,21 @@ const PAY_STATUS = { paid: "مدفوعة", failed: "فاشلة", refunded: "مس
 const EVT_STATUS = { processed: "عولج", failed: "فشل", ignored: "تُجوهل", received: "استُلم", processing: "قيد المعالجة" };
 const money = (v, cur = "SAR") => `${Number(v || 0).toFixed(2)} ${cur === "SAR" ? "ر.س" : cur}`;
 
-export default function Billing({ me, toast }) {
+export default function Billing({ me, toast, route = [] }) {
   const tabs = TABS.filter((t) => can(me, t.perm));
-  const [tab, setTab] = useState(tabs[0]?.key || "kpis");
+  /* KANAF-ORD-0013 §3: التبويب في المسار /billing/<tab>، وحمولة الحدث صفحة /billing/events/<id> */
+  if (route[0] === "events" && route[1] && can(me, "webhooks:view_payload")) return <PayloadScreen id={route[1]} />;
+  const tab = tabs.some((t) => t.key === route[0]) ? route[0] : (tabs[0]?.key || "kpis");
   if (!tabs.length) return <Empty>صلاحيتك لا تشمل أي شاشة مالية.</Empty>;
   return (
     <div>
       <PageTitle title="المالية" subtitle="الأرقام من الخادم مباشرة — لا تعديل يدوي لدفعة أو فاتورة. كل إجراء مالي بسبب مكتوب يُسجَّل في سجل التدقيق." />
       <div className="flex gap-1.5 mb-4 flex-wrap">
         {tabs.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className="px-3 py-1.5 rounded-xl text-xs font-bold"
+          <Link key={t.key} to={`/billing/${t.key}`} aria-current={tab === t.key ? "page" : undefined} className="px-3 py-1.5 rounded-xl text-xs font-bold"
             style={{ background: tab === t.key ? C.tealSoft : C.surfaceAlt, color: tab === t.key ? C.teal : C.textMuted }}>
             {t.label}
-          </button>
+          </Link>
         ))}
       </div>
       {tab === "kpis" && <Kpis />}
@@ -69,8 +73,8 @@ export default function Billing({ me, toast }) {
 
 /* ---------------- المؤشرات ---------------- */
 function Kpis() {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useQueryState("from", "");
+  const [to, setTo] = useQueryState("to", "");
   const state = useAsync(() => api.billingKpis({ from, to }), [from, to]);
   const d = state.data;
   const k = d?.kpis || {};
@@ -108,9 +112,9 @@ function Kpis() {
 
 /* ---------------- الاشتراكات ---------------- */
 function Subscriptions({ me }) {
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
+  const [page, setPage] = useQueryState("page", 1);
+  const [search, setSearch] = useQueryState("q", "");
+  const [status, setStatus] = useQueryState("status", "all");
   const params = { page, search, status };
   const state = useAsync(() => api.billingSubscriptions(params), [page, search, status]);
   const rows = state.data?.subscriptions || [];
@@ -129,7 +133,7 @@ function Subscriptions({ me }) {
         <Table head={["المستخدم", "الباقة", "الحالة الفعلية", "يتجدد / ينتهي", "السعر", "أُنشئ"]}>
           {rows.map((s) => (
             <tr key={s.id}>
-              <Td><div className="font-bold">{s.user_name}</div><div className="text-[11px]" style={{ color: C.textFaint }} dir="ltr">{s.user_email}</div></Td>
+              <Td><div><UserLink id={s.user_id} name={s.user_name} email={s.user_email} /></div><div className="text-[11px]" style={{ color: C.textFaint }} dir="ltr">{s.user_email}</div></Td>
               <Td>{s.plan_name || s.plan_id}</Td>
               <Td><Badge color={s.entitled ? "green" : "textMuted"}>{SUB_STATUS[s.status] || s.status}</Badge></Td>
               <Td>{s.renewal_date ? fmtDate(s.renewal_date) : "—"}</Td>
@@ -146,9 +150,9 @@ function Subscriptions({ me }) {
 
 /* ---------------- المدفوعات + الاسترداد + المطابقة ---------------- */
 function Payments({ me, toast }) {
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
+  const [page, setPage] = useQueryState("page", 1);
+  const [search, setSearch] = useQueryState("q", "");
+  const [status, setStatus] = useQueryState("status", "all");
   const state = useAsync(() => api.billingPayments({ page, search, status }), [page, search, status]);
   const [refundOf, setRefundOf] = useState(null);
   const [reason, setReason] = useState(null);
@@ -179,7 +183,7 @@ function Payments({ me, toast }) {
             const refundable = Number(p.amount) - Number(p.refunded_amount || 0);
             return (
               <tr key={p.id}>
-                <Td><div className="font-bold">{p.user_name}</div><div className="text-[11px]" style={{ color: C.textFaint }} dir="ltr">{p.user_email}</div></Td>
+                <Td><div><UserLink id={p.user_id} name={p.user_name} email={p.user_email} /></div><div className="text-[11px]" style={{ color: C.textFaint }} dir="ltr">{p.user_email}</div></Td>
                 <Td dir="ltr">{money(p.amount, p.currency)}</Td>
                 <Td><Badge color={p.status === "paid" ? "green" : p.status === "failed" ? "crisis" : "amber"}>{PAY_STATUS[p.status] || p.status}</Badge>
                   {p.failure_reason && <div className="text-[10px] mt-1" style={{ color: C.textFaint }}>{p.failure_reason}</div>}</Td>
@@ -264,7 +268,7 @@ function RefundModal({ payment, onClose, onDone }) {
 
 /* ---------------- الاستردادات ---------------- */
 function Refunds() {
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useQueryState("page", 1);
   const state = useAsync(() => api.billingRefunds({ page }), [page]);
   const rows = state.data?.refunds || [];
   return (
@@ -274,7 +278,7 @@ function Refunds() {
         <Table head={["المستخدم", "المبلغ", "النوع", "الحالة", "الإشعار الدائن", "السبب", "من", "التاريخ"]}>
           {rows.map((r) => (
             <tr key={r.id}>
-              <Td dir="ltr">{r.user_email}</Td>
+              <Td><UserLink id={r.user_id} name={r.user_name} email={r.user_email} /><div className="text-[11px]" dir="ltr" style={{ color: C.textFaint }}>{r.user_email}</div></Td>
               <Td dir="ltr">{money(r.amount, r.currency)}</Td>
               <Td>{r.kind === "full" ? "كامل" : r.kind === "partial" ? "جزئي" : r.kind}</Td>
               <Td>
@@ -298,10 +302,9 @@ function Refunds() {
 
 /* ---------------- أحداث الدفع + إعادة التشغيل ---------------- */
 function Events({ me, toast }) {
-  const [page, setPage] = useState(1);
-  const [status, setStatus] = useState("all");
+  const [page, setPage] = useQueryState("page", 1);
+  const [status, setStatus] = useQueryState("status", "all");
   const state = useAsync(() => api.webhookEvents({ page, status }), [page, status]);
-  const [view, setView] = useState(null);
   const [reason, setReason] = useState(null);
   const rows = state.data?.events || [];
   const summary = state.data?.summary || {};
@@ -326,7 +329,7 @@ function Events({ me, toast }) {
               <Td>{fmtDateTime(e.received_at)}</Td>
               <Td>
                 <div className="flex gap-1.5 justify-end">
-                  {can(me, "webhooks:view_payload") && <Button size="sm" variant="ghost" onClick={() => setView(e.id)}><Eye size={12} /> الحمولة</Button>}
+                  {can(me, "webhooks:view_payload") && <Link to={`/billing/events/${e.id}`}><Button size="sm" variant="ghost"><Eye size={12} /> الحمولة</Button></Link>}
                   {can(me, "webhooks:replay") && (
                     <Button size="sm" variant="warn" onClick={() => setReason({
                       title: "إعادة معالجة حدث دفع",
@@ -342,7 +345,6 @@ function Events({ me, toast }) {
         </Table>
       )}
       <Pager page={page} totalPages={state.data?.totalPages} total={state.data?.total} onPage={setPage} />
-      <PayloadModal id={view} onClose={() => setView(null)} />
       <ReasonPrompt open={!!reason} title={reason?.title || ""} description={reason?.description}
         confirmLabel={reason?.confirmLabel} onConfirm={(r) => reason.run(r)} onClose={() => setReason(null)} />
     </Card>
@@ -363,7 +365,7 @@ const fmtMoneyObj = (o) => {
 };
 
 function Holds({ me, toast }) {
-  const [status, setStatus] = useState("open");
+  const [status, setStatus] = useQueryState("status", "open");
   const state = useAsync(() => api.paymentHolds(status), [status]);
   const [reason, setReason] = useState(null);
   const rows = state.data?.holds || [];
@@ -418,10 +420,10 @@ function Holds({ me, toast }) {
   );
 }
 
-function PayloadModal({ id, onClose }) {
+function PayloadScreen({ id }) {
   const state = useAsync(() => (id ? api.webhookEvent(id) : Promise.resolve(null)), [id]);
   return (
-    <Modal open={!!id} onClose={onClose} title="حمولة الحدث" width={720}>
+    <Screen title="حمولة الحدث" back="/billing/events" backLabel="أحداث الدفع">
       <p className="text-[11px] mb-2" style={{ color: C.textFaint }}>السر (secret_token) منزوع عند التخزين ولا يُعرض. هذه الشاشة للتشخيص فقط.</p>
       <ErrorBar error={state.error} />
       {state.loading ? <Spinner /> : state.data && (
@@ -429,7 +431,7 @@ function PayloadModal({ id, onClose }) {
           {JSON.stringify(state.data.event?.payload, null, 2)}
         </pre>
       )}
-    </Modal>
+    </Screen>
   );
 }
 

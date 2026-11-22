@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { ShieldAlert, KeyRound, Check } from "lucide-react";
 import { api } from "../api.js";
+import { UserLink } from "./Users.jsx";
 import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Spinner, Empty,
@@ -96,7 +97,7 @@ export default function BreakGlass({ me, toast }) {
                   <div className="font-bold">{r.requested_by_name}</div>
                   <div className="text-[10px]" style={{ color: C.textFaint }}>{r.requested_by_email}</div>
                 </Td>
-                <Td>{r.target_user_id ? <code className="text-[10px]">{r.target_user_id}</code> : <Badge>عام</Badge>}</Td>
+                <Td>{r.target_user_id ? <UserLink id={r.target_user_id} name={r.target_user_name || r.target_user_id.slice(0, 8)} /> : <Badge>عام</Badge>}</Td>
                 <Td className="max-w-xs"><span style={{ color: C.textMuted }}>{r.reason}</span></Td>
                 <Td>{fmtDateTime(r.created_at)}</Td>
                 <Td>

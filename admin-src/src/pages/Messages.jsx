@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { api } from "../api.js";
+import { useQueryState } from "../router.js";
 import { C, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Select, SearchBox, Spinner, Empty, ErrorBar, Table, Td, useAsync,
@@ -20,8 +21,8 @@ const STATUS = {
 };
 
 export default function Messages({ toast }) {
-  const [filter, setFilter] = useState("");
-  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useQueryState("status", "");
+  const [search, setSearch] = useQueryState("q", "");
   const [busyId, setBusyId] = useState(null);
   const state = useAsync(() => api.listMessages(), []);
 

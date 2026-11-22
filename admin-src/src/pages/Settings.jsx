@@ -4,8 +4,9 @@ import { api } from "../api.js";
 import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, Textarea,
-  Spinner, ErrorBar, Table, Td, useAsync,
+  Spinner, ErrorBar, Table, Td, useAsync, Screen,
 } from "../ui.jsx";
+import { Link, navigate } from "../router.js";
 
 /* ============================================================
    الإعدادات.
@@ -36,7 +37,7 @@ import {
    قائمة مكتوبة هنا، فلا تتقادم.
    ============================================================ */
 
-export default function Settings({ me, toast }) {
+export default function Settings({ me, toast, route = [] }) {
   const state = useAsync(() => api.settingsOverview(), []);
   const d = state.data;
 
@@ -44,6 +45,14 @@ export default function Settings({ me, toast }) {
   if (state.error) return <ErrorBar error={state.error} />;
 
   const registryFor = (key) => (d?.registry || []).find((r) => r.key === key);
+
+  /* KANAF-ORD-0013 §3.2: تعديل إعداد تشغيل صفحة /settings/app/<key> لا نافذة */
+  if (route[0] === "app" && route[1]) {
+    const setting = (d.sections?.app?.values || []).find((r) => r.key === route[1]);
+    if (!setting || !d.sections?.app?.canEdit) return <Screen title="الإعداد" back="/settings"><ErrorBar error="الإعداد غير موجود أو لا تملك تعديله." /></Screen>;
+    return <EditAppSetting setting={setting} entry={registryFor(setting.key)}
+      onClose={() => navigate("/settings")} onDone={() => { toast("حُفظ الإعداد."); navigate("/settings"); }} />;
+  }
 
   return (
     <div>
@@ -256,7 +265,6 @@ function SettingValue({ value }) {
 }
 
 function AppSection({ section, registryFor, toast, onSaved }) {
-  const [editing, setEditing] = useState(null);
   const rows = section.values || [];
   const unwired = rows.filter((r) => !registryFor(r.key)?.wired).length;
 
@@ -286,7 +294,7 @@ function AppSection({ section, registryFor, toast, onSaved }) {
               <Td>{r.updated_at ? fmtDateTime(r.updated_at) : "—"}</Td>
               <Td>
                 <div className="flex justify-end">
-                  {section.canEdit && <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>تعديل</Button>}
+                  {section.canEdit && <Link to={`/settings/app/${encodeURIComponent(r.key)}`}><Button size="sm" variant="ghost">تعديل</Button></Link>}
                 </div>
               </Td>
             </tr>
@@ -302,11 +310,7 @@ function AppSection({ section, registryFor, toast, onSaved }) {
         </div>
       ))}
 
-      {editing && (
-        <EditAppSetting setting={editing} entry={registryFor(editing.key)}
-          onClose={() => setEditing(null)}
-          onDone={() => { setEditing(null); toast("حُفظ الإعداد."); onSaved(); }} />
-      )}
+
     </Card>
   );
 }
@@ -351,11 +355,8 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
-      style={{ background: C.overlay }} onClick={onClose}>
-      <div className="rounded-2xl w-full my-8 p-5" style={{ maxWidth: 480, background: C.surface, border: `1px solid ${C.line}` }}
-        onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>{entry?.label || setting.key}</h3>
+    <Screen title={entry?.label || setting.key} back="/settings" backLabel="الإعدادات">
+      <div style={{ maxWidth: 560 }}>
         {entry && !entry.wired && (
           <p className="text-[11px] leading-6 mb-3 rounded-xl px-3 py-2" style={{ background: C.amberSoft, color: C.amber }}>
             ⚠️ هذا الإعداد لا يؤثر بعد. {entry.note}
@@ -401,6 +402,6 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
           </div>
         </div>
       </div>
-    </div>
+    </Screen>
   );
 }

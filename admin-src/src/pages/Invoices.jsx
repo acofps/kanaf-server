@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { FileText, RefreshCw, AlertTriangle, Download } from "lucide-react";
 import { api } from "../api.js";
+import { Link, useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync,
@@ -16,8 +18,8 @@ import {
    لها رقم أصلاً (فشل التوليد وقت الدفع)، لا لتغيير رقم قائم.
    ============================================================ */
 
-export default function Invoices({ me, toast }) {
-  const [tab, setTab] = useState("invoices");
+export default function Invoices({ me, toast, route = [] }) {
+  const tab = route[0] === "credit" ? "credit" : "invoices"; // ORD-0013 §3.1: /invoices و /invoices/credit
   return (
     <div>
       <PageTitle title="الفواتير" subtitle="وثائق ضريبية — للقراءة فقط. التصحيح يكون بإشعار دائن لا بتعديل.">
@@ -30,10 +32,10 @@ export default function Invoices({ me, toast }) {
       </PageTitle>
       <div className="flex gap-1.5 mb-4">
         {[["invoices", "الفواتير"], ["credit", "الإشعارات الدائنة"]].map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className="px-3 py-1.5 rounded-xl text-xs font-bold"
+          <Link key={k} to={k === "invoices" ? "/invoices" : "/invoices/credit"} aria-current={tab === k ? "page" : undefined} className="px-3 py-1.5 rounded-xl text-xs font-bold"
             style={{ background: tab === k ? C.tealSoft : C.surfaceAlt, color: tab === k ? C.teal : C.textMuted }}>
             {l}
-          </button>
+          </Link>
         ))}
       </div>
       {tab === "invoices" ? <InvoiceList toast={toast} /> : <CreditNotes />}
@@ -42,7 +44,7 @@ export default function Invoices({ me, toast }) {
 }
 
 function InvoiceList({ toast }) {
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useQueryState("page", 1);
   const state = useAsync(() => api.listInvoices({ page }), [page]);
   const [busyId, setBusyId] = useState(null);
 
@@ -82,7 +84,7 @@ function InvoiceList({ toast }) {
                   : <Badge color="amber">بلا رقم</Badge>}
               </Td>
               <Td>
-                <div>{inv.user_name || "—"}</div>
+                <div><UserLink id={inv.user_id} name={inv.user_name} email={inv.user_email} /></div>
                 <div className="text-[10px]" style={{ color: C.textFaint }}>{inv.user_email}</div>
               </Td>
               <Td>{inv.plan_id}</Td>
@@ -132,7 +134,7 @@ function CreditNotes() {
               <Td><code className="text-[10px] font-bold">{c.zatca_credit_note_number}</code></Td>
               <Td><code className="text-[10px]">{c.original_invoice_number || "—"}</code></Td>
               <Td>
-                <div>{c.user_name || "—"}</div>
+                <div><UserLink id={c.user_id} name={c.user_name} email={c.user_email} /></div>
                 <div className="text-[10px]" style={{ color: C.textFaint }}>{c.user_email}</div>
               </Td>
               <Td className="font-bold" >

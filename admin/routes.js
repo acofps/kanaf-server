@@ -918,9 +918,10 @@ adminRouter.get("/break-glass/pending", requireAdminAuth, requirePermission("bre
   try {
     const { rows } = await query(
       `SELECT bg.id, bg.reason, bg.created_at, bg.target_user_id,
-              au.name AS requested_by_name, au.email AS requested_by_email
+              au.name AS requested_by_name, au.email AS requested_by_email, tu.name AS target_user_name
          FROM break_glass_requests bg
          JOIN admin_users au ON au.id = bg.requested_by
+         LEFT JOIN users tu ON tu.id = bg.target_user_id -- ORD-0013 §4.2
         WHERE bg.status = 'pending'
         ORDER BY bg.created_at ASC`
     );
@@ -1031,9 +1032,10 @@ adminRouter.get("/access-log", requireAdminAuth, requirePermission("audit_log:vi
       query(`SELECT count(*)::int AS n FROM admin_access_log al WHERE ($1::uuid IS NULL OR al.target_user_id = $1)`, [targetUserId]),
       query(
         `SELECT al.id, al.action, al.reason, al.created_at, al.ip_address, al.target_user_id,
-                au.name AS admin_name, au.email AS admin_email
+                au.name AS admin_name, au.email AS admin_email, tu.name AS target_user_name
            FROM admin_access_log al
            JOIN admin_users au ON au.id = al.admin_user_id
+           LEFT JOIN users tu ON tu.id = al.target_user_id -- ORD-0013 §4.2: الاسم رابط
           WHERE ($1::uuid IS NULL OR al.target_user_id = $1)
           ORDER BY al.created_at DESC
           LIMIT $2 OFFSET $3`,
@@ -1067,9 +1069,10 @@ adminRouter.get("/audit-log", requireAdminAuth, requirePermission("audit_log:vie
       `SELECT al.id, al.created_at, al.action, al.entity, al.entity_id,
               al.target_user_id, al.old_value, al.new_value, al.reason,
               al.metadata, al.ip_address,
-              au.name AS admin_name, au.email AS admin_email
+              au.name AS admin_name, au.email AS admin_email, tu.name AS target_user_name
          FROM admin_action_log al
          LEFT JOIN admin_users au ON au.id = al.admin_user_id
+         LEFT JOIN users tu ON tu.id = al.target_user_id -- ORD-0013 §4.2: الاسم رابط
          ${whereSql}
         ORDER BY al.created_at DESC, al.id DESC
         LIMIT ${limitP} OFFSET ${offsetP}`,
@@ -1367,7 +1370,7 @@ adminRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:view"
     const { page, pageSize, offset } = readPaging(req, { defaultSize: 25, maxSize: 100 });
     const { rows } = await query(
       `SELECT i.id, i.zatca_invoice_number, i.plan_id, i.amount_sar, i.subtotal_sar, i.vat_sar,
-              i.status, i.zatca_issued_at, i.created_at, u.email AS user_email, u.name AS user_name
+              i.status, i.zatca_issued_at, i.created_at, i.user_id, u.email AS user_email, u.name AS user_name -- user_id: ORD-0013 §4.2
          FROM invoices i
          JOIN users u ON u.id = i.user_id
         WHERE i.status = 'paid'
@@ -1498,7 +1501,7 @@ adminRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_not
       query(`SELECT count(*)::int AS n FROM credit_notes`),
       query(
         `SELECT cn.id, cn.zatca_credit_note_number, cn.amount_sar, cn.reason, cn.zatca_issued_at,
-                i.zatca_invoice_number AS original_invoice_number, u.email AS user_email, u.name AS user_name
+                i.zatca_invoice_number AS original_invoice_number, cn.user_id, u.email AS user_email, u.name AS user_name -- user_id: ORD-0013 §4.2
            FROM credit_notes cn
            JOIN invoices i ON i.id = cn.original_invoice_id
            JOIN users u ON u.id = cn.user_id

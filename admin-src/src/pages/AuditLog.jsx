@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Download, ChevronDown, ChevronLeft } from "lucide-react";
 import { api } from "../api.js";
+import { useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Select, Input, Spinner, Empty,
@@ -90,11 +92,11 @@ const HIGH_STAKES = new Set([
 /* ValueDiff انتقل إلى ui.jsx مشتركاً (KANAF-ORD-0001 R15-22). */
 
 export default function AuditLog({ me, toast }) {
-  const [page, setPage] = useState(1);
-  const [action, setAction] = useState("");
-  const [entity, setEntity] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [page, setPage] = useQueryState("page", 1);
+  const [action, setAction] = useQueryState("action", "");
+  const [entity, setEntity] = useQueryState("entity", "");
+  const [from, setFrom] = useQueryState("from", "");
+  const [to, setTo] = useQueryState("to", "");
   const [open, setOpen] = useState(null);
 
   const params = { page, action, entity, from, to };
@@ -148,7 +150,7 @@ export default function AuditLog({ me, toast }) {
           <Empty>لا إجراءات مطابقة.</Empty>
         ) : (
           <>
-            <Table head={["الوقت", "المسؤول", "الإجراء", "الكيان", "السبب", ""]}>
+            <Table head={["الوقت", "المسؤول", "الإجراء", "الكيان", "العميل", "السبب", ""]}>
               {rows.map((r) => (
                 <React.Fragment key={r.id}>
                   <tr>
@@ -171,6 +173,7 @@ export default function AuditLog({ me, toast }) {
                         </span>
                       ) : "—"}
                     </Td>
+                    <Td>{r.target_user_id ? <UserLink id={r.target_user_id} name={r.target_user_name} /> : "—"}</Td>
                     <Td><span style={{ color: C.textMuted }}>{r.reason}</span></Td>
                     <Td>
                       <div className="flex justify-end">
@@ -186,7 +189,7 @@ export default function AuditLog({ me, toast }) {
                       <Td className="!py-3" >
                         <div />
                       </Td>
-                      <td colSpan={5} className="text-xs pb-3 px-2" style={{ borderBottom: `1px solid ${C.line}` }}>
+                      <td colSpan={6} className="text-xs pb-3 px-2" style={{ borderBottom: `1px solid ${C.line}` }}>
                         <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
                           <ValueDiff oldValue={r.old_value} newValue={r.new_value} />
                           <div className="mt-2 pt-2 text-[10px] grid gap-1" style={{ borderTop: `1px solid ${C.line}`, color: C.textFaint }}>
