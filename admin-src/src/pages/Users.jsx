@@ -7,6 +7,7 @@ import {
   ErrorBar, Screen, ReasonPrompt, Table, Td, Pager, useAsync, ValueDiff,
 } from "../ui.jsx";
 import { Link, useQueryState } from "../router.js";
+import { Compose } from "./Notifications.jsx";
 
 /* ============================================================
    المستخدمون.
@@ -243,6 +244,7 @@ function UserDetail({ id, tab, me, toast }) {
             {[
               ["profile", "الملف", true],
               ["edit", "تعديل", can(me, "users:edit")],
+              ["message", "مراسلة", can(me, "notifications:create") && can(me, "notifications:send")],
               ["billing", "الاشتراك", canBilling],
               ["sensitive", "المتابعة اليومية", canSensitive],
               ["actions", "سجل الإجراءات", canActions],
@@ -358,6 +360,11 @@ function UserDetail({ id, tab, me, toast }) {
           )}
 
           {tab === "edit" && can(me, "users:edit") && <EditUser u={u} toast={toast} onSaved={() => state.reload()} />}
+          {/* KANAF-ORD-0013 §4.4: إرسال فردي على آلية الحملات نفسها (selected_users بمستلم واحد) */}
+          {tab === "message" && can(me, "notifications:send") && (
+            <Compose open fixedUserIds={[u.id]} fixedLabel={u.name || u.email} title={`مراسلة ${u.name || u.email}`}
+              onClose={() => {}} onDone={(m) => toast(m)} />
+          )}
           {tab === "billing" && <Billing user={u} me={me} toast={toast} onChanged={() => { state.reload(); onChanged(); }} />}
           {tab === "billing" && can(me, "subscriptions:edit") && <EditSubscription user={u} toast={toast} onSaved={() => state.reload()} />}
           {tab === "sensitive" && <Sensitive id={id} />}

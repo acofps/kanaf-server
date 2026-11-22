@@ -83,6 +83,16 @@ await sdb.query(`
   GRANT SELECT ON kanaf_test_env_marker TO ${RUNTIME_ROLE};
 `);
 await sdb.query(`INSERT INTO kanaf_test_env_marker (nonce, purpose) VALUES ($1, 'template:schema')`, [nonce]);
+/* KANAF-ORD-0013 §2.2: نمط ملكية الإنتاج كما قاسه مسبار ORD-0012 —
+   الجداول الـ43 كلها لدور التطبيق، والتسلسلات لـpostgres مع SELECT/USAGE/UPDATE لدور
+   التطبيق. فتُجرَّب كل ترحيلة جديدة (ومنها ALTER على جدول أصلي) بالصلاحية التي ستُطبَّق
+   بها فعلاً. KANAF_TEST_OWNERSHIP=superuser يعيد النمط القديم (قبل نقل الخادم) للمقارنة. */
+const OWNERSHIP = process.env.KANAF_TEST_OWNERSHIP === "superuser" ? "superuser" : "app";
+if (OWNERSHIP === "app") {
+  const { rows: tabs } = await sdb.query(`SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> 'kanaf_test_env_marker'`);
+  for (const t of tabs) await sdb.query(`ALTER TABLE public.${t.tablename} OWNER TO ${RUNTIME_ROLE}`);
+  await sdb.query(`GRANT SELECT, USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${RUNTIME_ROLE}`);
+}
 const { rows: owners } = await sdb.query(`SELECT count(*)::int n FROM pg_tables WHERE schemaname='public' AND tableowner = current_user AND tablename <> 'kanaf_test_env_marker'`);
 await sdb.end();
 
@@ -119,5 +129,5 @@ const { rows: applied } = await m2.query(`SELECT filename FROM schema_migrations
 await m2.end();
 await admin.end();
 
-console.log(JSON.stringify({ originalTablesOwnedBySuperuser: owners[0].n, tablesByOwner: tbl, sequencesByOwner: seqs,
+console.log(JSON.stringify({ ownership: OWNERSHIP, originalTablesOwnedBySuperuser: owners[0].n, tablesByOwner: tbl, sequencesByOwner: seqs,
   appliedOrder: applied.map((r) => r.filename), envFile }, null, 2));

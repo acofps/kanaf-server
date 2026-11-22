@@ -300,7 +300,40 @@ function SchedulerCard({ state, onSweep, sweeping }) {
    السبب: "أرسل للكل" في نظام فيه 4000 مستخدم قرار مختلف تماماً
    عنه في نظام فيه 12.
    ------------------------------------------------------------ */
-export function Compose({ open, onClose, onDone, initialAudience = "all", back, title: screenTitle = "حملة إشعارات جديدة" }) {
+/* ------------------------------------------------------------
+   منتقي القنوات — KANAF-ORD-0013 §4.4 و§9.5. القنوات الخمس معروضة، والمعطّلة
+   (بلا اعتمادها) معروضة معطّلة بسببها كما يعيده الخادم، لا مخفية ولا مقبولة.
+   ------------------------------------------------------------ */
+export const ALL_CHANNELS = ["in_app", "email", "push", "whatsapp", "sms"];
+export function ChannelPicker({ value, onChange }) {
+  const av = useAsync(() => api.channelAvailability(), []);
+  const map = av.data?.channels || {};
+  return (
+    <div className="grid gap-2">
+      <div className="flex gap-2 flex-wrap">
+        {ALL_CHANNELS.map((ch) => {
+          const st = map[ch]; const off = st && !st.ok; const on = value.includes(ch);
+          return (
+            <button key={ch} type="button" disabled={off} title={off ? st.reason : ""}
+              onClick={() => onChange(on ? value.filter((x) => x !== ch) : [...value, ch])}
+              className="px-3 py-2 rounded-xl text-xs font-bold"
+              style={{
+                background: on ? C.tealSoft : C.surfaceAlt, color: off ? C.textFaint : on ? C.teal : C.textMuted,
+                border: `1px solid ${on ? C.teal : C.line}`, opacity: off ? 0.6 : 1, cursor: off ? "not-allowed" : "pointer",
+              }}>
+              {CHANNEL_LABEL[ch] || ch}{off ? " — معطّلة" : ""}
+            </button>
+          );
+        })}
+      </div>
+      {ALL_CHANNELS.filter((ch) => map[ch] && !map[ch].ok).map((ch) => (
+        <p key={ch} className="text-[11px]" style={{ color: C.textFaint }}>{CHANNEL_LABEL[ch] || ch}: {map[ch].reason}</p>
+      ))}
+    </div>
+  );
+}
+
+export function Compose({ open, onClose, onDone, initialAudience = "all", back, title: screenTitle = "حملة إشعارات جديدة", fixedUserIds = null, fixedLabel = "" }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [audience, setAudience] = useState(initialAudience);
@@ -309,7 +342,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
   const [optedOut, setOptedOut] = useState(null);
   const isMarketing = marketing || MARKETING_ONLY.has(audience);
   const [accountStatus, setAccountStatus] = useState("active");
-  const [userIds, setUserIds] = useState("");
+  const [userIds, setUserIds] = useState(fixedUserIds ? fixedUserIds.join(",") : "");
   const [channels, setChannels] = useState(["in_app"]);
   const [when, setWhen] = useState("now");        // now | schedule | draft
   const [scheduledAt, setScheduledAt] = useState("");
@@ -320,15 +353,17 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
 
   useEffect(() => {
     if (!open) return;
-    setTitle(""); setBody(""); setAudience(initialAudience); setAccountStatus("active");
+    setTitle(""); setBody(""); setAudience(fixedUserIds ? "selected_users" : initialAudience); setAccountStatus("active");
     setInactiveDays(30); setMarketing(false); setOptedOut(null);
-    setUserIds(""); setChannels(["in_app"]); setWhen("now"); setScheduledAt("");
+    setUserIds(fixedUserIds ? fixedUserIds.join(",") : ""); setChannels(["in_app"]); setWhen("now"); setScheduledAt("");
     setCount(null); setErr("");
   }, [open]);
 
   /* عدّ المستلمين — يُعاد الحساب كلما تغيّرت الفئة أو مرشِّحها. */
   useEffect(() => {
     if (!open) return;
+    /* قائمة مجمَّدة (ملف عضو أو صفحة الاشتراكات): العدد هو طولها، ويتحقق منه الخادم عند الإرسال (expectedCount). */
+    if (fixedUserIds) { setCount(fixedUserIds.length); return; }
     let alive = true;
     const params = { audience };
     if (audience === "account_status") params.status = accountStatus;
@@ -344,8 +379,6 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
     return () => { alive = false; };
   }, [open, audience, accountStatus, userIds, inactiveDays, isMarketing]);
 
-  const toggleChannel = (ch) =>
-    setChannels((cur) => (cur.includes(ch) ? cur.filter((x) => x !== ch) : [...cur, ch]));
 
   const submit = async () => {
     if (!title.trim() || !body.trim()) { setErr("العنوان والنص مطلوبان."); return; }
@@ -366,6 +399,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
     }
     if (audience === "inactive") payload.audienceFilter = { days: Number(inactiveDays) };
     if (isMarketing) payload.audienceFilter = { ...(payload.audienceFilter || {}), marketing: true };
+    if (fixedUserIds) { payload.audience = "selected_users"; payload.audienceFilter = { ...(payload.audienceFilter || {}), userIds: fixedUserIds }; payload.expectedCount = fixedUserIds.length; }
 
     setBusy(true); setErr("");
     try {
@@ -394,6 +428,11 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
           <Textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
         </Field>
 
+        {fixedUserIds ? (
+          <div className="rounded-xl px-3 py-2 text-xs" style={{ background: C.surfaceAlt, color: C.textMuted }}>
+            المستلمون: {fixedLabel || `${fixedUserIds.length} مستلم`}
+          </div>
+        ) : (<>
         <Field label="الفئة المستهدفة">
           <Select value={audience} onChange={(e) => setAudience(e.target.value)}>
             {AUDIENCES.map((a) => <option key={a} value={a}>{AUDIENCE_LABEL[a]}</option>)}
@@ -434,21 +473,10 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
             <Textarea rows={3} value={userIds} onChange={(e) => setUserIds(e.target.value)} />
           </Field>
         )}
+        </>)}
 
-        <Field label="القنوات" hint="«داخل التطبيق» يصل دائماً. البريد والإشعار قد يُتجاوزان لمن أوقفهما أو لم يشترك فيهما.">
-          <div className="flex gap-2 flex-wrap">
-            {CHANNELS.map((ch) => (
-              <button key={ch} type="button" onClick={() => toggleChannel(ch)}
-                className="px-3 py-2 rounded-xl text-xs font-bold"
-                style={{
-                  background: channels.includes(ch) ? C.tealSoft : C.surfaceAlt,
-                  color: channels.includes(ch) ? C.teal : C.textMuted,
-                  border: `1px solid ${channels.includes(ch) ? C.teal : C.line}`,
-                }}>
-                {CHANNEL_LABEL[ch]}
-              </button>
-            ))}
-          </div>
+        <Field label="القنوات" hint="«داخل التطبيق» يصل دائماً. البريد والإشعار قد يُتجاوزان لمن أوقفهما أو لم يشترك فيهما. والقناة المعطّلة لا تُقبل.">
+          <ChannelPicker value={channels} onChange={setChannels} />
         </Field>
 
         <Field label="التوقيت">

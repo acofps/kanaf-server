@@ -67,6 +67,8 @@ export class ApiError extends Error {
       grant_requires_plan_and_period_end: "لا اشتراك سابق: المنح اليدوي يحتاج باقة وتاريخ انتهاء.",
       unsupported_image: "نوع الصورة غير مدعوم (JPEG أو PNG أو WebP).",
       image_too_large: "الصورة أكبر من الحد المسموح.",
+      channel_unavailable: "قناة معطّلة — اعتمادها غير مضبوط. أزلها أو اضبطها من «التكاملات».",
+      audience_count_changed: "تغيّر عدد المستلمين منذ عرضه — راجع العدد الجديد وأكّد من جديد.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -176,6 +178,7 @@ export const api = {
   /* ---------- الإشعارات ---------- */
   listCampaigns: (params) => req("/notifications", { params }),
   getCampaign: (id) => req(`/notifications/${id}`),
+  channelAvailability: () => req("/notifications-channels"),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),

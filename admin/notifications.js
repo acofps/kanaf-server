@@ -1,4 +1,5 @@
 import express from "express";
+import { channelAvailability, unavailableChannels } from "../notifications/channels.js";
 import { query } from "../db/pool.js";
 import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction } from "./middleware.js";
 import {
@@ -102,6 +103,13 @@ adminNotificationsRouter.get("/notifications", requireAdminAuth, requirePermissi
   }
 });
 
+/* GET /admin/notifications-channels — ما المتاح من القنوات وما المعطّل ولماذا (§4.4، §9.5).
+   مسار بلا :id عمداً — لا يتقاطع مع /notifications/:id. لا سرّ في الرد: حالة وسبب فقط. */
+adminNotificationsRouter.get("/notifications-channels", requireAdminAuth, requirePermission("notifications:view"), async (req, res) => {
+  try { res.json({ channels: await channelAvailability() }); }
+  catch (err) { console.error("[admin/notifications] channels failed:", err); res.status(500).json({ error: "internal_error" }); }
+});
+
 /* ------------------------------------------------------------
    GET /admin/notifications/:id — حملة واحدة. KANAF-ORD-0013 §3.2: «تفاصيل الحملة»
    صارت صفحة بعنوانها (/notifications/<id>)، فتُفتح من رابط مباشر بلا القائمة.
@@ -198,6 +206,12 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
   const invalid = chans.filter((c) => !VALID_CHANNELS.includes(c));
   if (invalid.length) return res.status(400).json({ error: "invalid_channel", detail: invalid });
 
+  /* KANAF-ORD-0013 §4.4: قناة بلا اعتمادها مضبوطاً تُرفض هنا بسببها، لا تُقبل ثم تفشل بصمت. */
+  if (chans.some((c) => c === "sms" || c === "whatsapp")) {
+    const bad = await unavailableChannels(chans.filter((c) => c === "sms" || c === "whatsapp"));
+    if (bad.length) return res.status(422).json({ error: "channel_unavailable", detail: bad });
+  }
+
   if (chans.includes("push") && !isPushConfigured()) {
     return res.status(400).json({
       error: "push_not_configured",
@@ -224,6 +238,13 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     else if (filter.marketing !== true) delete filter.marketing;
     const count = await countAudience(audience, filter);
     if (count === 0) return res.status(422).json({ error: "no_recipients_in_audience" });
+    /* KANAF-ORD-0013 §6.2: العدد المعروض للمرسِل قبل التأكيد يجب أن يساوي من سيصلهم.
+       إن تغيّر الجمهور بين العرض والإرسال يُرفض الإرسال بالعدد الجديد ليُعاد التأكيد —
+       لا يُرسل لعدد غير الذي وافق عليه. */
+    const expected = req.body?.expectedCount;
+    if (expected !== undefined && expected !== null && Number(expected) !== count) {
+      return res.status(409).json({ error: "audience_count_changed", count, expected: Number(expected) });
+    }
 
     const status = scheduled ? "scheduled" : "draft";
     const { rows } = await query(

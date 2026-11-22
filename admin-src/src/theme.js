@@ -134,7 +134,7 @@ export const AUDIENCE_LABEL = {
   inactive: "مَن لم يدخل منذ مدة",
 };
 
-export const CHANNEL_LABEL = { in_app: "داخل التطبيق", email: "بريد", push: "إشعار جهاز" };
+export const CHANNEL_LABEL = { in_app: "داخل التطبيق", email: "بريد", push: "إشعار جهاز", whatsapp: "واتساب", sms: "رسالة نصية" };
 
 /* حالات الحملة — الألوان تعكس المعنى لا الشكل:
    partially_failed كهرماني لا أخضر، لأن من يقرأ "تم" لن يفتح
