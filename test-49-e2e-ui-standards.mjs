@@ -90,18 +90,26 @@ try {
   ok("L3 page.reload على شاشة عميقة يعيدها كما هي بعنوانها", (await page.title()).startsWith("كود التحقق من البريد"));
 
   /* ---------- M) الجوال ---------- */
-  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, storageState: await ctx.storageState() });
+  /* دخول داخل سياق الجوال نفسه — نقل الجلسة بـstorageState لم يحملها، فكان الفحص يقيس شاشة الدخول. */
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   const mp = await mctx.newPage();
-  const overflow = [];
+  await mp.goto(`${B}/`);
+  await mp.fill('input[type="email"]', "ui-owner@kanaf.test");
+  await mp.fill('input[type="password"]', PW);
+  await mp.click('button[type="submit"]');
+  await mp.waitForFunction(() => !!document.querySelector("nav a[href]") || location.pathname !== "/", null, { timeout: 15000 }).catch(() => {});
+  const overflow = [], notSignedIn = [];
   for (const [p] of ROUTES) {
     await mp.goto(`${B}${p}`);
     await mp.waitForSelector("h1, h2", { timeout: 15000 }).catch(() => {});
     await mp.waitForTimeout(300);
-    const w = await mp.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
+    const w = await mp.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, login: !document.querySelector("nav a[href]") }));
+    if (w.login) notSignedIn.push(p);
     if (w.sw > w.cw + 1) overflow.push(`${p} (${w.sw}>${w.cw})`);
   }
   await mp.goto(`${B}/subscribers/autorenew`); await mp.waitForTimeout(400);
   await mp.screenshot({ path: `${shots}/ui-mobile-autorenew.png`, fullPage: true });
+  ok(`M0 سياق الجوال داخل الجلسة فعلاً (لا شاشة دخول) في ${ROUTES.length} شاشة`, notSignedIn.length === 0, notSignedIn.join(" "));
   ok(`M1 عرض 390px: لا تمرير أفقي للصفحة في ${ROUTES.length} شاشة`, overflow.length === 0, overflow.join(" | "));
 
   /* ---------- K) الداكن ---------- */
