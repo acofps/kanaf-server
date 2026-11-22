@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
-  FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
+  FileText, UserCog, ScrollText, LogOut, Menu, X,
   SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck, Bug, UserMinus, LayoutTemplate,
 } from "lucide-react";
 import { api } from "./api.js";
@@ -18,7 +18,6 @@ import Notifications from "./pages/Notifications.jsx";
 import Plans from "./pages/Plans.jsx";
 import Invoices from "./pages/Invoices.jsx";
 import Billing, { BILLING_PERMS } from "./pages/Billing.jsx";
-import BreakGlass from "./pages/BreakGlass.jsx";
 import AdminUsers from "./pages/AdminUsers.jsx";
 import AccessLog from "./pages/AccessLog.jsx";
 import AuditLog from "./pages/AuditLog.jsx";
@@ -74,7 +73,6 @@ const SECTIONS = [
   { key: "invoices",     group: "ops",   label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
   // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
   { key: "billing",      group: "ops",   label: "المالية",        icon: Wallet,            perms: BILLING_PERMS },
-  { key: "break-glass",  group: "gov",   label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
   { key: "settings",     group: "gov",   label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
   { key: "integrations", group: "gov",   label: "التكاملات",      icon: Plug,              perms: ["integrations:manage"] },
   { key: "admin-users",  group: "gov",   label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
@@ -187,7 +185,6 @@ export default function App() {
     "cancelled-members": CancelledMembers,
     invoices: Invoices,
     billing: Billing,
-    "break-glass": BreakGlass,
     settings: SettingsPage,
     "admin-users": AdminUsers,
     "audit-log": AuditLog,

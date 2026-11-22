@@ -24,6 +24,7 @@ const ACTION_LABEL = {
   payment_refund: "استرداد دفعة",
   payment_reconcile: "مطابقة دفعة",
   webhook_replay: "إعادة تشغيل حدث دفع",
+  // الوصول الطارئ أُلغي (ملحق KANAF-ORD-0013 الثاني، القرار 6)؛ التسميتان تبقيان لقراءة صفوف السجل القديمة.
   break_glass_request: "طلب وصول طارئ",
   break_glass_approve: "اعتماد وصول طارئ",
   manual_subscription_cancel: "إلغاء اشتراك يدوي",

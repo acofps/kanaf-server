@@ -35,7 +35,7 @@ const RES_LABEL = {
   subscriptions: "الاشتراكات", payments: "المدفوعات", invoices: "الفواتير",
   credit_notes: "الإشعارات الدائنة", refunds: "الاستردادات", billing: "الملف المالي للمستخدم",
   webhooks: "أحداث الدفع", reports: "التقارير", exports: "التصدير",
-  admins: "حسابات الإدارة", audit_log: "سجلا التدقيق", break_glass: "الوصول الطارئ",
+  admins: "حسابات الإدارة", audit_log: "سجلا التدقيق",
 };
 
 const mark = (v) => (v ? "✅" : "—");
@@ -156,7 +156,6 @@ CHECK (role IN ('support', 'content_manager', 'admin', 'owner'))
 | \`billing_settings:edit\` | تغيير النسبة يغيّر كل فاتورة قادمة |
 | \`app_settings:edit\` | إعداد يظهر للمستخدم النهائي |
 | \`content:bulk_publish\` | نشر 64 عنصراً بضغطة لا يُترك لدور تشغيلي |
-| \`break_glass:approve\` | المعتمِد يجب أن يكون غير الطالب — و\`admin\` هو الطالب |
 | \`webhooks:view_payload\` | الحمولة الخام قد تحمل تفاصيل وسيلة دفع |
 | \`exports:audit\` | تصدير سجل التدقيق يخرجه من حراسة الخادم |
 

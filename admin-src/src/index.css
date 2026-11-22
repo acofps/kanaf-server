@@ -69,7 +69,7 @@
   --sec-tint: 12%;
   --sec-overview: #6758D8; --sec-users: #2C6CBA; --sec-messages: #1C7674; --sec-sent: #1D7A43;
   --sec-content: #9E35D0; --sec-notifications: #BA2C96; --sec-carts: #6D6D1A; --sec-plans: #2B7A1D;
-  --sec-discounts: #C02D72; --sec-invoices: #227391; --sec-billing: #44781C; --sec-break-glass: #824BD5;
+  --sec-discounts: #C02D72; --sec-invoices: #227391; --sec-billing: #44781C;
   --sec-settings: #4960D4; --sec-integrations: #1C785C; --sec-admin-users: #B12BB6;
   --sec-audit-log: #1D7A29; --sec-access-log: #5B741B;
 }
@@ -100,7 +100,7 @@
   --sec-tint: 16%;
   --sec-overview: #9990DA; --sec-users: #85A9D6; --sec-messages: #85D6D5; --sec-sent: #85D6A7;
   --sec-content: #BC85D6; --sec-notifications: #D685C2; --sec-carts: #D6D685; --sec-plans: #91D685;
-  --sec-discounts: #D685AB; --sec-invoices: #85C0D6; --sec-billing: #A8D685; --sec-break-glass: #AB8CD9;
+  --sec-discounts: #D685AB; --sec-invoices: #85C0D6; --sec-billing: #A8D685;
   --sec-settings: #8896D7; --sec-integrations: #85D6BE; --sec-admin-users: #D385D6;
   --sec-audit-log: #85D68F; --sec-access-log: #BFD685;
 }

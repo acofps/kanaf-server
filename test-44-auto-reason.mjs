@@ -8,6 +8,7 @@ import { requireDedicatedDatabase } from "./test-support/guard.mjs"; // يجب �
  *  C) 🔴 كل مسار كتابة في /admin له نصّ في جدول الأسباب (لا يسقط إلى النصّ العام).
  *  N) لا صفّ في سجل الإجراءات ولا في سجل الوصول بسبب فارغ أو شرطة.
  *  P) اللوحة: لا ReasonPrompt ولا حقل سبب.
+ *  BG) الملحق الثاني، القرار 6: الوصول الطارئ محذوف، وجدوله باقٍ خاملاً.
  */
 requireDedicatedDatabase(import.meta.url);
 process.env.PORT = "4645";
@@ -102,6 +103,22 @@ try {
   ok("P2 لا حقل «السبب» يُكتب فيه ولا «السبب مطلوب»", !/<Field label="السبب"|السبب مطلوب|value=\{reason\}|value=\{f\.reason\}/.test(panel));
   const bundle = fs.readFileSync("admin-ui/assets/app.js", "utf8");
   ok("P3 الحزمة المبنية بلا «السبب مطلوب» ولا «اكتب سبباً»", !/السبب مطلوب|اكتب سبباً|لازم تكتب سبب/.test(bundle));
+
+  /* ---------- BG) الوصول الطارئ أُلغي (ملحق KANAF-ORD-0013 الثاني، القرار 6) ---------- */
+  const bg1 = await call("POST", "/admin/break-glass/request", { targetUserId: null });
+  const bg2 = await call("GET", "/admin/break-glass/pending");
+  const bg3 = await call("POST", "/admin/break-glass/00000000-0000-0000-0000-000000000000/approve", {});
+  ok("BG1 مسارات الوصول الطارئ الثلاثة محذوفة: 404 حتى للمالك", [bg1, bg2, bg3].every((x) => x.status === 404), [bg1, bg2, bg3].map((x) => x.status).join(","));
+  const { rows: [tb] } = await query(`SELECT to_regclass('public.break_glass_requests') IS NOT NULL AS present`);
+  ok("BG2 🔴 جدول break_glass_requests باقٍ (لا حذف ولا ترحيلة تُسقطه)", tb.present === true
+    && !fs.readdirSync("db/migrations").some((f) => /DROP\s+TABLE[^;]*break_glass_requests/i.test(fs.readFileSync(`db/migrations/${f}`, "utf8"))));
+  const code = ["admin", "auth", "userdata", "billing", "payments", "notifications", "ops"].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".js")).map((f) => `${d}/${f}`)).concat(["index.js"]);
+  const writers = code.filter((f) => /(INSERT\s+INTO|UPDATE)\s+break_glass_requests/i.test(fs.readFileSync(f, "utf8")));
+  ok("BG3 الجدول خامل: لا ملف يكتب فيه", writers.length === 0, writers.join(" "));
+  const { PERMISSION_CATALOG, PANEL_PAGES } = await import("./admin/permissions.js");
+  ok("BG4 لا صلاحية break_glass:* ولا صفحة break-glass ولا نصّ سبب لها", !Object.keys(PERMISSION_CATALOG).some((k) => k.startsWith("break_glass:"))
+    && !PANEL_PAGES.some((p) => p.key === "break-glass") && !AUTO_REASONS.some(([, pth]) => pth.includes("break-glass")));
+  ok("BG5 اللوحة: لا صفحة BreakGlass ولا دوال api لها", !fs.existsSync("admin-src/src/pages/BreakGlass.jsx") && !/BreakGlass|break-glass/.test(fs.readFileSync("admin-src/src/api.js", "utf8") + fs.readFileSync("admin-src/src/App.jsx", "utf8")));
 } catch (e) { ok("!! توقّف: " + String(e.stack || e).slice(0, 400), false); }
 finally { await pool.end().catch(() => {}); }
 

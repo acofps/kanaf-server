@@ -766,7 +766,7 @@ adminRouter.get(
         query(`SELECT kind, total, band_label, created_at FROM screenings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`, [userId]),
         // ملاحظة: screenings.answers (على مستوى البند) غير منتقاة هنا
         // عمداً — الدرجة والنطاق يكفيان لغرض الدعم. رؤية الإجابات
-        // الخام تحتاج طلب وصول طارئ.
+        // الخام لا تصل إلى الإدارة بأي مسار (الوصول الطارئ أُلغي).
       ]);
       res.json({ logs, screenings });
     } catch (err) { fail(res, err, "admin/users:sensitive", req); }
@@ -892,86 +892,12 @@ adminRouter.post(
 );
 
 /* ============================================================
-   الوصول الطارئ — وصول استثنائي للبيانات الخام (إجابات الفرز على
-   مستوى البند مثلاً)، بمعتمِد ثانٍ لا يكون هو الطالب أبداً (يفرضه
-   قيد CHECK في قاعدة البيانات أيضاً).
+   الوصول الطارئ — أُلغي بقرار المالك (ملحق KANAF-ORD-0013 الثاني، القرار 6).
+
+   كانت هنا ثلاثة مسارات (طلب، وقائمة معلّقة، واعتماد). لم يكن أي مسار آخر
+   يقرأ اعتماداً قائماً ليفتح شيئاً: الاعتماد كان يُكتب ولا يُستهلك.
+   جدول break_glass_requests باقٍ بما فيه (سجلّ تاريخي) وصار خاملاً: لا كتابة فيه.
    ============================================================ */
-
-adminRouter.post("/break-glass/request", requireAdminAuth, requirePermission("break_glass:request"), async (req, res) => {
-  try {
-    const { targetUserId, reason } = req.body || {};
-    if (!reason || !reason.trim()) return res.status(400).json({ error: "reason_required" });
-    if (targetUserId && !UUID_RE.test(String(targetUserId))) return res.status(400).json({ error: "invalid_target_user" });
-
-    const { rows } = await query(
-      `INSERT INTO break_glass_requests (requested_by, target_user_id, reason)
-       VALUES ($1, $2, $3) RETURNING id, status, created_at`,
-      [req.admin.id, targetUserId || null, reason.trim()]
-    );
-
-    await logAdminAction({
-      adminUserId: req.admin.id, targetUserId: targetUserId || null,
-      action: "break_glass_requested", entity: "break_glass", entityId: rows[0].id,
-      newValue: { status: "pending" }, reason: reason.trim(), ipAddress: req.ip,
-    });
-
-    res.status(201).json(rows[0]);
-  } catch (err) { fail(res, err, "admin/break-glass:request", req); }
-});
-
-adminRouter.get("/break-glass/pending", requireAdminAuth, requirePermission("break_glass:view"), async (req, res) => {
-  try {
-    const { rows } = await query(
-      `SELECT bg.id, bg.reason, bg.created_at, bg.target_user_id,
-              au.name AS requested_by_name, au.email AS requested_by_email, tu.name AS target_user_name
-         FROM break_glass_requests bg
-         JOIN admin_users au ON au.id = bg.requested_by
-         LEFT JOIN users tu ON tu.id = bg.target_user_id -- ORD-0013 §4.2
-        WHERE bg.status = 'pending'
-        ORDER BY bg.created_at ASC`
-    );
-    res.json({ requests: rows });
-  } catch (err) { fail(res, err, "admin/break-glass:pending", req); }
-});
-
-adminRouter.post(
-  "/break-glass/:id/approve",
-  requireAdminAuth, requirePermission("break_glass:approve"), requireUuidParam("id"),
-  async (req, res) => {
-    try {
-      const hoursValid = Math.min(Math.max(parseInt(req.body?.hoursValid, 10) || 4, 1), 24);
-      const approved = await withTransaction(async (client) => {
-        const { rows: existing } = await client.query(
-          `SELECT requested_by, status, target_user_id FROM break_glass_requests WHERE id = $1 FOR UPDATE`,
-          [req.params.id]
-        );
-        if (!existing[0]) throw httpError(404, "not_found");
-        if (existing[0].status !== "pending") throw httpError(409, "already_resolved");
-        if (existing[0].requested_by === req.admin.id) throw httpError(403, "cannot_self_approve");
-
-        const { rows } = await client.query(
-          `UPDATE break_glass_requests
-              SET status = 'approved', approved_by = $1, approved_at = now(),
-                  expires_at = now() + ($2 || ' hours')::interval
-            WHERE id = $3 RETURNING id, status, expires_at`,
-          [req.admin.id, hoursValid, req.params.id]
-        );
-        return { row: rows[0], targetUserId: existing[0].target_user_id, requestedBy: existing[0].requested_by };
-      });
-
-      await logAdminAction({
-        adminUserId: req.admin.id, targetUserId: approved.targetUserId,
-        action: "break_glass_approved", entity: "break_glass", entityId: approved.row.id,
-        oldValue: { status: "pending" },
-        newValue: { status: "approved", expires_at: approved.row.expires_at },
-        reason: `اعتماد وصول طارئ لمدة ${hoursValid} ساعة`,
-        metadata: { requested_by: approved.requestedBy }, ipAddress: req.ip,
-      });
-
-      res.json(approved.row);
-    } catch (err) { fail(res, err, "admin/break-glass:approve", req); }
-  }
-);
 
 /* ============================================================
    سجلا التدقيق

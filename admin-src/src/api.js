@@ -235,11 +235,6 @@ export const api = {
   creditNotePdfUrl: (id) => `${BASE}/credit-notes/${id}/pdf`,
 
   /* ---------- وصول الطوارئ وسجل الوصول ---------- */
-  requestBreakGlass: (targetUserId) =>
-    req("/break-glass/request", { method: "POST", body: { targetUserId } }),
-  listPendingBreakGlass: () => req("/break-glass/pending"),
-  approveBreakGlass: (id, hoursValid) =>
-    req(`/break-glass/${id}/approve`, { method: "POST", body: { hoursValid } }),
   listAccessLog: (targetUserId, page) => req("/access-log", { params: { targetUserId, page } }),
 
   /* ---------- حسابات الإدارة ---------- */

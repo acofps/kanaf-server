@@ -426,8 +426,8 @@ function Sensitive({ id }) {
     return (
       <div>
         <p className="text-[11px] leading-6 mb-3" style={{ color: C.textFaint }}>
-          درجات فقط. نص اليومية وإجابات المقاييس التفصيلية لا تصل إلى هذه الشاشة —
-          الوصول إليها يمر بطلب وصول طارئ يعتمده المالك.
+          درجات فقط. نص اليومية وإجابات المقاييس التفصيلية لا تصل إلى اللوحة
+          أصلاً — لا مسار إداري يقرؤها (D-ADM-01).
         </p>
 
         <h4 className="text-xs font-bold mb-2" style={{ color: C.text }}>آخر 30 يوماً</h4>

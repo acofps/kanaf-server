@@ -26,7 +26,7 @@ export const authRouter = express.Router();
    leaking that an address is registered is a minor annoyance. Here,
    confirming that a given person has an account confirms that they
    use a mental-health app — which is exactly the kind of disclosure
-   the break-glass system and the soft-delete policy exist to prevent.
+   the privacy classification and the soft-delete policy exist to prevent.
    A registration form that answers "this email is taken" hands that
    out to anyone with an email address and a browser.
 

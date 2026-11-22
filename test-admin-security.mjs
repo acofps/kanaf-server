@@ -131,7 +131,6 @@ const OWNER_ONLY = [
   ["PUT", "/admin/billing/settings", { vatRate: 0.2, reason: "محاولة" }],
   ["PUT", "/admin/app-settings/support_email", { value: "x@y.z", reason: "محاولة" }],
   ["POST", "/admin/content/bulk-publish", { all: true }],
-  ["POST", `/admin/break-glass/${UUID}/approve`, { hoursValid: 4 }],
   ["GET", `/admin/billing/webhook-events/${UUID}`],
 ];
 
@@ -218,14 +217,15 @@ async function run() {
     const r2 = await get("/admin/users");
     log("2-ب. المحاسب: دليل المستخدمين 403", r2.status === 403, String(r2.status));
 
+    // الوصول الطارئ أُلغي (ملحق KANAF-ORD-0013 الثاني، القرار 6): المسار لم يعد موجوداً لأحد.
     const r3 = await post("/admin/break-glass/request", { targetUserId: null, reason: "محاولة" });
-    log("2-ج. المحاسب: طلب الوصول الطارئ 403", r3.status === 403, String(r3.status));
+    log("2-ج. طلب الوصول الطارئ: المسار محذوف (404) — لا طريق إلى البيانات الخام", r3.status === 404, String(r3.status));
 
     const r4 = await get("/admin/exports/users.csv");
     log("2-د. المحاسب: تصدير المستخدمين 403", r4.status === 403, String(r4.status));
 
     // ولا صلاحية واحدة في مصفوفته تمسّ البيانات النفسية
-    const psych = ["users:view_sensitive", "users:view", "break_glass:request", "exports:users"];
+    const psych = ["users:view_sensitive", "users:view", "exports:users"];
     log("2-هـ. ولا واحدة من صلاحيات البيانات الشخصية في مصفوفة المحاسب",
       psych.every((p) => !can("accountant", p)), psych.filter((p) => can("accountant", p)).join(","));
 
@@ -279,7 +279,7 @@ async function run() {
       const r = await rq(m, p, b);
       if (r.status !== 403) leaked.push(`${p}=${r.status}`);
     }
-    log("4-أ. المدير: عشر عمليات محصورة بالمالك كلها 403", leaked.length === 0, leaked.join(" "));
+    log("4-أ. المدير: تسع عمليات محصورة بالمالك كلها 403 (العاشرة كانت اعتماد الوصول الطارئ — أُلغي)", leaked.length === 0, leaked.join(" "));
 
     const r1 = await get("/admin/tax-settings");
     log("4-ب. المدير يقرأ البيانات الضريبية ولا يعدّلها", r1.status === 200, String(r1.status));

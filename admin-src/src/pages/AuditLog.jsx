@@ -57,6 +57,7 @@ const ACTION_LABEL = {
   admin_password_reset_completed: "إتمام استعادة كلمة مرور",
   content_presentation_update: "تعديل عرض محتوى",
   invoice_document_regenerated: "إعادة إصدار وثيقة فاتورة",
+  // الوصول الطارئ أُلغي (ملحق KANAF-ORD-0013 الثاني، القرار 6)؛ التسميتان تبقيان لقراءة صفوف السجل القديمة.
   break_glass_requested: "طلب وصول طارئ",
   break_glass_approved: "اعتماد وصول طارئ",
   data_exported: "تصدير بيانات",

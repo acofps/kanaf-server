@@ -176,9 +176,6 @@ export const PERMISSION_CATALOG = {
   "admins:deactivate":        "تفعيل أو تعطيل حساب إدارة",
   "audit_log:view_reads":     "سجل الوصول — من قرأ بيانات حساسة ولماذا",
   "audit_log:view_actions":   "سجل الإجراءات — من غيّر ماذا، من أي قيمة إلى أي قيمة",
-  "break_glass:request":      "طلب وصول طارئ",
-  "break_glass:view":         "عرض طلبات الوصول الطارئ المعلّقة",
-  "break_glass:approve":      "اعتماد طلب وصول طارئ",
   /* --- التشغيل — KANAF-ORD-0001 R15-07: للمالك وحده (ALL_PERMISSIONS) --- */
   "system:diagnostics":       "تشخيص سلسلة الوكلاء وعنوان العميل كما يراه الخادم (بلا أسرار ولا رموز)",
 };
@@ -279,7 +276,6 @@ const MATRIX = {
        billing_settings:edit  تغيير النسبة يغيّر كل فاتورة قادمة
        app_settings:edit   إعداد يظهر للمستخدم النهائي
        content:bulk_publish  نشر 64 عنصراً بضغطة لا يُترك لدور تشغيلي
-       break_glass:approve المعتمِد يجب أن يكون غير الطالب — وadmin هو الطالب
        webhooks:view_payload  الحمولة الخام قد تحمل تفاصيل وسيلة دفع
        exports:audit       تصدير سجل التدقيق يخرجه من حراسة الخادم
   */
@@ -300,7 +296,6 @@ const MATRIX = {
     "webhooks:view", "webhooks:replay",
     "reports:view_kpis", "reports:view_integrity",
     "exports:billing", "exports:users",
-    "break_glass:request", "break_glass:view",
     "errors:view", "members:view_cancelled",
   ],
 
@@ -363,7 +358,7 @@ export const PANEL_PAGES = [
   ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["messages", "الرسائل"], ["sent", "الرسائل المرسلة"],
   ["content", "المحتوى"], ["notifications", "الإشعارات والتسويق"], ["carts", "السلات المتروكة"],
   ["plans", "الباقات"], ["subscribers", "الاشتراكات"], ["discounts", "أكواد الخصم"], ["invoices", "الفواتير"],
-  ["billing", "المالية"], ["break-glass", "الوصول الطارئ"], ["settings", "الإعدادات"], ["integrations", "التكاملات"],
+  ["billing", "المالية"], ["settings", "الإعدادات"], ["integrations", "التكاملات"],
   ["admin-users", "حسابات الإدارة"], ["audit-log", "سجل الإجراءات"], ["access-log", "سجل الوصول"],
   ["templates", "قوالب الرسائل"], ["errors", "أخطاء النظام"], ["cancelled-members", "الأعضاء الملغون"],
 ].map(([key, label]) => ({ key, label }));
@@ -392,7 +387,6 @@ export const PERMISSION_PAGES = {
   "payments:view": ["billing"], "payments:refund": ["billing", "users"], "payments:reconcile": ["billing"],
   "refunds:view": ["billing"], "webhooks:view": ["billing"], "webhooks:view_payload": ["billing"], "webhooks:replay": ["billing"],
   "reports:view_kpis": ["billing", "overview"], "reports:view_integrity": ["billing"],
-  "break_glass:request": ["break-glass"], "break_glass:view": ["break-glass"], "break_glass:approve": ["break-glass"],
   "tax_settings:view": ["settings"], "tax_settings:edit": ["settings"], "billing_settings:view": ["settings"], "billing_settings:edit": ["settings"],
   "app_settings:view": ["settings", "templates"], "app_settings:edit": ["settings", "templates"], "system:diagnostics": ["settings"],
   "integrations:manage": ["integrations"],

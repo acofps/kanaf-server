@@ -52,7 +52,8 @@ try {
   const owner = matrix.roles.find((r) => r.role === "owner");
   ok("M6 owner holds every permission (computed, not hand-listed)", owner.count === c.permissionCount, `${owner.count}/${c.permissionCount}`);
   const acc = matrix.permissions.filter((p) => p.roles.accountant).map((p) => p.permission);
-  ok("M7 accountant holds no users:* / break_glass:* / audit_log:* permission", !acc.some((p) => /^(users|break_glass|audit_log|admins|content|messages):/.test(p)), JSON.stringify(acc));
+  ok("M7 accountant holds no users:* / audit_log:* permission — and no break_glass:* exists at all (feature removed, KANAF-ORD-0013 addendum 2)",
+    !acc.some((p) => /^(users|break_glass|audit_log|admins|content|messages):/.test(p)) && !matrix.permissions.some((p) => /^break_glass:/.test(p.permission)), JSON.stringify(acc));
 
   /* ---------- زرع ---------- */
   const SENT = "KANAF_SENTINEL_" + crypto.randomBytes(4).toString("hex");

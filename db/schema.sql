@@ -245,6 +245,8 @@ CREATE TABLE admin_access_log (
 CREATE INDEX idx_admin_access_log_target ON admin_access_log (target_user_id, created_at DESC);
 CREATE INDEX idx_admin_access_log_admin ON admin_access_log (admin_user_id, created_at DESC);
 
+-- ⚠️ DORMANT since KANAF-ORD-0013 addendum 2 (owner decision 6): the feature
+-- was removed; this table keeps its history and nothing writes to it.
 -- Emergency ("break-glass") access requiring a second approver —
 -- only relevant for the rare case a support agent genuinely needs to
 -- see raw sensitive data (e.g. responding to a legal request).

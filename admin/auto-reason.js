@@ -72,10 +72,6 @@ export const AUTO_REASONS = [
   ["POST",   "/admin-users/:id/reset-password", "إعادة ضبط كلمة مرور حساب إدارة من اللوحة"],
   ["PATCH",  "/admin-users/:id",                "تعديل حساب إدارة من اللوحة"],
   ["POST",   "/admin-users",                    "دعوة حساب إدارة من اللوحة"],
-  // الوصول الطارئ — مبنيّ أصلاً حول التبرير المكتوب؛ مُفرَد في «يحتاج المالك»
-  ["POST",   "/break-glass/request",            "طلب وصول طارئ من اللوحة"],
-  ["POST",   "/break-glass/:id/approve",        "اعتماد طلب وصول طارئ من اللوحة"],
-  ["GET",    "/break-glass/pending",            "عرض طلبات الوصول الطارئ المعلّقة"],
   // التشغيل
   ["DELETE", "/system-errors/:id",              "إزالة خطأ نظام عولج من اللوحة"],
 ];
