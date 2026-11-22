@@ -196,6 +196,10 @@ export const api = {
   /* KANAF-ORD-0013 §11 */
   listSystemErrors: (params) => req("/system-errors", { params }),
   clearSystemError: (id, reason) => req(`/system-errors/${id}`, { method: "DELETE", params: { reason } }),
+  /* KANAF-ORD-0013 §7.8 */
+  userAutorenew: (id) => req(`/users/${id}/autorenew`),
+  disableUserAutorenew: (id, reason) => req(`/users/${id}/autorenew/disable`, { method: "POST", body: { reason } }),
+  listAutorenewCycles: (params) => req("/autorenew", { params }),
   /* KANAF-ORD-0013 §9 */
   messageCatalog: () => req("/message-catalog"),
   saveMessage: (key, body) => req(`/message-catalog/${key}`, { method: "PUT", body }),

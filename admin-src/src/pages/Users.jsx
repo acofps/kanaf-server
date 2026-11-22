@@ -382,6 +382,7 @@ function UserDetail({ id, tab, me, toast }) {
           )}
           {tab === "billing" && <Billing user={u} me={me} toast={toast} onChanged={() => { state.reload(); onChanged(); }} />}
           {tab === "billing" && can(me, "subscriptions:edit") && <EditSubscription user={u} toast={toast} onSaved={() => state.reload()} />}
+          {tab === "billing" && can(me, "subscriptions:view") && <AutoRenewPanel user={u} canEdit={can(me, "subscriptions:edit")} toast={toast} />}
           {tab === "sensitive" && <Sensitive id={id} />}
           {tab === "actions" && <Actions id={id} />}
         </>
@@ -703,6 +704,65 @@ function EditUser({ u, toast, onSaved }) {
 }
 
 /* الباقة وحالة الاشتراك ومدته — يدوياً بلا حركة مال (subscriptions:edit). */
+/* ============================================================
+   التجديد التلقائي — KANAF-ORD-0013 §7.8: العرض (الموافقة بنصّها، البطاقة بآخر
+   أربعة أرقامها، والدورات بمحاولاتها) والإيقاف بسبب. الرمز لا يصل إلى المتصفّح.
+   ============================================================ */
+export const RENEWAL_STATUS = {
+  noticed: { label: "أُشعر — بانتظار الخصم", color: "textMuted" }, charging: { label: "يُخصم الآن", color: "teal" },
+  retry: { label: "فشل — ستُعاد المحاولة", color: "amber" }, succeeded: { label: "تجدّد", color: "teal" },
+  stopped: { label: "توقّف بعد المحاولات", color: "crisis" }, cancelled: { label: "أُلغي", color: "textMuted" },
+  unknown: { label: "نتيجة مجهولة — راجع", color: "crisis" },
+};
+const REVOKED_BY = { member: "العضو", admin: "الإدارة", system: "النظام" };
+
+function AutoRenewPanel({ user, canEdit, toast }) {
+  const state = useAsync(() => api.userAutorenew(user.id), [user.id]);
+  const [ask, setAsk] = useState(false);
+  const d = state.data;
+  return (
+    <div className="mt-6 pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+      <h4 className="text-xs font-bold mb-1" style={{ color: C.text }}>التجديد التلقائي</h4>
+      <ErrorBar error={state.error} />
+      {state.loading ? <Spinner /> : d && (
+        <>
+          {!d.enabled && <p className="text-[11px] mb-2" style={{ color: C.textFaint }}>الميزة معطّلة على هذا الخادم (AUTORENEW_ENABLED) — لا خصم ولا إشعار. العرض للسجلّ وحده.</p>}
+          <div className="text-xs leading-7" style={{ color: C.textMuted }}>
+            <div>الحالة: {d.active ? <Badge color="teal">مفعَّل منذ {fmtDate(d.active.granted_at)}</Badge> : <Badge>غير مفعَّل</Badge>}</div>
+            <div>البطاقة المحفوظة: {d.cards.find((c) => !c.removed_at) ? <span dir="ltr">{d.cards.find((c) => !c.removed_at).brand || ""} ••{d.cards.find((c) => !c.removed_at).last4}</span> : "لا بطاقة"}</div>
+            {d.active && <div className="mt-1 rounded-xl p-2 text-[11px]" style={{ background: C.surfaceAlt }}>نصّ الموافقة ({d.active.consent_version}): {d.active.consent_text}</div>}
+          </div>
+          {d.consents.filter((c) => c.revoked_at).length > 0 && (
+            <p className="text-[11px] mt-2" style={{ color: C.textFaint }}>
+              موافقات سابقة: {d.consents.filter((c) => c.revoked_at).map((c) => `${fmtDate(c.granted_at)}–${fmtDate(c.revoked_at)} (سحبها ${REVOKED_BY[c.revoked_by]}${c.revoke_reason ? `: ${c.revoke_reason}` : ""}${c.revoked_by_admin_name ? ` — ${c.revoked_by_admin_name}` : ""})`).join(" · ")}
+            </p>
+          )}
+          {d.cycles.length > 0 && (
+            <div className="mt-3">
+              <Table head={["نهاية الفترة", "المبلغ", "الحالة", "المحاولات", "الفاتورة", "ملاحظة"]}>
+                {d.cycles.map((c) => (
+                  <tr key={c.cycle_key}>
+                    <Td dir="ltr">{fmtDate(c.period_end)}</Td>
+                    <Td>{Number(c.amount_sar).toFixed(2)}</Td>
+                    <Td><Badge color={RENEWAL_STATUS[c.status]?.color}>{RENEWAL_STATUS[c.status]?.label || c.status}</Badge></Td>
+                    <Td className="text-[11px]">{c.attempts_log.map((a) => `${a.no}: ${a.status}${a.code ? ` (${a.code})` : ""}`).join(" · ") || "—"}</Td>
+                    <Td dir="ltr">{c.invoice_number || "—"}</Td>
+                    <Td className="text-[11px]" dir="ltr">{c.last_error || ""}</Td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          )}
+          {canEdit && d.active && <div className="mt-3"><Button variant="danger" size="sm" onClick={() => setAsk(true)}>إيقاف التجديد التلقائي</Button></div>}
+        </>
+      )}
+      <ReasonPrompt open={ask} danger title="إيقاف التجديد التلقائي" description="تُسحب موافقة العضو باسمك وسببك، ولا خصم بعدها. اشتراكه الحالي يبقى إلى نهايته، ويقدر يفعّل التجديد من التطبيق من جديد."
+        onClose={() => setAsk(false)}
+        onConfirm={async (reason) => { await api.disableUserAutorenew(user.id, reason); toast("أُوقف التجديد التلقائي."); state.reload(); }} />
+    </div>
+  );
+}
+
 function EditSubscription({ user, toast, onSaved }) {
   const plans = useAsync(() => api.listPlans(), []);
   const [planId, setPlanId] = useState(user.subscription_plan || "");
