@@ -376,7 +376,7 @@ async function run() {
     const all = await get("/admin/exports/users.csv");
     log("6-أ. التصدير يخرج CSV باسم ملف ونوع محتوى صحيحين",
       all.status === 200 && (all.headers.get("content-type") || "").includes("text/csv")
-        && /attachment; filename="kanaf-users-\d{4}-\d{2}-\d{2}\.csv"/.test(all.headers.get("content-disposition") || ""),
+        && /attachment; filename="tanaffus-users-\d{4}-\d{2}-\d{2}\.csv"/.test(all.headers.get("content-disposition") || ""),
       all.headers.get("content-disposition") || "");
 
     /* ⚠️ يُفحص بالبايتات الخام لا بنص fetch: TextDecoder يزيل BOM
