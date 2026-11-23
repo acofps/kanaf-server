@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import { Loader2, X, AlertTriangle, Search, ArrowRight, Check } from "lucide-react";
 import { C } from "./theme.js";
 import { Link } from "./router.js";
@@ -266,31 +266,83 @@ export function ToggleChip({ on, onClick, disabled = false, title = "", children
 }
 
 /* ------------------------------------------------------------
-   جدول بسيط. الترقيم من الخادم دائماً — لا نجلب كل شيء ونقسّمه
-   في المتصفح.
+   الجدول — مكوّن واحد لكل جداول اللوحة (KANAF-ORD-0015 §2.6).
+
+   الترقيم من الخادم دائماً — لا نجلب كل شيء ونقسّمه في المتصفح.
+
+   التصميم (KANAF-DESIGN-USERS-TABLE) هنا وحده لا في الصفحات: صندوق بحدّ وزوايا،
+   رأس بخلفية هادئة وخط 12، صفوف بفاصل علوي تُضاء عند المرور، أرقام بعرض ثابت،
+   وتمرير أفقي **داخل الصندوق** على الجوال فلا تتّسع الصفحة. والتعديل القادم تعديل
+   واحد هنا، لا ثمانية عشر.
+
+   ما يخصّ صفحة بعينها خيارٌ تطلبه الصفحة لا استثناء مكتوب هنا:
+     caption   عنوان مقروء لقارئ الشاشة (مخفيّ بصرياً)
+     minWidth  أدنى عرض قبل أن يمرّر الصندوق أفقياً (جدول عريض كالمستخدمين)
+     select    { ids, selected, onChange, allLabel } — عمود تحديد بمربّعات و«تحديد الكل»؛
+               والصفوف تكتب <Tr id label> فيُضاف مربّعها من السياق.
+     align     محاذاة كل عمود في الرأس ("start" افتراضياً، "end" لعمود الإجراء)
+   والواجهة القديمة { head, children } تعمل كما هي.
    ------------------------------------------------------------ */
-export function Table({ head, children }) {
+const TableSelect = createContext(null);
+
+export function Table({ head, children, caption, minWidth, select = null, align = [] }) {
+  const ids = select?.ids || [];
+  const chosen = new Set(select?.selected || []);
+  const all = ids.length > 0 && ids.every((id) => chosen.has(id));
+  const some = !all && ids.some((id) => chosen.has(id));
+  const toggleAll = () => {
+    const next = new Set(chosen);
+    if (all) ids.forEach((id) => next.delete(id)); else ids.forEach((id) => next.add(id));
+    select.onChange([...next]);
+  };
   return (
-    <div className="overflow-x-auto -mx-1 px-1">
-      <table className="w-full text-right border-collapse">
-        <thead>
-          <tr>
-            {head.map((h, i) => (
-              <th key={i} className="text-[11px] font-bold pb-2 px-2 whitespace-nowrap"
-                style={{ color: C.textFaint, borderBottom: `1px solid ${C.line}` }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
+    <div className="kt-box">
+      <div className="kt-scroll" role={caption ? "region" : undefined} aria-label={caption} tabIndex={caption ? 0 : undefined}>
+        <table className="kt" style={minWidth ? { minWidth } : undefined}>
+          {caption && <caption className="kt-sr">{caption}</caption>}
+          <thead>
+            <tr>
+              {select && (
+                <th scope="col" className="kt-check">
+                  <input type="checkbox" checked={all} aria-checked={some ? "mixed" : all ? "true" : "false"}
+                    ref={(el) => { if (el) el.indeterminate = some; }}
+                    aria-label={select.allLabel || "تحديد كل المعروض"} onChange={toggleAll} disabled={!ids.length} />
+                </th>
+              )}
+              {head.map((h, i) => (
+                <th key={i} scope="col" style={align[i] === "end" ? { textAlign: "left" } : undefined}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <TableSelect.Provider value={select ? { chosen, onChange: select.onChange } : null}>
+            <tbody>{children}</tbody>
+          </TableSelect.Provider>
+        </table>
+      </div>
     </div>
   );
 }
 
-export function Td({ children, className = "", dir }) {
+/** صفّ يعرف التحديد إن طلبته الصفحة. label: ما يُقرأ لمربّع الصف («تحديد سارة العتيبي»). */
+export function Tr({ id, label, children, ...rest }) {
+  const sel = useContext(TableSelect);
+  const on = sel?.chosen.has(id);
+  const toggle = () => {
+    const next = new Set(sel.chosen);
+    if (on) next.delete(id); else next.add(id);
+    sel.onChange([...next]);
+  };
   return (
-    <td dir={dir} className={`text-xs py-3 px-2 align-middle ${className}`}
-      style={{ color: C.text, borderBottom: `1px solid ${C.line}` }}>
+    <tr {...rest} aria-selected={sel ? (on ? "true" : "false") : undefined} className={on ? "kt-on" : undefined}>
+      {sel && <td className="kt-check"><input type="checkbox" checked={!!on} onChange={toggle} aria-label={label ? `تحديد ${label}` : "تحديد الصف"} /></td>}
+      {children}
+    </tr>
+  );
+}
+
+export function Td({ children, className = "", dir, style }) {
+  return (
+    <td dir={dir} className={className} style={dir === "ltr" ? { textAlign: "right", ...style } : style}>
       {children}
     </td>
   );

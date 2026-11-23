@@ -72,6 +72,15 @@
   --sec-discounts: #C02D72; --sec-invoices: #227391; --sec-billing: #44781C;
   --sec-settings: #4960D4; --sec-integrations: #1C785C; --sec-admin-users: #B12BB6;
   --sec-audit-log: #1D7A29; --sec-access-log: #5B741B;
+  /* KANAF-ORD-0015 §2.5–2.6: الجدول وقنوات المراسلة. القنوات تتفاوت في الدرجة لا في اللون وحده،
+     وحبر كل قناة ≥ 4.5:1 على تعبئتها الفاتحة. */
+  --table-head: #F7F4FB; --table-row-line: #F1EDF6; --table-hover: #F6F3FA; --table-on: #EFE9F7;
+  --ch-email: #735890; --ch-email-soft: #F1ECF8;
+  --ch-in_app: #1D4ED8; --ch-in_app-soft: #E8EEFC;
+  --ch-push: #0F766E; --ch-push-soft: #E2F1EF;
+  --ch-whatsapp: #15803D; --ch-whatsapp-soft: #E6F4EA;
+  --ch-sms: #B45309; --ch-sms-soft: #FCF0E3;
+  --ch-off: #8A7F95; --ch-off-soft: #F6F4F9; --ch-off-line: #D6CEE0;
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -103,6 +112,13 @@
   --sec-discounts: #D685AB; --sec-invoices: #85C0D6; --sec-billing: #A8D685;
   --sec-settings: #8896D7; --sec-integrations: #85D6BE; --sec-admin-users: #D385D6;
   --sec-audit-log: #85D68F; --sec-access-log: #BFD685;
+  --table-head: #2A1F37; --table-row-line: #33274A; --table-hover: #2C2139; --table-on: #352848;
+  --ch-email: #C1AED5; --ch-email-soft: rgba(193, 174, 213, 0.16);
+  --ch-in_app: #93B4F5; --ch-in_app-soft: rgba(147, 180, 245, 0.16);
+  --ch-push: #6FD1C6; --ch-push-soft: rgba(111, 209, 198, 0.14);
+  --ch-whatsapp: #7FD39A; --ch-whatsapp-soft: rgba(127, 211, 154, 0.14);
+  --ch-sms: #F2B97A; --ch-sms-soft: rgba(242, 185, 122, 0.14);
+  --ch-off: #8F80A3; --ch-off-soft: #2A2036; --ch-off-line: #46385A;
 }
 body {
   margin: 0;
@@ -115,3 +131,21 @@ body {
 input, textarea, select, button { font-family: inherit; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+
+/* ---------- الجدول الموحّد — KANAF-ORD-0015 §2.6 (ui.jsx Table) ---------- */
+.kt-box { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; max-width: 100%; }
+.kt-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.kt-scroll:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+:where(table.kt) { width: 100%; border-collapse: collapse; text-align: right; }
+:where(table.kt thead tr) { background: var(--table-head); }
+:where(table.kt th) { padding: 12px 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; text-align: right; }
+:where(table.kt td) { padding: 11px 8px; font-size: 13px; color: var(--text); vertical-align: middle; border-top: 1px solid var(--table-row-line); }
+:where(table.kt tbody tr) { transition: background-color .12s ease; }
+table.kt tbody tr:hover { background: var(--table-hover); }
+table.kt tbody tr.kt-on { background: var(--table-on); }
+:where(table.kt .kt-check) { width: 44px; padding-inline: 14px 6px; }
+:where(table.kt input[type="checkbox"]) { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.kt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.kt-act:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.kt-act:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(43,35,51,.16); }
+.kt-act { transition: transform .12s ease, box-shadow .12s ease; }

@@ -8,7 +8,7 @@ import { getBillingSettings } from "../billing/config.js";
 import { effectiveStatusSql, entitledSql } from "../billing/subscription.js";
 import {
   UUID_RE, likeTerm, readPaging,
-  buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter,
+  buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter, buildCreditNoteFilter,
 } from "./filters.js";
 import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "../payments/refund.js";
 import { settlePaymentEvent } from "../payments/webhook.js";
@@ -192,6 +192,19 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
       params
     );
 
+    /* KANAF-ORD-0015 §2.7.2: ترويسة على **الفلتر المطبَّق** لا على كل التاريخ — الشرط نفسه بالضبط.
+       الإيراد قبل الضريبة = subtotal (دخل المنشأة)، والضريبة محصَّلة للدولة، والإجمالي المحصَّل = amount.
+       والإشعارات الدائنة سطر مستقلّ: ما صدر منها على فواتير هذا النطاق — لا يُطرح من الأرقام الثلاثة. */
+    const { rows: [sum] } = await query(
+      `SELECT count(*)::int AS count, COALESCE(sum(i.subtotal_sar), 0)::numeric(14,2) AS subtotal,
+              COALESCE(sum(i.vat_sar), 0)::numeric(14,2) AS vat, COALESCE(sum(i.amount_sar), 0)::numeric(14,2) AS total,
+              count(*) FILTER (WHERE i.subtotal_sar IS NULL)::int AS without_split
+       ${fromAndJoins}`, params);
+    const { rows: [cnSum] } = await query(
+      `SELECT count(*)::int AS count, COALESCE(sum(c.subtotal_sar), 0)::numeric(14,2) AS subtotal,
+              COALESCE(sum(c.vat_sar), 0)::numeric(14,2) AS vat, COALESCE(sum(c.amount_sar), 0)::numeric(14,2) AS total
+         FROM credit_notes c WHERE c.original_invoice_id IN (SELECT i.id ${fromAndJoins})`, params);
+
     const limitP = pp(pageSize);
     const offsetP = pp(offset);
 
@@ -217,6 +230,7 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
       invoices: rows, page, pageSize, total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
       needsAttention: attentionRows[0].n,
+      summary: { ...sum, creditNotes: cnSum },
       filters: { ...filters, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
@@ -231,30 +245,7 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
 billingRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_notes:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const search = String(req.query.search || "").trim();
-    const from = String(req.query.from || "").trim();
-    const to = String(req.query.to || "").trim();
-
-    const where = [];
-    const params = [];
-    const pp = (v) => `$${params.push(v)}`;
-
-    if (search) {
-      if (UUID_RE.test(search)) {
-        where.push(`(cn.id = ${pp(search)} OR cn.user_id = ${pp(search)})`);
-      } else {
-        const t = likeTerm(search);
-        where.push(`(u.name ILIKE ${pp(t)} OR u.email ILIKE ${pp(t)} OR cn.zatca_credit_note_number ILIKE ${pp(t)})`);
-      }
-    }
-    if (from) where.push(`cn.zatca_issued_at >= ${pp(from)}`);
-    if (to) where.push(`cn.zatca_issued_at < (${pp(to)}::date + interval '1 day')`);
-
-    const fromAndJoins = `
-      FROM credit_notes cn
-      JOIN invoices i ON i.id = cn.original_invoice_id
-      JOIN users u ON u.id = cn.user_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    const { fromAndJoins, params, next: pp, filters } = buildCreditNoteFilter(req.query);
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS total ${fromAndJoins}`, params);
     const total = countRows[0].total;
@@ -274,9 +265,14 @@ billingRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_n
       params
     );
 
+    const { rows: [sum] } = await query(
+      `SELECT count(*)::int AS count, COALESCE(sum(cn.subtotal_sar), 0)::numeric(14,2) AS subtotal,
+              COALESCE(sum(cn.vat_sar), 0)::numeric(14,2) AS vat, COALESCE(sum(cn.amount_sar), 0)::numeric(14,2) AS total
+       ${fromAndJoins}`, params.slice(0, params.length - 2));
     res.json({
       creditNotes: rows, page, pageSize, total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      summary: sum, filters,
     });
   } catch (err) {
     return fail(res, err, "admin/billing:credit-notes", req);

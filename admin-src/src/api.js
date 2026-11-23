@@ -75,6 +75,7 @@ export const api = {
 
   /* ---------- المستخدمون ---------- */
   listUsers: (params) => req("/users", { params }),
+  userRecipients: (params) => req("/users/recipients", { params }),
   // KANAF-ORD-0008 §3 — السبب إلزامي ويُسجَّل في سجل الوصول
   listSentMessages: (params) => req("/sent-messages", { params }),
   listAbandonedCarts: (params) => req("/abandoned-carts", { params }), // KANAF-ORD-0008 §4
@@ -195,6 +196,8 @@ export const api = {
   billingSubscriptions: (params) => req("/billing/subscriptions", { params }),
   billingPayments: (params) => req("/billing/payments", { params }),
   billingRefunds: (params) => req("/billing/refunds", { params }),
+  billingInvoices: (params) => req("/billing/invoices", { params }),     // KANAF-ORD-0015 §2.7: الفلتر المشترك مع التصدير
+  billingCreditNotes: (params) => req("/billing/credit-notes", { params }),
   refundPayment: (id, amountSar) =>
     req(`/billing/payments/${id}/refund`, { method: "POST", body: { amountSar } }),
   reconcilePayment: (id) => req(`/billing/payments/${id}/reconcile`, { method: "POST" }),

@@ -388,7 +388,9 @@ export function buildUserListFilter(reqQuery) {
      التصدير على العمود المخزّن، لخرج ملفٌ يقول غير ما تقوله
      الشاشة عن نفس المستخدم.
      ------------------------------------------------------------ */
-  const subscriptionStatusExpr = effectiveStatusSql("sub", "ss");
+  /* KANAF-ORD-0015: من لا اشتراك له إطلاقاً كان يخرج «active» — التعبير ينتهي بـELSE 'active' والصف
+     الفارغ يقع فيه. فكانت القائمة تعرض «— · active» والتصدير يكتب active لغير المشترك. */
+  const subscriptionStatusExpr = `CASE WHEN sub.id IS NULL THEN NULL ELSE ${effectiveStatusSql("sub", "ss")} END`;
 
   return {
     fromAndJoins, params, subscriptionStatusExpr,
@@ -396,6 +398,18 @@ export function buildUserListFilter(reqQuery) {
     filters: { search, status, subscription, from, to },
   };
 }
+
+/* GET /admin/users/recipients?search=&status=&subscription=&from=&to= — KANAF-ORD-0015 §2.5.1
+   معرّفات **المعروض كله بفلاتره** (لا الصفحة وحدها ولا القاعدة كلها) — بنّاء الشرط نفسه الذي
+   تُبنى به القائمة والتصدير، فلا يُرسَل إلى من لم يقصده المالك. تُجمَّد في الحملة مع expectedCount
+   فيُرفض الإرسال إن تغيّر الجمهور بين العرض والتأكيد (النمط نفسه في /subscribers/recipients). */
+adminRouter.get("/users/recipients", requireAdminAuth, requirePermission("users:view"), async (req, res) => {
+  try {
+    const { fromAndJoins, params, filters } = buildUserListFilter(req.query);
+    const { rows } = await query(`SELECT u.id ${fromAndJoins} ORDER BY u.id`, params);
+    res.json({ userIds: rows.map((r) => r.id), count: rows.length, filters });
+  } catch (err) { fail(res, err, "admin/users:recipients", req); }
+});
 
 // GET /admin/users?search=&page=&pageSize=&status=&subscription=&from=&to=&sort=&dir=
 adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), async (req, res) => {
@@ -411,8 +425,11 @@ adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), asy
 
     // يُعدّ بنفس مجموعة الشروط بالضبط، فلا يمكن للإجمالي أن يصف
     // مجتمعاً غير المعروض.
-    const { rows: countRows } = await query(`SELECT count(*)::int AS total ${fromAndJoins}`, params);
+    // KANAF-ORD-0015 §2.5: «مشترك فعّال» في رأس الصفحة بالشرط نفسه — يتبع الفلتر لا القاعدة كلها.
+    const { rows: countRows } = await query(
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE COALESCE(${entitledSql("sub")}, false))::int AS active_total ${fromAndJoins}`, params);
     const total = countRows[0].total;
+    const activeTotal = countRows[0].active_total;
 
     const limitParam = next(pageSize);
     const offsetParam = next(offset);
@@ -423,6 +440,7 @@ adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), asy
               ${ACCOUNT_STATUS_SQL} AS account_status,
               ${subscriptionStatusExpr} AS subscription_status,
               sub.plan_id AS subscription_plan,
+              (SELECT sp.name FROM subscription_plans sp WHERE sp.plan_key = sub.plan_id) AS subscription_plan_name,
               /* وجود الصورة فقط — البايتات من مسار مستقل بـETag.
                  إدخالها في هذا الرد كان يضاعف حجم الصفحة عشرات
                  المرات لأجل صور لا يفتح المسؤول أكثر من واحدة منها.
@@ -440,7 +458,7 @@ adminRouter.get("/users", requireAdminAuth, requirePermission("users:view"), asy
     );
 
     res.json({
-      users, page, pageSize, total,
+      users, page, pageSize, total, activeTotal,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
       filters: { ...filters, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
@@ -1399,6 +1417,20 @@ adminRouter.post(
   }
 );
 
+/* KANAF-ORD-0015 §2.7.1: معاينة أو تنزيل لملف وثيقة ضريبية — للمسؤول المصادَق وحده (المسار خلف
+   requireAdminAuth كما كان). سياسة المحتوى العامة للّوحة فيها object-src 'none' وframe-ancestors 'none'،
+   وعارض PDF في المتصفّح إضافةٌ تحجبها الأولى، فكان الملف لا يُعرض ويلجأ المتصفّح إلى تنزيله. للملف سياسته:
+   لا نصّ ولا مورد خارجي، ويُعرض في اللوحة نفسها فقط (frame-ancestors 'self'). ?download=1 تنزيلٌ صريح. */
+function sendDocumentPdf(req, res, data, filename) {
+  const download = req.query.download === "1";
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${filename}.pdf"`);
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(data);
+}
+
 /* GET /admin/invoices/:id/pdf — يبثّ الملف المولَّد وقت الدفع
    بالضبط (لا يُعاد توليده عند الطلب أبداً)، فإعادة الطباعة تطابق ما
    صدر أصلاً — الطابع الزمني في QR يجب ألا ينحرف عن الوثيقة
@@ -1413,9 +1445,7 @@ adminRouter.get(
       );
       const invoice = rows[0];
       if (!invoice || !invoice.pdf_data) return res.status(404).json({ error: "not_found" });
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename="${invoice.zatca_invoice_number}.pdf"`);
-      res.send(invoice.pdf_data);
+      sendDocumentPdf(req, res, invoice.pdf_data, invoice.zatca_invoice_number);
     } catch (err) { fail(res, err, "admin/invoices:pdf", req); }
   }
 );
@@ -1456,9 +1486,7 @@ adminRouter.get(
       );
       const note = rows[0];
       if (!note || !note.pdf_data) return res.status(404).json({ error: "not_found" });
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename="${note.zatca_credit_note_number}.pdf"`);
-      res.send(note.pdf_data);
+      sendDocumentPdf(req, res, note.pdf_data, note.zatca_credit_note_number);
     } catch (err) { fail(res, err, "admin/credit-notes:pdf", req); }
   }
 );

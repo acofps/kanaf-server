@@ -81,7 +81,6 @@ export const ERROR_AR = {
   active_must_be_boolean: "قيمة التفعيل غير صالحة — حدّث الصفحة وأعد المحاولة.",
   /* عام */
   not_found: "العنصر غير موجود — ربما حُذف. حدّث الصفحة.",
-  reason_required: "السبب مطلوب لهذا الإجراء.",
   reason_too_long: "السبب طويل — اختصره.",
   nothing_to_change: "لا تغيير لحفظه.",
   forbidden: "صلاحيتك لا تسمح بهذا الإجراء.",

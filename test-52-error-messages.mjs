@@ -20,6 +20,7 @@ export const PANEL_EXEMPT = {
   wrong_token_type: "401: كالسابق — مسار تجديد الجلسة لا نصّ خطأ.",
   no_refresh_cookie: "401 من /auth/refresh نفسه: يُطلق حدث انتهاء الجلسة وشاشة الدخول.",
   invalid_or_expired_refresh_token: "401 من /auth/refresh نفسه: كالسابق.",
+  reason_required: "قرار المالك D1 (ملحق ORD-0013): لا سبب مكتوب في اللوحة — admin/auto-reason.js يملأ السبب في كل طلب إداري قبل المسار، فلا يصل الرمز واجهةً. ونصّ «السبب مطلوب» ممنوع في الحزمة (test-44 P3).",
 };
 const { all, panel } = extractCodes();
 const missing = [...panel.keys()].filter((c) => !ERROR_AR[c] && !PANEL_EXEMPT[c]).sort();
