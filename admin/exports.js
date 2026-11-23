@@ -94,18 +94,38 @@ export const adminExportsRouter = express.Router();
    الحل المعتمد: تسبيق الخلية بفاصلة عليا داخل الاقتباس، فتُقرأ
    نصاً ويظل الأصل مقروءاً للإنسان.
    ------------------------------------------------------------ */
-function csvCell(value) {
+/* KANAF-ORD-0015 §2.8.7: التاريخ يُكتب ISO 8601 بحرف T وبالمنطقة Z (2026-11-23T10:00:00.000Z) — شكلٌ لا يعيد
+   إكسل تفسيره تاريخاً بتنسيق جهازه، فيرى المالك ما كُتب لا ما خمّنه برنامجه. ولا تغيير في القيمة نفسها. */
+function csvCell(value, delimiter = SEMICOLON) {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "object") value = JSON.stringify(value);
 
   let s = String(value);
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  if (/[",\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  // الاقتباس يتبع الفاصل الفعلي: خلية فيها «;» تُقتبس حين يكون الفاصل «;» (وفيها «,» تُقتبس دائماً احتياطاً).
+  if (/[",;\n\r]/.test(s) || s.includes(delimiter)) s = `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 
-const csvRow = (values) => values.map(csvCell).join(",") + "\r\n";
+/* ------------------------------------------------------------
+   الفاصل — KANAF-ORD-0015 §2.8
+
+   كان «,» فكان الملف يفتح في إكسل المالك عموداً واحداً: إكسل يقسم ملف CSV بـ«فاصل القوائم» في
+   إعدادات ويندوز، وهو «;» في العربية ومعظم اللغات غير الإنجليزية. والعربية ظهرت سليمة لأن BOM موجود.
+
+   الخياران اللذان طُلب اختبارهما:
+     (أ) BOM + سطر «sep=,» — يفرض الفاصل على إكسل، لكن اجتماعه مع BOM يُفقد إكسل ترميز UTF-8 في
+         حالات موثّقة فتتشوّه العربية. لا يمكن التحقق منه بلا إكسل، وثمن الخطأ ملفٌّ عربيّ مشوّه.
+     (ب) BOM + فاصل «;» بلا سطر توجيهي — يعتمد على شيئين ثبتا على جهاز المالك نفسه: BOM يقرؤه
+         (العربية ظهرت سليمة)، و«;» هو فاصله (الفاصلة لم تُقسَم).
+   المختار (ب). ثمنه: إكسل بإعدادات إنجليزية (فاصل «,») يفتحه عموداً واحداً؛ ولذلك ?delimiter=comma
+   يعيد الفاصلة لمن يحتاجها (أدوات أخرى، أو جهاز بإعدادات إنجليزية). Google Sheets وLibreOffice
+   يكتشفان «;» عند الاستيراد.
+   ------------------------------------------------------------ */
+const SEMICOLON = ";";
+function delimiterOf(req) { return String(req?.query?.delimiter || "") === "comma" ? "," : SEMICOLON; }
+const csvRow = (values, delimiter = SEMICOLON) => values.map((v) => csvCell(v, delimiter)).join(delimiter) + "\r\n";
 
 /* ------------------------------------------------------------
    ⚠️ BOM في أول الملف — سطر واحد يمنع عطباً يظهر عند المالك وحده.
@@ -123,6 +143,7 @@ const csvRow = (values) => values.map(csvCell).join(",") + "\r\n";
 const BOM = "\uFEFF";
 
 function startCsv(res, filename) {
+  res.locals.csvDelimiter = delimiterOf(res.req);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   // لا تخزين مؤقت: التقرير لقطة لحظة، ونسخة قديمة منه أسوأ من لا شيء.
@@ -130,19 +151,30 @@ function startCsv(res, filename) {
   res.write(BOM);
 }
 
-/** سطر التعريف — من صدّر، ومتى، وبأي فلاتر، وبأي منطقة زمنية. */
+/** سطر التعريف — من صدّر، ومتى، وبأي فلاتر، وبأي منطقة زمنية.
+    KANAF-ORD-0015 §2.8.3: يُحفظ هنا ويُكتب **آخر الملف** بعد سطر فارغ مع سطر المجموع، فأول صفّ
+    يراه المستخدم رؤوس الأعمدة — يفتح جدولاً لا تعليقاً، ويرتّب ويصفّي بلا أن يمسّ سطراً غريباً. */
 function writeMeta(res, { title, admin, filters, timezone, extra = {} }) {
   const parts = Object.entries({ ...filters, ...extra })
     .filter(([, v]) => v !== undefined && v !== null && v !== "" && v !== "all")
     .map(([k, v]) => `${k}=${v}`);
-  res.write(csvRow([
+  res.locals.csvMeta = ([
     `# ${title}`,
     `صُدِّر: ${new Date().toISOString()}`,
     `بواسطة: ${admin.email}`,
     `الدور: ${admin.role}`,
     `المنطقة الزمنية: ${timezone}`,
     parts.length ? `الفلاتر: ${parts.join(" · ")}` : "الفلاتر: لا شيء (كل السجلات)",
-  ]));
+  ]);
+}
+
+/** ذيل الملف: سطر فارغ يفصل البيانات، ثم المجموع، ثم سطر التعريف. */
+function writeFooter(res, lines) {
+  const d = res.locals.csvDelimiter || SEMICOLON;
+  let out = "\r\n";
+  for (const l of lines) out += csvRow(l, d);
+  if (res.locals.csvMeta) out += csvRow(res.locals.csvMeta, d);
+  res.write(out);
 }
 
 const BATCH = 500;
@@ -155,7 +187,8 @@ const BATCH = 500;
  * طريقه إلى ملف بلا قرار. وهذا مقصود بعد درس daily_logs.note.
  */
 async function streamRows(res, { sql, params, headers, map, where }) {
-  res.write(csvRow(headers));
+  const d = res.locals.csvDelimiter || SEMICOLON;
+  res.write(csvRow(headers, d));
 
   let count = 0;
   try {
@@ -169,7 +202,7 @@ async function streamRows(res, { sql, params, headers, map, where }) {
       /* تُجمَّع الدفعة في نص واحد ثم تُكتب مرة واحدة: خمسمئة نداء
          write منفصل لكل دفعة يُثقل حلقة الأحداث بلا داعٍ. */
       let chunk = "";
-      for (const row of rows) chunk += csvRow(map(row));
+      for (const row of rows) chunk += csvRow(map(row), d);
       res.write(chunk);
       count += rows.length;
 
@@ -180,7 +213,7 @@ async function streamRows(res, { sql, params, headers, map, where }) {
       await new Promise((r) => setImmediate(r));
     }
 
-    res.write(csvRow([`# إجمالي الصفوف: ${count}`]));
+    writeFooter(res, [[`# إجمالي الصفوف: ${count}`]]);
     res.end();
     return count;
   } catch (err) {
@@ -189,7 +222,7 @@ async function streamRows(res, { sql, params, headers, map, where }) {
        أن يظنه كاملاً. */
     console.error(`[admin/exports] ${where} انقطع بعد ${count} صف:`, err.message);
     try {
-      res.write(csvRow([`# ⚠️ انقطع التصدير بعد ${count} صف — الملف ناقص. راجع سجل الخادم.`]));
+      writeFooter(res, [[`# ⚠️ انقطع التصدير بعد ${count} صف — الملف ناقص. راجع سجل الخادم.`]]);
     } catch { /* الاتصال أُغلق أصلاً */ }
     res.end();
     return count;

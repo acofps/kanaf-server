@@ -1,5 +1,5 @@
 import express from "express";
-import { recordError } from "../ops/error-log.js";
+import { serverError } from "../ops/http-errors.js";
 import { query, withTransaction } from "../db/pool.js";
 import { requireVerifiedUser } from "../auth/middleware.js";
 import { comparePassword } from "../auth/tokens.js";
@@ -18,9 +18,7 @@ export const userAccountRouter = express.Router();
 
 function fail(res, err, where) {
   if (err.status) return res.status(err.status).json({ error: err.message, ...(err.extra || {}) });
-  console.error(`[account/${where}]`, err.code || "", err.message);
-  recordError(err, { location: `account/${where}`, status: 500 }); // KANAF-ORD-0013 §11
-  return res.status(500).json({ error: "internal_error" });
+  return serverError(res, err, `account/${where}`, null, { body: { error: "internal_error" } }); // KANAF-ORD-0015 §2.2.3
 }
 const httpError = (status, message, extra) => Object.assign(new Error(message), { status, extra });
 

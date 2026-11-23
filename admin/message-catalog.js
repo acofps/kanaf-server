@@ -117,7 +117,7 @@ messageCatalogRouter.post("/message-catalog/:key/preview", requireAdminAuth, req
     const m = await renderMessage(req.params.key, MESSAGES[req.params.key].sample, {
       ...(c.subject !== undefined ? { subject: c.subject } : {}), ...(c.body !== undefined ? { body: c.body } : {}),
       ...(c.templateId !== undefined ? { templateId: c.templateId } : {}),
-    });
+    }, { logo: "inline" }); // KANAF-ORD-0015 §2.1: المتصفّح لا يفهم cid:
     res.json({ subject: m.subject, text: m.text, html: m.extra.html });
   } catch (err) { return fail(res, err, "admin/message-catalog:preview", req); }
 });

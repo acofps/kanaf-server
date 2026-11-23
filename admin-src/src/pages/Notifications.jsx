@@ -8,7 +8,7 @@ import {
 } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox,
-  Spinner, Empty, ErrorBar, Screen, ConfirmPrompt, Table, Td, useAsync,
+  Spinner, Empty, ErrorBar, Screen, ConfirmPrompt, Table, Td, useAsync, ToggleChip,
 } from "../ui.jsx";
 import { Link, navigate, useQueryState } from "../router.js";
 import { UserLink } from "./Users.jsx";
@@ -314,15 +314,10 @@ export function ChannelPicker({ value, onChange }) {
         {ALL_CHANNELS.map((ch) => {
           const st = map[ch]; const off = st && !st.ok; const on = value.includes(ch);
           return (
-            <button key={ch} type="button" disabled={off} title={off ? st.reason : ""}
-              onClick={() => onChange(on ? value.filter((x) => x !== ch) : [...value, ch])}
-              className="px-3 py-2 rounded-xl text-xs font-bold"
-              style={{
-                background: on ? C.tealSoft : C.surfaceAlt, color: off ? C.textFaint : on ? C.teal : C.textMuted,
-                border: `1px solid ${on ? C.teal : C.line}`, opacity: off ? 0.6 : 1, cursor: off ? "not-allowed" : "pointer",
-              }}>
-              {CHANNEL_LABEL[ch] || ch}{off ? " — معطّلة" : ""}
-            </button>
+            <ToggleChip key={ch} on={on && !off} disabled={off} title={off ? st.reason : ""}
+              onClick={() => onChange(on ? value.filter((x) => x !== ch) : [...value, ch])}>
+              {CHANNEL_LABEL[ch] || ch}{off ? " — غير مفعّل" : ""}
+            </ToggleChip>
           );
         })}
       </div>
@@ -333,7 +328,7 @@ export function ChannelPicker({ value, onChange }) {
   );
 }
 
-export function Compose({ open, onClose, onDone, initialAudience = "all", back, title: screenTitle = "حملة إشعارات جديدة", fixedUserIds = null, fixedLabel = "" }) {
+export function Compose({ open, onClose, onDone, initialAudience = "all", back, title: screenTitle = "حملة إشعارات جديدة", fixedUserIds = null, fixedLabel = "", initialChannels = ["in_app"] }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [audience, setAudience] = useState(initialAudience);
@@ -343,7 +338,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
   const isMarketing = marketing || MARKETING_ONLY.has(audience);
   const [accountStatus, setAccountStatus] = useState("active");
   const [userIds, setUserIds] = useState(fixedUserIds ? fixedUserIds.join(",") : "");
-  const [channels, setChannels] = useState(["in_app"]);
+  const [channels, setChannels] = useState(initialChannels);
   const [when, setWhen] = useState("now");        // now | schedule | draft
   const [scheduledAt, setScheduledAt] = useState("");
   const [count, setCount] = useState(null);
@@ -355,7 +350,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
     if (!open) return;
     setTitle(""); setBody(""); setAudience(fixedUserIds ? "selected_users" : initialAudience); setAccountStatus("active");
     setInactiveDays(30); setMarketing(false); setOptedOut(null);
-    setUserIds(fixedUserIds ? fixedUserIds.join(",") : ""); setChannels(["in_app"]); setWhen("now"); setScheduledAt("");
+    setUserIds(fixedUserIds ? fixedUserIds.join(",") : ""); setChannels(initialChannels); setWhen("now"); setScheduledAt("");
     setCount(null); setErr("");
   }, [open]);
 

@@ -162,10 +162,15 @@ export const DELIVERY_STATUS = {
    الميلادي، وعرض هجري بجانبها يجعلهما يقولان يومين. */
 export function fmtDate(v) {
   if (!v) return "—";
+  /* KANAF-ORD-0015 §2.6.4: سنة/شهر/يوم بأرقام لاتينية **بلا علامات اتجاه**. نصّ ar-SA يحمل علامات
+     RLM فكان التاريخ يتبعثر («252026/11/») في أي خلية اتجاهها ltr؛ وهذا الشكل يُقرأ هو نفسه
+     في الاتجاهين، وهو ما كان يظهر أصلاً في الخلايا العربية. */
   try {
-    return new Date(v).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", {
-      year: "numeric", month: "2-digit", day: "2-digit",
-    });
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return "—";
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(d).map((x) => [x.type, x.value]));
+    return `${p.year}/${p.month}/${p.day}`;
   } catch { return "—"; }
 }
 

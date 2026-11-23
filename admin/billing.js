@@ -8,12 +8,13 @@ import { getBillingSettings } from "../billing/config.js";
 import { effectiveStatusSql, entitledSql } from "../billing/subscription.js";
 import {
   UUID_RE, likeTerm, readPaging,
-  buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter,
+  buildSubscriptionFilter, buildPaymentFilter, buildInvoiceFilter, buildCreditNoteFilter,
 } from "./filters.js";
 import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "../payments/refund.js";
 import { settlePaymentEvent } from "../payments/webhook.js";
 import { fetchProviderPayment, providerRefundedTotal } from "../payments/verify.js";
 import { fetchPayment } from "../payments/moyasar.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const billingRouter = express.Router();
 
@@ -191,6 +192,19 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
       params
     );
 
+    /* KANAF-ORD-0015 §2.7.2: ترويسة على **الفلتر المطبَّق** لا على كل التاريخ — الشرط نفسه بالضبط.
+       الإيراد قبل الضريبة = subtotal (دخل المنشأة)، والضريبة محصَّلة للدولة، والإجمالي المحصَّل = amount.
+       والإشعارات الدائنة سطر مستقلّ: ما صدر منها على فواتير هذا النطاق — لا يُطرح من الأرقام الثلاثة. */
+    const { rows: [sum] } = await query(
+      `SELECT count(*)::int AS count, COALESCE(sum(i.subtotal_sar), 0)::numeric(14,2) AS subtotal,
+              COALESCE(sum(i.vat_sar), 0)::numeric(14,2) AS vat, COALESCE(sum(i.amount_sar), 0)::numeric(14,2) AS total,
+              count(*) FILTER (WHERE i.subtotal_sar IS NULL)::int AS without_split
+       ${fromAndJoins}`, params);
+    const { rows: [cnSum] } = await query(
+      `SELECT count(*)::int AS count, COALESCE(sum(c.subtotal_sar), 0)::numeric(14,2) AS subtotal,
+              COALESCE(sum(c.vat_sar), 0)::numeric(14,2) AS vat, COALESCE(sum(c.amount_sar), 0)::numeric(14,2) AS total
+         FROM credit_notes c WHERE c.original_invoice_id IN (SELECT i.id ${fromAndJoins})`, params);
+
     const limitP = pp(pageSize);
     const offsetP = pp(offset);
 
@@ -216,6 +230,7 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
       invoices: rows, page, pageSize, total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
       needsAttention: attentionRows[0].n,
+      summary: { ...sum, creditNotes: cnSum },
       filters: { ...filters, sort: req.query.sort || "created_at", dir: dir.toLowerCase() },
     });
   } catch (err) {
@@ -230,30 +245,7 @@ billingRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:vie
 billingRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_notes:view"), async (req, res) => {
   try {
     const { page, pageSize, offset } = readPaging(req);
-    const search = String(req.query.search || "").trim();
-    const from = String(req.query.from || "").trim();
-    const to = String(req.query.to || "").trim();
-
-    const where = [];
-    const params = [];
-    const pp = (v) => `$${params.push(v)}`;
-
-    if (search) {
-      if (UUID_RE.test(search)) {
-        where.push(`(cn.id = ${pp(search)} OR cn.user_id = ${pp(search)})`);
-      } else {
-        const t = likeTerm(search);
-        where.push(`(u.name ILIKE ${pp(t)} OR u.email ILIKE ${pp(t)} OR cn.zatca_credit_note_number ILIKE ${pp(t)})`);
-      }
-    }
-    if (from) where.push(`cn.zatca_issued_at >= ${pp(from)}`);
-    if (to) where.push(`cn.zatca_issued_at < (${pp(to)}::date + interval '1 day')`);
-
-    const fromAndJoins = `
-      FROM credit_notes cn
-      JOIN invoices i ON i.id = cn.original_invoice_id
-      JOIN users u ON u.id = cn.user_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    const { fromAndJoins, params, next: pp, filters } = buildCreditNoteFilter(req.query);
 
     const { rows: countRows } = await query(`SELECT count(*)::int AS total ${fromAndJoins}`, params);
     const total = countRows[0].total;
@@ -273,9 +265,14 @@ billingRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_n
       params
     );
 
+    const { rows: [sum] } = await query(
+      `SELECT count(*)::int AS count, COALESCE(sum(cn.subtotal_sar), 0)::numeric(14,2) AS subtotal,
+              COALESCE(sum(cn.vat_sar), 0)::numeric(14,2) AS vat, COALESCE(sum(cn.amount_sar), 0)::numeric(14,2) AS total
+       ${fromAndJoins}`, params.slice(0, params.length - 2));
     res.json({
       creditNotes: rows, page, pageSize, total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      summary: sum, filters,
     });
   } catch (err) {
     return fail(res, err, "admin/billing:credit-notes", req);
@@ -620,8 +617,7 @@ billingRouter.post(
     } catch (err) {
       await query(`UPDATE webhook_events SET status = 'failed', error = $1, attempts = attempts + 1 WHERE id = $2`,
         [String(err?.message || err).slice(0, 2000), req.params.id]).catch(() => {});
-      console.error("[admin/billing] replay failed:", err);
-      res.status(500).json({ error: "replay_failed", detail: String(err?.message || err) });
+      return serverError(res, err, "admin/billing:replay", req, { body: { error: "replay_failed", detail: String(err?.message || err) } });
     }
   }
 );
@@ -673,8 +669,7 @@ billingRouter.post(
 
       res.json({ ok: !result.held, providerStatus: providerPayment.status, outcome: result.outcome, held: Boolean(result.held), holdReason: result.holdReason || null, releasedHolds: result.releasedHolds || 0 });
     } catch (err) {
-      console.error("[admin/billing] reconcile failed:", err);
-      res.status(500).json({ error: "reconcile_failed", detail: String(err?.message || err) });
+      return serverError(res, err, "admin/billing:reconcile", req, { body: { error: "reconcile_failed", detail: String(err?.message || err) } });
     }
   }
 );
@@ -729,8 +724,7 @@ billingRouter.get("/payment-holds", requireAdminAuth, requirePermission("payment
       status === "all" ? [] : [status]);
     res.json({ holds: rows.map(holdOut) });
   } catch (err) {
-    console.error("[admin/billing] holds list failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/billing:holds-list", req);
   }
 });
 
@@ -761,7 +755,8 @@ billingRouter.post(
             oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: "provider_unavailable", held: true },
             reason: String(req.body?.reason || req.query?.reason), metadata: { hold_id: h.id, provider_checked: false, provider_error: f.error }, ipAddress: req.ip,
           });
-          return res.status(503).json({ error: "provider_unavailable", held: true, detail: f.error });
+          return serverError(res, Object.assign(new Error(`provider unavailable: ${f.error}`), { code: "provider_unavailable" }), "admin/billing:hold-recheck", req,
+            { status: 503, body: { error: "provider_unavailable", held: true, detail: f.error } });
         }
         providerData = f.data;
         body = { id: null, type: h.event_type, data: f.data };
@@ -783,8 +778,7 @@ billingRouter.post(
       res.json({ ok: !stillHeld, outcome: result.outcome, held: stillHeld, holdStatus: after?.status || null,
         holdReason: result.holdReason || (stillHeld ? result.outcome : null), providerChecked: Boolean(providerData) });
     } catch (err) {
-      console.error("[admin/billing] hold recheck failed:", err);
-      res.status(500).json({ error: "recheck_failed" });
+      return serverError(res, err, "admin/billing:hold-recheck", req, { body: { error: "recheck_failed" } });
     }
   }
 );
@@ -807,8 +801,7 @@ billingRouter.post(
       });
       res.json({ ok: true });
     } catch (err) {
-      console.error("[admin/billing] hold dismiss failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, "admin/billing:hold-dismiss", req);
     }
   }
 );

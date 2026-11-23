@@ -76,7 +76,8 @@ export function recordError(err, { location, status = null } = {}) {
   return (async () => {
     try {
       // رمز الخطأ (23505، ECONNREFUSED، TypeError) تشخيص لا بيانات: يبقى كما هو إن كان بهذا الشكل وحده.
-      const rawKind = String(err?.code || err?.name || "Error");
+      // code الرقمي ليس رمزاً (DOMException.code لانتهاء المهلة = 23): الاسم أوضح — KANAF-ORD-0015.
+      const rawKind = String((typeof err?.code === "string" && err.code) || err?.name || "Error");
       const kind = /^[A-Za-z0-9_]{1,40}$/.test(rawKind) ? rawKind : sanitizeErrorText(rawKind, 60);
       const message = sanitizeErrorText(err?.message || err, 500);
       const stack = err?.stack ? sanitizeErrorText(String(err.stack).split("\n").slice(1, 15).join("\n"), 4000) : null;

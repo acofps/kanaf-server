@@ -5,6 +5,7 @@ import { documentSlotStats } from "../invoicing/slot.js";
 import { sweepDueCampaigns } from "../notifications/scheduler.js";
 import { sweepDailyReminders } from "../notifications/reminders.js";
 import { sweepAutoRenewals } from "../billing/autorenew.js";
+import { serverError, expectedUnavailable } from "./http-errors.js";
 
 /* ============================================================
    نقطة تشغيل محمية للمجدول + تنظيف الرموز المنتهية
@@ -98,8 +99,7 @@ internalRouter.post("/sweep", async (req, res) => {
   } catch (err) {
     state.lastFailureAt = new Date().toISOString();
     state.lastFailureReason = String(err.code || err.name || "error");
-    console.error("[internal/sweep]", err.message);
-    res.status(500).json({ error: "sweep_failed" });
+    return serverError(res, err, "internal/sweep", req, { body: { error: "sweep_failed" } });
   }
 });
 
@@ -115,6 +115,7 @@ internalRouter.get("/ready", async (req, res) => {
     await query("SELECT 1");
     res.json({ ok: true, db: "ok", sweep: { lastSuccessAt: state.lastSuccessAt, lastFailureAt: state.lastFailureAt }, documents: documentSlotStats(), version: process.env.RENDER_GIT_COMMIT?.slice(0, 7) || null });
   } catch {
-    res.status(503).json({ ok: false, db: "unreachable" });
+    // فحص جاهزية لا عطب في مسار: الحالة معلنة للمراقب، ولا يُكتب في قاعدة غائبة أصلاً.
+    expectedUnavailable(res, 503, { ok: false, db: "unreachable" });
   }
 });

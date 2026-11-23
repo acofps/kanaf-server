@@ -1,5 +1,6 @@
 import { query } from "../db/pool.js";
 import { getUserSubscription } from "../billing/subscription.js";
+import { serverError } from "../ops/http-errors.js";
 
 /* ============================================================
    حماية مسارَي النموذج (/api/chat و /api/plan) — KANAF-ORD-0001 R15-04 · X08
@@ -103,8 +104,7 @@ export function assistantGate(kind) {
       res.on("close", release);
       next();
     } catch (err) {
-      console.error(`[assistant/${kind}]`, err.message);
-      res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, `assistant/${kind}`, req);
     }
   };
 }

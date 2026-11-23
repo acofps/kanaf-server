@@ -183,16 +183,33 @@ export const INVOICE_SORT = {
   user: "u.name",
 };
 
+/* مبلغ من الطلب: رقم غير سالب بخانتين على الأكثر، وإلا يُهمَل (لا يُبنى شرط من نصّ). */
+function amountParam(v) {
+  const t = String(v ?? "").trim();
+  if (!t) return "";
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? String(Math.round(n * 100) / 100) : "";
+}
+
+/* KANAF-ORD-0015 §2.7.3: فلتر الفواتير بكل متغيّراته — المدة (from/to)، والباقة، والعميل (search: اسم أو
+   بريد أو معرّف)، والحالة، ونطاق المبلغ (min/max على الإجمالي)، ورقم الفاتورة (number). الشاشة والترويسة
+   والتصدير تناديه كلها، فلا ينحرف المعروض عن المجموع ولا عن الملف. */
 export function buildInvoiceFilter(q) {
   const search = String(q.search || "").trim();
   const status = String(q.status || "all");
   const planId = String(q.plan || "all");
   const from = String(q.from || "").trim();
   const to = String(q.to || "").trim();
+  const number = String(q.number || "").trim();
+  const min = amountParam(q.min);
+  const max = amountParam(q.max);
 
   const where = [];
   const params = [];
   const p = (v) => `$${params.push(v)}`;
+  if (number) where.push(`i.zatca_invoice_number ILIKE ${p(likeTerm(number))}`);
+  if (min) where.push(`i.amount_sar >= ${p(min)}`);
+  if (max) where.push(`i.amount_sar <= ${p(max)}`);
 
   if (search) {
     if (UUID_RE.test(search)) {
@@ -217,8 +234,41 @@ export function buildInvoiceFilter(q) {
   return {
     fromAndJoins, params, next: p, hasWhere: where.length > 0,
     orderBy: orderFrom(INVOICE_SORT, q.sort, q.dir, "i.created_at"),
-    filters: { search, status, plan: planId, from, to },
+    filters: { search, status, plan: planId, from, to, number, min, max },
   };
+}
+
+/* ------------------------------------------------------------
+   الإشعارات الدائنة — KANAF-ORD-0015 §2.7.4: الفلتر نفسه (المدة على تاريخ الإصدار، والعميل، ورقم
+   الإشعار أو الفاتورة الأصلية، والباقة عبر الفاتورة الأصلية، ونطاق المبلغ). كان مكتوباً داخل المسار.
+   ------------------------------------------------------------ */
+export function buildCreditNoteFilter(q) {
+  const search = String(q.search || "").trim();
+  const planId = String(q.plan || "all");
+  const from = String(q.from || "").trim();
+  const to = String(q.to || "").trim();
+  const number = String(q.number || "").trim();
+  const min = amountParam(q.min);
+  const max = amountParam(q.max);
+  const where = [];
+  const params = [];
+  const p = (v) => `$${params.push(v)}`;
+  if (search) {
+    if (UUID_RE.test(search)) where.push(`(cn.id = ${p(search)} OR cn.user_id = ${p(search)})`);
+    else { const t = likeTerm(search); where.push(`(u.name ILIKE ${p(t)} OR u.email ILIKE ${p(t)} OR cn.zatca_credit_note_number ILIKE ${p(t)})`); }
+  }
+  if (number) { const t = likeTerm(number); where.push(`(cn.zatca_credit_note_number ILIKE ${p(t)} OR i.zatca_invoice_number ILIKE ${p(t)})`); }
+  if (planId !== "all") where.push(`i.plan_id = ${p(planId)}`);
+  if (from) where.push(`cn.zatca_issued_at >= ${p(from)}`);
+  if (to) where.push(`cn.zatca_issued_at < (${p(to)}::date + interval '1 day')`);
+  if (min) where.push(`cn.amount_sar >= ${p(min)}`);
+  if (max) where.push(`cn.amount_sar <= ${p(max)}`);
+  const fromAndJoins = `
+    FROM credit_notes cn
+    JOIN invoices i ON i.id = cn.original_invoice_id
+    JOIN users u ON u.id = cn.user_id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+  return { fromAndJoins, params, next: p, filters: { search, plan: planId, from, to, number, min, max } };
 }
 
 /* ------------------------------------------------------------

@@ -6,6 +6,7 @@ import {
   countAudience, countAudienceOptedOut, dispatchCampaign, VALID_CHANNELS, isPushConfigured, MARKETING_AUDIENCES,
 } from "../notifications/service.js";
 import { sweepDueCampaigns, schedulerStatus } from "../notifications/scheduler.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const adminNotificationsRouter = express.Router();
 
@@ -54,8 +55,7 @@ adminNotificationsRouter.get(
       res.json({ count, marketing, optedOut });
     } catch (err) {
       if (err.status) return res.status(err.status).json({ error: err.message });
-      console.error("[admin/notifications] audience count failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, "admin/notifications:audience-count", req);
     }
   }
 );
@@ -98,8 +98,7 @@ adminNotificationsRouter.get("/notifications", requireAdminAuth, requirePermissi
 
     res.json({ campaigns: rows, total: countRows[0].total, limit, offset });
   } catch (err) {
-    console.error("[admin/notifications] list failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:list", req);
   }
 });
 
@@ -107,7 +106,7 @@ adminNotificationsRouter.get("/notifications", requireAdminAuth, requirePermissi
    مسار بلا :id عمداً — لا يتقاطع مع /notifications/:id. لا سرّ في الرد: حالة وسبب فقط. */
 adminNotificationsRouter.get("/notifications-channels", requireAdminAuth, requirePermission("notifications:view"), async (req, res) => {
   try { res.json({ channels: await channelAvailability() }); }
-  catch (err) { console.error("[admin/notifications] channels failed:", err); res.status(500).json({ error: "internal_error" }); }
+  catch (err) { return serverError(res, err, "admin/notifications:channels", req); }
 });
 
 /* ------------------------------------------------------------
@@ -127,8 +126,7 @@ adminNotificationsRouter.get("/notifications/:id", requireAdminAuth, requirePerm
     if (!rows[0]) return res.status(404).json({ error: "not_found" });
     res.json({ campaign: rows[0] });
   } catch (err) {
-    console.error("[admin/notifications] get failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:get", req);
   }
 });
 
@@ -175,8 +173,7 @@ adminNotificationsRouter.get(
 
       res.json({ deliveries: rows, summary, limit, offset });
     } catch (err) {
-      console.error("[admin/notifications] deliveries failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, "admin/notifications:deliveries", req);
     }
   }
 );
@@ -284,8 +281,7 @@ adminNotificationsRouter.post("/notifications", requireAdminAuth, requirePermiss
     res.status(201).json({ ...campaign, audienceCount: count });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/notifications] create failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:create", req);
   }
 });
 
@@ -332,8 +328,7 @@ adminNotificationsRouter.post("/notifications/:id/send", requireAdminAuth, requi
     res.status(done ? 200 : 202).json(result);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/notifications] send failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:send", req);
   }
 });
 
@@ -360,8 +355,7 @@ adminNotificationsRouter.post("/notifications/:id/cancel", requireAdminAuth, req
     });
     res.json(rows[0]);
   } catch (err) {
-    console.error("[admin/notifications] cancel failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:cancel", req);
   }
 });
 
@@ -375,8 +369,7 @@ adminNotificationsRouter.get("/notifications-scheduler/status", requireAdminAuth
   try {
     res.json(await schedulerStatus());
   } catch (err) {
-    console.error("[admin/notifications] scheduler status failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:scheduler-status", req);
   }
 });
 
@@ -384,8 +377,7 @@ adminNotificationsRouter.post("/notifications-scheduler/sweep", requireAdminAuth
   try {
     res.json(await sweepDueCampaigns({ log: console.log }));
   } catch (err) {
-    console.error("[admin/notifications] sweep failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/notifications:sweep", req);
   }
 });
 
@@ -431,8 +423,7 @@ adminNotificationsRouter.get("/broadcasts/audience-count", requireAdminAuth, req
     res.json({ count });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/broadcasts] audience count failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/broadcasts:audience-count", req);
   }
 });
 
@@ -456,8 +447,7 @@ adminNotificationsRouter.get("/broadcasts", requireAdminAuth, requirePermission(
     );
     res.json({ broadcasts: rows });
   } catch (err) {
-    console.error("[admin/broadcasts] list failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/broadcasts:list", req);
   }
 });
 
@@ -512,7 +502,6 @@ adminNotificationsRouter.post("/broadcasts", requireAdminAuth, requirePermission
     });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/broadcasts] send failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/broadcasts:send", req);
   }
 });

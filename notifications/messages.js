@@ -158,11 +158,11 @@ export async function effectiveDefinition(key) {
 }
 
 /** HTML بالقالب المختار — نفس renderEmail بخصائص القالب. */
-export async function renderWithTemplate({ subject, text, templateId, kind = "service" }) {
+export async function renderWithTemplate({ subject, text, templateId, kind = "service", logo = "cid" }) {
   const t = await loadTemplate(templateId).catch(() => null);
   const links = await footerLinks();
   return renderEmail({
-    title: subject, text, kind,
+    title: subject, text, kind, logo,
     footerNote: t?.footer_note || "",
     accent: t?.accent || undefined,
     links: { appStore: t && !t.show_store_links ? null : links.appStore, googlePlay: t && !t.show_store_links ? null : links.googlePlay, social: t && !t.show_social_links ? [] : links.social },
@@ -170,10 +170,10 @@ export async function renderWithTemplate({ subject, text, templateId, kind = "se
 }
 
 /** { subject, text, extra: {html, attachments}, channels } جاهزة للإرسال. */
-export async function renderMessage(key, vars = {}, override = null) {
+export async function renderMessage(key, vars = {}, override = null, { logo = "cid" } = {}) {
   const d = override ? { ...(await effectiveDefinition(key)), ...override } : await effectiveDefinition(key);
   const subject = fill(d.subject, vars);
   const text = fill(d.body, vars);
-  const extra = await renderWithTemplate({ subject, text, templateId: d.templateId });
+  const extra = await renderWithTemplate({ subject, text, templateId: d.templateId, logo });
   return { subject, text, extra, channels: d.channels, templateId: d.templateId };
 }

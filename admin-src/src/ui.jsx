@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
-import { Loader2, X, AlertTriangle, Search, ArrowRight } from "lucide-react";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { Loader2, X, AlertTriangle, Search, ArrowRight, Check } from "lucide-react";
 import { C } from "./theme.js";
 import { Link } from "./router.js";
+import { splitCode } from "./errors.js";
 
 /* ============================================================
    مكوّنات مشتركة — تُبنى مرة وتُستخدم في كل الشاشات، فلا يختلف
@@ -70,12 +71,15 @@ export function Badge({ children, color = "textMuted", soft }) {
   );
 }
 
-export function Field({ label, hint, children }) {
+export function Field({ label, hint, error, children }) {
   return (
     <div>
       <label className="block text-xs font-bold mb-1.5" style={{ color: C.textMuted }}>{label}</label>
       {children}
-      {hint && <p className="text-[11px] mt-1 leading-5" style={{ color: C.textFaint }}>{hint}</p>}
+      {/* KANAF-ORD-0015 §2.4(أ): الحقل يقول تحت نفسه ما المطلوب قبل أي إرسال */}
+      {error
+        ? <p className="text-[11px] mt-1 leading-5 font-bold" style={{ color: C.crisis }} role="status">{error}</p>
+        : hint && <p className="text-[11px] mt-1 leading-5" style={{ color: C.textFaint }}>{hint}</p>}
     </div>
   );
 }
@@ -128,7 +132,11 @@ export function ErrorBar({ error, onClose }) {
       style={{ background: C.crisisSoft }}>
       <div className="flex items-start gap-2">
         <AlertTriangle size={14} color={C.crisis} className="mt-0.5 shrink-0" />
-        <span className="text-xs leading-6" style={{ color: C.crisis }}>{error}</span>
+        {/* KANAF-ORD-0015 §2.4.3: الرمز بخط صغير — ليُنقل إلينا حين يقع ما لم يُتوقَّع */}
+        <span className="text-xs leading-6" style={{ color: C.crisis }} role="alert">
+          {splitCode(error).text}
+          {splitCode(error).code && <small dir="ltr" className="ms-2 text-[10px] opacity-75" data-error-code>{splitCode(error).code}</small>}
+        </span>
       </div>
       {onClose && <button onClick={onClose}><X size={14} color={C.crisis} /></button>}
     </div>
@@ -227,31 +235,114 @@ export function ConfirmPrompt({ open, title, description, confirmLabel = "تأك
 }
 
 /* ------------------------------------------------------------
-   جدول بسيط. الترقيم من الخادم دائماً — لا نجلب كل شيء ونقسّمه
-   في المتصفح.
+   زرّ اختيار (متعدّد أو مفرد) — KANAF-ORD-0015 §2.3
+
+   كان المحدَّد في «أكواد الخصم» صبغة شفافة 10% على خلفية رمادية فاتحة: التحديد
+   يعمل (الحمولة تحمل الباقة) ولا تراه العين. والقاعدة الآن لكل اختيار في اللوحة:
+   المحدَّد تعبئة كاملة بلون العلامة ونصّ أبيض، وعلامة ✓، وحدّ متّصل أعرض، و
+   aria-pressed يتغيّر — فالفرق في الشكل والعلامة لا في اللون وحده. والمعطَّل حدّ
+   متقطّع وسبب مقروء.
    ------------------------------------------------------------ */
-export function Table({ head, children }) {
+export function ToggleChip({ on, onClick, disabled = false, title = "", children, label }) {
   return (
-    <div className="overflow-x-auto -mx-1 px-1">
-      <table className="w-full text-right border-collapse">
-        <thead>
-          <tr>
-            {head.map((h, i) => (
-              <th key={i} className="text-[11px] font-bold pb-2 px-2 whitespace-nowrap"
-                style={{ color: C.textFaint, borderBottom: `1px solid ${C.line}` }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
+    <button type="button" aria-pressed={on ? "true" : "false"} disabled={disabled} title={title} aria-label={label}
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-3.5 rounded-xl text-xs font-bold transition-colors"
+      style={{
+        minHeight: 40,
+        background: disabled ? C.surfaceAlt : on ? C.teal : C.surface,
+        color: disabled ? C.textFaint : on ? C.onAccent : C.text,
+        border: disabled ? `1.5px dashed ${C.line}` : on ? `2px solid ${C.teal}` : `1.5px solid ${C.line}`,
+        cursor: disabled ? "not-allowed" : "pointer",
+        boxShadow: on && !disabled ? "0 1px 3px rgba(43,35,51,.18)" : "none",
+      }}>
+      <span aria-hidden="true" className="inline-flex items-center justify-center rounded-md"
+        style={{ width: 16, height: 16, border: on ? "none" : `1.5px solid ${disabled ? C.line : C.textFaint}`, background: on ? "rgba(255,255,255,.22)" : "transparent" }}>
+        {on && <Check size={12} strokeWidth={3} />}
+      </span>
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------
+   الجدول — مكوّن واحد لكل جداول اللوحة (KANAF-ORD-0015 §2.6).
+
+   الترقيم من الخادم دائماً — لا نجلب كل شيء ونقسّمه في المتصفح.
+
+   التصميم (KANAF-DESIGN-USERS-TABLE) هنا وحده لا في الصفحات: صندوق بحدّ وزوايا،
+   رأس بخلفية هادئة وخط 12، صفوف بفاصل علوي تُضاء عند المرور، أرقام بعرض ثابت،
+   وتمرير أفقي **داخل الصندوق** على الجوال فلا تتّسع الصفحة. والتعديل القادم تعديل
+   واحد هنا، لا ثمانية عشر.
+
+   ما يخصّ صفحة بعينها خيارٌ تطلبه الصفحة لا استثناء مكتوب هنا:
+     caption   عنوان مقروء لقارئ الشاشة (مخفيّ بصرياً)
+     minWidth  أدنى عرض قبل أن يمرّر الصندوق أفقياً (جدول عريض كالمستخدمين)
+     select    { ids, selected, onChange, allLabel } — عمود تحديد بمربّعات و«تحديد الكل»؛
+               والصفوف تكتب <Tr id label> فيُضاف مربّعها من السياق.
+     align     محاذاة كل عمود في الرأس ("start" افتراضياً، "end" لعمود الإجراء)
+   والواجهة القديمة { head, children } تعمل كما هي.
+   ------------------------------------------------------------ */
+const TableSelect = createContext(null);
+
+export function Table({ head, children, caption, minWidth, select = null, align = [] }) {
+  const ids = select?.ids || [];
+  const chosen = new Set(select?.selected || []);
+  const all = ids.length > 0 && ids.every((id) => chosen.has(id));
+  const some = !all && ids.some((id) => chosen.has(id));
+  const toggleAll = () => {
+    const next = new Set(chosen);
+    if (all) ids.forEach((id) => next.delete(id)); else ids.forEach((id) => next.add(id));
+    select.onChange([...next]);
+  };
+  return (
+    <div className="kt-box">
+      <div className="kt-scroll" role={caption ? "region" : undefined} aria-label={caption} tabIndex={caption ? 0 : undefined}>
+        <table className="kt" style={minWidth ? { minWidth } : undefined}>
+          {caption && <caption className="kt-sr">{caption}</caption>}
+          <thead>
+            <tr>
+              {select && (
+                <th scope="col" className="kt-check">
+                  <input type="checkbox" checked={all} aria-checked={some ? "mixed" : all ? "true" : "false"}
+                    ref={(el) => { if (el) el.indeterminate = some; }}
+                    aria-label={select.allLabel || "تحديد كل المعروض"} onChange={toggleAll} disabled={!ids.length} />
+                </th>
+              )}
+              {head.map((h, i) => (
+                <th key={i} scope="col" style={align[i] === "end" ? { textAlign: "left" } : undefined}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <TableSelect.Provider value={select ? { chosen, onChange: select.onChange } : null}>
+            <tbody>{children}</tbody>
+          </TableSelect.Provider>
+        </table>
+      </div>
     </div>
   );
 }
 
-export function Td({ children, className = "", dir }) {
+/** صفّ يعرف التحديد إن طلبته الصفحة. label: ما يُقرأ لمربّع الصف («تحديد سارة العتيبي»). */
+export function Tr({ id, label, children, ...rest }) {
+  const sel = useContext(TableSelect);
+  const on = sel?.chosen.has(id);
+  const toggle = () => {
+    const next = new Set(sel.chosen);
+    if (on) next.delete(id); else next.add(id);
+    sel.onChange([...next]);
+  };
   return (
-    <td dir={dir} className={`text-xs py-3 px-2 align-middle ${className}`}
-      style={{ color: C.text, borderBottom: `1px solid ${C.line}` }}>
+    <tr {...rest} aria-selected={sel ? (on ? "true" : "false") : undefined} className={on ? "kt-on" : undefined}>
+      {sel && <td className="kt-check"><input type="checkbox" checked={!!on} onChange={toggle} aria-label={label ? `تحديد ${label}` : "تحديد الصف"} /></td>}
+      {children}
+    </tr>
+  );
+}
+
+export function Td({ children, className = "", dir, style }) {
+  return (
+    <td dir={dir} className={className} style={dir === "ltr" ? { textAlign: "right", ...style } : style}>
       {children}
     </td>
   );

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download, User as UserIcon, Bell, Compass } from "lucide-react";
+import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download, User as UserIcon, Bell, Compass, Mail, Smartphone, MessageCircle, MessageSquare, ExternalLink } from "lucide-react";
 import { api } from "../api.js";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Screen, ConfirmPrompt, Table, Td, Pager, useAsync, ValueDiff,
+  ErrorBar, Screen, ConfirmPrompt, Table, Tr, Td, Pager, useAsync, ValueDiff,
 } from "../ui.jsx";
-import { Link, useQueryState } from "../router.js";
+import { Link, useQueryState, navigate, href } from "../router.js";
 import { Compose } from "./Notifications.jsx";
 
 /* ============================================================
@@ -91,8 +91,61 @@ const ACCOUNT_STATUS = {
 
 export default function Users({ me, toast, route = [] }) {
   /* KANAF-ORD-0013 §3/§4.1: الملف صفحة بعنوانها /users/<id>/<تبويب> */
+  if (route[0] === "message") return <BulkMessage toast={toast} />;
   if (route[0]) return <UserDetail id={route[0]} tab={route[1] || "profile"} me={me} toast={toast} />;
   return <UsersList me={me} />;
+}
+
+/* ============================================================
+   قائمة المستخدمين — KANAF-ORD-0015 §2.5 (KANAF-DESIGN-USERS-TABLE)
+
+   • شريط مراسلة جماعية أعلى الصفحة، وسطر يقول صراحةً إلى من سيُرسَل:
+     لا أحد محدَّد → كل الأعضاء المعروضين **بالفلتر المطبَّق** (عددهم من الخادم)،
+     أو N عضواً محدَّداً. المستلمون يُجمَّدون من الخادم بالشرط نفسه الذي تُبنى به
+     القائمة (/users/recipients) ويُتحقق من عددهم عند الإرسال.
+   • وفي كل سطر أيقونات المراسلة الفردية بلون قناتها. القناة غير المهيّأة تُرسم مطفأةً
+     مع سببها ولا تُخفى — والحالة والسبب من channelAvailability() كما هما، فتضيء
+     القناة من نفسها حين تُضبط بياناتها بلا نشر جديد.
+   • كل أيقونة زرٌّ حقيقي باسم مقروء يذكر العضو والقناة، ولمسه 44 بكسل.
+   ============================================================ */
+export const CHANNEL_ORDER = ["email", "in_app", "push", "whatsapp", "sms"];
+const CH = {
+  email: { label: "بريد إلكتروني", verb: (n) => `مراسلة ${n} بالبريد`, Icon: Mail },
+  in_app: { label: "إشعار داخلي", verb: (n) => `إشعار داخلي إلى ${n}`, Icon: Bell },
+  push: { label: "إشعار الجهاز", verb: (n) => `إشعار جهاز إلى ${n}`, Icon: Smartphone },
+  whatsapp: { label: "واتساب", verb: (n) => `واتساب إلى ${n}`, Icon: MessageCircle },
+  sms: { label: "رسائل نصية", verb: (n) => `رسالة نصية إلى ${n}`, Icon: MessageSquare },
+};
+const chStyle = (ch, off) => off
+  ? { background: "var(--ch-off-soft)", color: "var(--ch-off)", border: "1.5px dashed var(--ch-off-line)", cursor: "not-allowed" }
+  : { background: `var(--ch-${ch}-soft)`, color: `var(--ch-${ch})`, border: "1.5px solid transparent" };
+const chFill = (ch, off) => off
+  ? { background: "var(--ch-off-soft)", color: "var(--ch-off)", border: "1.5px dashed var(--ch-off-line)", cursor: "not-allowed" }
+  : { background: `var(--ch-${ch})`, color: "var(--surface)", border: "1.5px solid transparent" };
+
+/* لون الصورة الرمزية ثابت للاسم نفسه (لا عشوائي بين التحديثات). */
+const AVATAR_TONES = ["var(--ch-email)", "var(--ch-push)", "var(--ch-sms)", "var(--ch-in_app)", "var(--sec-content)", "var(--sec-discounts)"];
+function InitialAvatar({ id, name, hasPhoto }) {
+  const [failed, setFailed] = useState(false);
+  const tone = AVATAR_TONES[[...String(id || name || "")].reduce((a, c) => (a + c.charCodeAt(0)) % 997, 0) % AVATAR_TONES.length];
+  const box = { width: 40, height: 40, borderRadius: 12, flex: "0 0 auto", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center",
+    background: tone, color: "var(--surface)", fontWeight: 700, fontSize: 16 };
+  if (hasPhoto && !failed) {
+    return <div style={box}><img src={`/admin/users/${id}/avatar`} alt="" width={40} height={40} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={() => setFailed(true)} /></div>;
+  }
+  return <div style={box} aria-hidden="true">{(name || "").trim().charAt(0) || "؟"}</div>;
+}
+
+const SUB_TONE = { active: "green", trialing: "green", canceling: "amber", canceled_at_period_end: "amber", past_due: "amber", expired: "crisis", canceled: "crisis" };
+const SUB_LABEL = { active: "نشط", trialing: "تجريبي", canceling: "ملغى بنهاية المدة", canceled_at_period_end: "ملغى بنهاية المدة", past_due: "متأخر", expired: "منتهٍ", canceled: "ملغى" };
+function Pill({ tone = "textMuted", dot = false, children }) {
+  const fg = { green: C.green, amber: C.amber, crisis: C.crisis, accent: C.teal, textMuted: C.textMuted }[tone] || C.textMuted;
+  const bg = { green: C.greenSoft, amber: C.amberSoft, crisis: C.crisisSoft, accent: C.tealSoft, textMuted: C.surfaceAlt }[tone] || C.surfaceAlt;
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-bold whitespace-nowrap" style={{ background: bg, color: fg }}>
+      {dot && <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: fg }} />}{children}
+    </span>
+  );
 }
 
 function UsersList({ me }) {
@@ -103,42 +156,105 @@ function UsersList({ me }) {
   const [sort, setSort] = useQueryState("sort", "created_at");
   const [dir, setDir] = useQueryState("dir", "desc");
   const [page, setPage] = useQueryState("page", 1);
+  const [selected, setSelected] = useState([]);
   const pageSize = 25;
 
   const state = useAsync(
     () => api.listUsers({ search, status, subscription, sort, dir, page, pageSize }),
     [search, status, subscription, sort, dir, page]
   );
+  const av = useAsync(() => api.channelAvailability(), []);
+  const channels = av.data?.channels || {};
+  // تغيير الفلتر يفرّغ التحديد: محدَّدٌ خارج المعروض لا يُرسَل إليه خلسة.
+  useEffect(() => { setSelected([]); }, [search, status, subscription]);
 
   const rows = state.data?.users || [];
+  const total = state.data?.total;
+  const canSend = can(me, "notifications:send");
+  const filtered = search || status !== "all" || subscription !== "all";
+  const filters = { q: search, status, sub: subscription };
+
+  const target = selected.length
+    ? `ترسل إلى ${selected.length} ${selected.length === 1 ? "عضو محدَّد" : "عضواً محدَّداً"}.`
+    : total == null ? "…"
+    : `لا أحد محدَّد ← ترسل إلى كل الأعضاء المعروضين${filtered ? " بالفلتر المطبَّق" : ""} (${total}).`;
+
+  const bulk = (ch) => {
+    if (selected.length) {
+      let token = "";
+      try { token = `s${Date.now().toString(36)}`; sessionStorage.setItem(`kanaf-sel-${token}`, JSON.stringify(selected)); } catch { token = ""; }
+      navigate(href("/users/message", { ...filters, channel: ch, sel: token || undefined, ids: token ? undefined : selected.join(",") }));
+    } else {
+      navigate(href("/users/message", { ...filters, channel: ch }));
+    }
+  };
 
   return (
-    <div>
+    /* minmax(0,1fr): عنصر الشبكة لا ينكمش دون عرض محتواه، فكان أدنى عرض الجدول (1020) يمدّ الصفحة كلها على الجوال */
+    <div className="grid gap-5" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
       <PageTitle title="المستخدمون" subtitle="البحث يقبل الاسم أو البريد أو معرّف المستخدم كاملاً.">
-        {/* الرابط يحمل **نفس** معاملات الشاشة، فالملف يطابق ما تراه
-            بالضبط. تحميل مباشر من المتصفّح لا نداء fetch: الملف قد
-            يكون كبيراً ولا داعي لتحميله في ذاكرة الصفحة. */}
-        {can(me, "exports:users") && (
-          <a href={api.exportUrl("users", { search, status, subscription })}>
-            <Button size="sm" variant="ghost"><Download size={13} /> تصدير المعروض</Button>
-          </a>
-        )}
+        <div className="flex gap-2.5 items-center flex-wrap">
+          <Stat value={total} label={filtered ? "عضواً بالفلتر" : "عضواً"} />
+          <Stat value={state.data?.activeTotal} label="مشترك فعّال" tone={C.green} />
+          {/* الرابط يحمل **نفس** معاملات الشاشة، فالملف يطابق ما تراه بالضبط. */}
+          {can(me, "exports:users") && (
+            <a href={api.exportUrl("users", { search, status, subscription })} className="kt-act inline-flex items-center gap-1.5 rounded-xl px-4 text-[13px] font-bold"
+              style={{ minHeight: 44, border: `1px solid ${C.line}`, background: C.surface, color: C.text }}>
+              <Download size={14} /> تصدير المعروض
+            </a>
+          )}
+        </div>
       </PageTitle>
 
-      <Card>
-        <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
+      {canSend && (
+        <section aria-labelledby="bulk-h" className="rounded-2xl px-5 py-4 flex flex-wrap gap-4 items-center justify-between"
+          style={{ background: C.surface, border: `1px solid ${C.line}` }}>
+          <div style={{ minWidth: 220 }}>
+            <h2 id="bulk-h" className="text-[15px] font-bold mb-1" style={{ color: C.text }}>مراسلة جماعية</h2>
+            <p className="text-[13px]" style={{ color: C.textMuted }} data-bulk-target>{target}</p>
+          </div>
+          <div className="flex flex-wrap gap-2.5">
+            {CHANNEL_ORDER.map((ch) => {
+              const st = channels[ch]; const off = !st || !st.ok; const { Icon } = CH[ch];
+              return (
+                <button key={ch} type="button" className="kt-act inline-flex items-center gap-2 rounded-xl px-4 text-[14px] font-bold"
+                  style={{ minHeight: 44, ...chFill(ch, off) }} disabled={off || total === 0}
+                  title={off ? (st?.reason || "جارٍ التحقق من القناة…") : ""}
+                  aria-label={off ? `${CH[ch].label} — غير مفعّل: ${st?.reason || ""}` : `${CH[ch].label} — ${target}`}
+                  onClick={() => bulk(ch)}>
+                  <Icon size={17} aria-hidden="true" /> {CH[ch].label}{off ? " · غير مفعّل" : ""}
+                </button>
+              );
+            })}
+          </div>
+          {CHANNEL_ORDER.some((ch) => channels[ch] && !channels[ch].ok) && (
+            <ul className="w-full text-[11px] leading-6" style={{ color: C.textFaint }}>
+              {CHANNEL_ORDER.filter((ch) => channels[ch] && !channels[ch].ok).map((ch) => <li key={ch}>{CH[ch].label}: {channels[ch].reason}</li>)}
+            </ul>
+          )}
+        </section>
+      )}
+
+      <div className="flex flex-wrap gap-3 items-center">
+        <div style={{ flex: "1 1 280px", minWidth: 220 }}>
           <SearchBox value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="اسم أو بريد أو معرّف…" />
+        </div>
+        <label className="inline-flex items-center gap-2 text-[13px]" style={{ color: C.textMuted }}>الحالة
           <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
             <option value="all">كل الحالات</option>
             {Object.entries(ACCOUNT_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </Select>
+        </label>
+        <label className="inline-flex items-center gap-2 text-[13px]" style={{ color: C.textMuted }}>الاشتراك
           <Select value={subscription} onChange={(e) => { setSubscription(e.target.value); setPage(1); }}>
-            <option value="all">الاشتراك: الكل</option>
+            <option value="all">الكل</option>
             <option value="active">مشترك</option>
             <option value="none">غير مشترك</option>
           </Select>
+        </label>
+        <label className="inline-flex items-center gap-2 text-[13px]" style={{ color: C.textMuted }}>الترتيب
           <Select value={`${sort}:${dir}`} onChange={(e) => {
-            const [s, d] = e.target.value.split(":"); setSort(s); setDir(d); setPage(1);
+            const [s2, d] = e.target.value.split(":"); setSort(s2); setDir(d); setPage(1);
           }}>
             <option value="created_at:desc">الأحدث تسجيلاً</option>
             <option value="created_at:asc">الأقدم تسجيلاً</option>
@@ -146,49 +262,113 @@ function UsersList({ me }) {
             <option value="name:asc">الاسم أ–ي</option>
             <option value="email:asc">البريد أ–ي</option>
           </Select>
-        </div>
+        </label>
+      </div>
 
-        <ErrorBar error={state.error} />
-        {state.loading ? (
-          <div className="py-8 flex justify-center"><Spinner /></div>
-        ) : rows.length === 0 ? (
-          <Empty>لا يوجد مستخدمون مطابقون.</Empty>
-        ) : (
-          <Table head={["", "الاسم", "البريد", "الحالة", "الاشتراك", "التسجيل", "آخر دخول", ""]}>
+      <ErrorBar error={state.error} />
+      {state.loading ? (
+        <div className="py-8 flex justify-center"><Spinner /></div>
+      ) : rows.length === 0 ? (
+        <Empty>لا يوجد مستخدمون مطابقون.</Empty>
+      ) : (
+        <div>
+          <Table caption="قائمة الأعضاء ووسائل مراسلتهم" minWidth={1000}
+            head={["العضو", "الاشتراك", "الحالة", "التسجيل", "آخر دخول", canSend ? "مراسلة فردية" : null, "الملف"].filter((h) => h !== null)}
+            align={[, , , , , , "end"]}
+            select={canSend ? { ids: rows.map((u) => u.id), selected, onChange: setSelected, allLabel: "تحديد كل الأعضاء المعروضين في هذه الصفحة" } : null}>
             {rows.map((u) => {
               const s = ACCOUNT_STATUS[u.account_status] || { label: u.account_status, color: "textMuted" };
+              const nm = u.name || u.email;
               return (
-                <tr key={u.id}>
-                  <Td><Avatar id={u.id} name={u.name} hasPhoto={u.has_photo === true} /></Td>
-                  <Td className="font-bold"><UserLink id={u.id} name={u.name} /></Td>
-                  <Td>{u.email}</Td>
-                  <Td><Badge color={s.color}>{s.label}</Badge></Td>
+                <Tr key={u.id} id={u.id} label={nm}>
                   <Td>
-                    {u.subscription_status
-                      ? <span style={{ color: C.textMuted }}>{u.subscription_plan || "—"} · {u.subscription_status}</span>
-                      : <span style={{ color: C.textFaint }}>—</span>}
-                  </Td>
-                  <Td>{fmtDate(u.created_at)}</Td>
-                  <Td>{u.last_login_at ? fmtDate(u.last_login_at) : "—"}</Td>
-                  <Td>
-                    <div className="flex justify-end">
-                      <Link to={`/users/${u.id}`} className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-bold"
-                        style={{ color: C.textMuted, border: `1px solid ${C.line}` }}>
-                        <Eye size={12} /> الملف
-                      </Link>
+                    <div className="flex items-center gap-3">
+                      <InitialAvatar id={u.id} name={u.name} hasPhoto={u.has_photo === true} />
+                      <div style={{ minWidth: 0 }}>
+                        <UserLink id={u.id} name={u.name} email={u.email} />
+                        <div dir="ltr" className="text-[12px]" style={{ color: C.textMuted, textAlign: "right" }}>{u.email}</div>
+                      </div>
                     </div>
                   </Td>
-                </tr>
+                  <Td>
+                    {u.subscription_status
+                      ? <Pill tone={SUB_TONE[u.subscription_status] === "green" ? "accent" : SUB_TONE[u.subscription_status]}>
+                          {u.subscription_plan_name || u.subscription_plan || "—"} · {SUB_LABEL[u.subscription_status] || u.subscription_status}
+                        </Pill>
+                      : <Pill>بلا اشتراك</Pill>}
+                  </Td>
+                  <Td><Pill tone={s.color === "green" ? "green" : s.color === "crisis" ? "crisis" : s.color === "amber" ? "amber" : "textMuted"} dot>{s.label}</Pill></Td>
+                  <Td dir="ltr">{fmtDate(u.created_at)}</Td>
+                  <Td dir="ltr">{u.last_login_at ? fmtDate(u.last_login_at) : "—"}</Td>
+                  {canSend && (
+                    <Td>
+                      <div className="flex gap-1.5">
+                        {CHANNEL_ORDER.map((ch) => {
+                          const st = channels[ch]; const off = !st || !st.ok; const { Icon } = CH[ch];
+                          return (
+                            <button key={ch} type="button" className="kt-act inline-flex items-center justify-center rounded-xl"
+                              style={{ width: 44, height: 44, ...chStyle(ch, off) }} disabled={off}
+                              aria-label={off ? `${CH[ch].verb(nm)} — غير مفعّل${st?.reason ? `: ${st.reason}` : ""}` : CH[ch].verb(nm)}
+                              title={off ? `${CH[ch].label} — غير مفعّل${st?.reason ? `: ${st.reason}` : ""}` : CH[ch].label}
+                              onClick={() => navigate(href(`/users/${u.id}/message`, { channel: ch }))}>
+                              <Icon size={18} aria-hidden="true" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </Td>
+                  )}
+                  <Td style={{ textAlign: "left" }}>
+                    <Link to={`/users/${u.id}`} className="kt-act inline-flex items-center gap-1.5 rounded-xl px-4 text-[13px] font-bold"
+                      style={{ minHeight: 44, color: C.text, border: `1px solid ${C.line}`, background: C.surface }} aria-label={`ملف ${nm}`}>
+                      <ExternalLink size={14} aria-hidden="true" /> الملف
+                    </Link>
+                  </Td>
+                </Tr>
               );
             })}
           </Table>
-        )}
-
-        <Pager page={state.data?.page || 1} totalPages={state.data?.totalPages || 1}
-          total={state.data?.total} onPage={setPage} />
-      </Card>
-
+          <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
+            {canSend && <span className="text-[12px]" style={{ color: C.textMuted }}>محدَّد {selected.length} · {total} عضواً</span>}
+            <div className="flex-1"><Pager page={state.data?.page || 1} totalPages={state.data?.totalPages || 1} total={total} onPage={setPage} /></div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function Stat({ value, label, tone }) {
+  return (
+    <div className="rounded-xl px-4 py-2 text-center" style={{ background: C.surface, border: `1px solid ${C.line}`, minWidth: 76 }}>
+      <div className="text-[20px] font-bold leading-tight" style={{ color: tone || C.text }}>{value ?? "…"}</div>
+      <div className="text-[11px]" style={{ color: C.textMuted }}>{label}</div>
+    </div>
+  );
+}
+
+/* مراسلة جماعية: المستلمون مجمَّدون — المحدَّدون كما اختيروا، أو المعروض كله بفلاتره من الخادم. */
+function BulkMessage({ toast }) {
+  const qs = new URLSearchParams(window.location.search);
+  const filters = { q: qs.get("q") || "", status: qs.get("status") || "all", sub: qs.get("sub") || "all" };
+  const back = href("/users", Object.fromEntries(Object.entries(filters).filter(([, v]) => v && v !== "all")));
+  const channel = CHANNEL_ORDER.includes(qs.get("channel")) ? qs.get("channel") : "in_app";
+  let picked = null;
+  if (qs.get("sel")) { try { picked = JSON.parse(sessionStorage.getItem(`kanaf-sel-${qs.get("sel")}`) || "null"); } catch { picked = null; } }
+  else if (qs.get("ids")) picked = qs.get("ids").split(",").filter(Boolean);
+  const fromFilter = !qs.get("sel") && !qs.get("ids");
+  const rec = useAsync(() => (fromFilter
+    ? api.userRecipients({ search: filters.q, status: filters.status, subscription: filters.sub })
+    : Promise.resolve(picked ? { userIds: picked, count: picked.length } : null)), []);
+  if (rec.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+  if (!rec.data) return <Screen title="مراسلة جماعية" back={back}><ErrorBar error="انتهى التحديد (أُعيد تحميل الصفحة) — ارجع إلى القائمة واختر الأعضاء من جديد." /></Screen>;
+  if (rec.error || !rec.data.count) return <Screen title="مراسلة جماعية" back={back}><ErrorBar error={rec.error || "لا أعضاء بهذا الفلتر."} /></Screen>;
+  const label = fromFilter
+    ? `كل الأعضاء المعروضين${filters.q || filters.status !== "all" || filters.sub !== "all" ? " بالفلتر المطبَّق" : ""}: ${rec.data.count} — العدد يُتحقق منه عند الإرسال.`
+    : `${rec.data.count} ${rec.data.count === 1 ? "عضو محدَّد" : "عضواً محدَّداً"}.`;
+  return (
+    <Compose open fixedUserIds={rec.data.userIds} fixedLabel={label} back={back} title={`مراسلة ${rec.data.count} عضواً`} initialChannels={[channel]}
+      onClose={() => navigate(back)} onDone={(m) => { toast(m); navigate(back); }} />
   );
 }
 
@@ -378,6 +558,7 @@ function UserDetail({ id, tab, me, toast }) {
           {/* KANAF-ORD-0013 §4.4: إرسال فردي على آلية الحملات نفسها (selected_users بمستلم واحد) */}
           {tab === "message" && can(me, "notifications:send") && (
             <Compose open fixedUserIds={[u.id]} fixedLabel={u.name || u.email} title={`مراسلة ${u.name || u.email}`}
+              initialChannels={[new URLSearchParams(window.location.search).get("channel") || "in_app"]}
               onClose={() => {}} onDone={(m) => toast(m)} />
           )}
           {tab === "billing" && <Billing user={u} me={me} toast={toast} onChanged={() => { state.reload(); onChanged(); }} />}

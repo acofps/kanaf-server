@@ -5,6 +5,8 @@ import { handleMoyasarWebhook } from "./webhook.js";
 import { getBillingSettings } from "../billing/config.js";
 import { getUserSubscription, effectiveStatusSql } from "../billing/subscription.js";
 import { requireUserAuth, requireVerifiedUser } from "../auth/middleware.js";
+import { paymentConfigProblems } from "./config-check.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const paymentsRouter = express.Router();
 
@@ -22,6 +24,15 @@ async function getActivePlan(planKey) {
 }
 
 const BASE_URL = process.env.APP_BASE_URL || "http://localhost:5173";
+
+/* KANAF-ORD-0015 §2.2: ما يراه العضو حين تتعذّر صفحة الدفع — رمز للتطبيق ونصّ عربي يقول ما حدث وما يفعله.
+   ولا خصم في أيّ منها: الصفحة لم تُفتح أصلاً. */
+export const CHECKOUT_FAILURE_MESSAGE = {
+  payment_provider_not_configured: "الدفع غير متاح الآن من جهتنا، ولم يُخصم منك شيء. نعمل على إصلاحه — حاول لاحقاً، وإن احتجت الاشتراك عاجلاً تواصل معنا.",
+  payment_provider_rejected: "تعذّر فتح صفحة الدفع، ولم يُخصم منك شيء. حاول بعد دقائق، وإن تكرّر تواصل معنا.",
+  payment_provider_unreachable: "مزوّد الدفع لم يردّ في الوقت المحدّد، ولم يُخصم منك شيء. حاول بعد دقائق.",
+};
+const checkoutFailure = (code) => ({ error: code, message: CHECKOUT_FAILURE_MESSAGE[code] });
 
 /* ============================================================
    الباقات — عام بلا مصادقة
@@ -44,8 +55,7 @@ paymentsRouter.get("/plans", async (req, res) => {
       pricesIncludeVat: settings.pricesIncludeVat,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -73,6 +83,14 @@ paymentsRouter.post("/create-invoice", requireVerifiedUser, async (req, res) => 
     if (!plan) return res.status(400).json({ error: "valid_planId_required" });
 
     const settings = await getBillingSettings();
+
+    /* KANAF-ORD-0015 §2.2: إعداد ناقص يمنع قبل إنشاء أي فاتورة — لا صفّ معلّق بلا رابط يُحسب
+       «سلة متروكة»، ولا رابط إشعار إلى localhost يجعل الدفع بلا تفعيل. السبب باسم المتغيّر في «أخطاء النظام». */
+    const cfg = paymentConfigProblems();
+    if (cfg.blocking.length) {
+      return serverError(res, Object.assign(new Error(`payment config: ${cfg.blocking.map((b) => `${b.name} ${b.why}`).join("; ")}`), { code: "payment_provider_not_configured" }),
+        "payments:create-invoice", req, { status: 503, body: checkoutFailure("payment_provider_not_configured") });
+    }
 
     // فاتورة معلّقة لنفس الباقة أُنشئت خلال آخر ساعتين ولها رابط دفع
     // صالح: تُعاد كما هي بدل إنشاء أخرى.
@@ -108,17 +126,30 @@ paymentsRouter.post("/create-invoice", requireVerifiedUser, async (req, res) => 
       return rows[0].id;
     });
 
-    const invoice = await createInvoice({
-      amountSar: Number(plan.price_sar),
-      currency: settings.currency,
-      description: `اشتراك تنفس+ — ${plan.name}`,
-      callbackUrl: `${process.env.SERVER_BASE_URL || "http://localhost:3001"}/api/payments/webhook`,
-      successUrl: `${BASE_URL}/subscription/success?invoice=${invoiceId}`,
-      backUrl: `${BASE_URL}/subscription/canceled`,
-      // شبكة أمان لمطابقة الحدث بفاتورتنا حتى لو غاب invoice_id عن
-      // حمولة حدث ما — وقد حدث ذلك فعلاً مع أحداث الاسترداد.
-      metadata: { kanaf_invoice_id: invoiceId, kanaf_user_id: userId, kanaf_plan: planId },
-    });
+    let invoice;
+    try {
+      invoice = await createInvoice({
+        amountSar: Number(plan.price_sar),
+        currency: settings.currency,
+        description: `اشتراك تنفس+ — ${plan.name}`,
+        callbackUrl: `${process.env.SERVER_BASE_URL || "http://localhost:3001"}/api/payments/webhook`,
+        successUrl: `${BASE_URL}/subscription/success?invoice=${invoiceId}`,
+        backUrl: `${BASE_URL}/subscription/canceled`,
+        // شبكة أمان لمطابقة الحدث بفاتورتنا حتى لو غاب invoice_id عن
+        // حمولة حدث ما — وقد حدث ذلك فعلاً مع أحداث الاسترداد.
+        metadata: { kanaf_invoice_id: invoiceId, kanaf_user_id: userId, kanaf_plan: planId },
+      });
+    } catch (providerErr) {
+      /* رفضٌ صريح من المزوّد (4xx/5xx بجسم) يعني أن الفاتورة لم تُنشأ هناك: صفّنا يصير failed فلا يُعدّ سلة
+         متروكة ولا يُعاد استعماله. انقطاع أو مهلة: لا نعرف — يبقى pending كما هو (لا رابط فيه فلا يُعاد). */
+      const answered = Number.isInteger(providerErr?.status);
+      if (answered) {
+        providerErr.code = providerErr.code || `provider_http_${providerErr.status}`;
+        await query(`UPDATE invoices SET status = 'failed', updated_at = now() WHERE id = $1 AND status = 'pending'`, [invoiceId]).catch(() => {});
+      }
+      const code = answered ? "payment_provider_rejected" : "payment_provider_unreachable";
+      return serverError(res, providerErr, "payments:create-invoice", req, { status: 502, body: checkoutFailure(code) });
+    }
 
     await query(
       `UPDATE invoices SET provider_invoice_id = $1, checkout_url = $2, updated_at = now() WHERE id = $3`,
@@ -127,8 +158,7 @@ paymentsRouter.post("/create-invoice", requireVerifiedUser, async (req, res) => 
 
     res.status(201).json({ invoiceId, checkoutUrl: invoice.url });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -152,8 +182,7 @@ paymentsRouter.get("/status/:invoiceId", requireUserAuth, async (req, res) => {
     const settings = await getBillingSettings();
     res.json({ ...rows[0], currency: settings.currency });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -193,8 +222,7 @@ paymentsRouter.get("/subscription", requireUserAuth, async (req, res) => {
       currency: settings.currency,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -257,8 +285,7 @@ paymentsRouter.post("/subscription/cancel", requireVerifiedUser, async (req, res
     res.json({ ok: true, ...result });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -295,8 +322,7 @@ paymentsRouter.post("/subscription/reactivate", requireVerifiedUser, async (req,
     res.json({ ok: true, ...result });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -352,8 +378,7 @@ paymentsRouter.get("/invoices", requireUserAuth, async (req, res) => {
       totalPages: Math.max(1, Math.ceil(countRows[0].total / pageSize)),
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -379,8 +404,7 @@ paymentsRouter.get("/invoices/:id/pdf", requireUserAuth, async (req, res) => {
     res.setHeader("Content-Disposition", `inline; filename="${invoice.zatca_invoice_number}.pdf"`);
     res.send(invoice.pdf_data);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 
@@ -396,8 +420,7 @@ paymentsRouter.get("/credit-notes/:id/pdf", requireUserAuth, async (req, res) =>
     res.setHeader("Content-Disposition", `inline; filename="${note.zatca_credit_note_number}.pdf"`);
     res.send(note.pdf_data);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "payments/routes", req);
   }
 });
 

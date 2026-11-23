@@ -1,5 +1,6 @@
 import express from "express";
 import { getPublishedCatalog } from "./catalog.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const contentRouter = express.Router();
 
@@ -40,7 +41,6 @@ contentRouter.get("/catalog", async (req, res) => {
     res.set("Cache-Control", "no-cache");
     res.json(catalog);
   } catch (err) {
-    console.error("[content/catalog] failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "content/catalog", req);
   }
 });

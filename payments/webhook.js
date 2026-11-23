@@ -7,6 +7,7 @@ import { recordRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from "
 import { activateOrExtendSubscription, markPastDueIfEntitled } from "../billing/subscription.js";
 import { getBillingSettings } from "../billing/config.js";
 import { captureCardAfterPayment } from "../billing/payment-methods.js";
+import { serverError } from "../ops/http-errors.js";
 
 /* ============================================================
    معالج الـWebhook — المكان الوحيد الذي تتغيّر فيه الحالة المالية
@@ -540,8 +541,7 @@ export async function handleMoyasarWebhook(req, res) {
     );
     eventRow = rows[0];
   } catch (err) {
-    console.error("[webhook] تعذّر تسجيل الحدث:", err);
-    return res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "webhook:record-event", req);
   }
 
   // تكرار حقيقي: حدث سبق أن عولج أو تُجوهل بوعي. لا يُعاد تنفيذه.
@@ -573,7 +573,10 @@ export async function handleMoyasarWebhook(req, res) {
     console.log(`[webhook] ${eventType} → ${result.outcome}`);
     /* 200 = استلام فقط، لا تفعيل. المعلّق بوعي (عدم مطابقة) يُرد 200 فلا عاصفة إعادة محاولات؛
        تعذّر التحقق المؤقت يُرد 500 ليعيد المزوّد المحاولة، والحدث محفوظ بحالة failed. */
-    if (result.temporary) return res.status(500).json({ error: "verification_unavailable" });
+    if (result.temporary) {
+      return serverError(res, Object.assign(new Error("provider verification unavailable"), { code: "verification_unavailable" }),
+        "webhook:verify", req, { body: { error: "verification_unavailable" } });
+    }
     return res.status(200).json({ ok: true, outcome: result.outcome });
   } catch (err) {
     console.error(`[webhook] فشلت معالجة ${eventType}:`, err);
@@ -589,6 +592,6 @@ export async function handleMoyasarWebhook(req, res) {
     }
     // 500 مقصود: نريد إعادة المحاولة من المزوّد. الحدث محفوظ
     // بحالة failed، والمحاولة التالية تُعالَج بدل أن تُرفض كمكررة.
-    return res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "webhook:process", req);
   }
 }
