@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Loader2, X, AlertTriangle, Search, ArrowRight } from "lucide-react";
+import { Loader2, X, AlertTriangle, Search, ArrowRight, Check } from "lucide-react";
 import { C } from "./theme.js";
 import { Link } from "./router.js";
+import { splitCode } from "./errors.js";
 
 /* ============================================================
    مكوّنات مشتركة — تُبنى مرة وتُستخدم في كل الشاشات، فلا يختلف
@@ -70,12 +71,15 @@ export function Badge({ children, color = "textMuted", soft }) {
   );
 }
 
-export function Field({ label, hint, children }) {
+export function Field({ label, hint, error, children }) {
   return (
     <div>
       <label className="block text-xs font-bold mb-1.5" style={{ color: C.textMuted }}>{label}</label>
       {children}
-      {hint && <p className="text-[11px] mt-1 leading-5" style={{ color: C.textFaint }}>{hint}</p>}
+      {/* KANAF-ORD-0015 §2.4(أ): الحقل يقول تحت نفسه ما المطلوب قبل أي إرسال */}
+      {error
+        ? <p className="text-[11px] mt-1 leading-5 font-bold" style={{ color: C.crisis }} role="status">{error}</p>
+        : hint && <p className="text-[11px] mt-1 leading-5" style={{ color: C.textFaint }}>{hint}</p>}
     </div>
   );
 }
@@ -128,7 +132,11 @@ export function ErrorBar({ error, onClose }) {
       style={{ background: C.crisisSoft }}>
       <div className="flex items-start gap-2">
         <AlertTriangle size={14} color={C.crisis} className="mt-0.5 shrink-0" />
-        <span className="text-xs leading-6" style={{ color: C.crisis }}>{error}</span>
+        {/* KANAF-ORD-0015 §2.4.3: الرمز بخط صغير — ليُنقل إلينا حين يقع ما لم يُتوقَّع */}
+        <span className="text-xs leading-6" style={{ color: C.crisis }} role="alert">
+          {splitCode(error).text}
+          {splitCode(error).code && <small dir="ltr" className="ms-2 text-[10px] opacity-75" data-error-code>{splitCode(error).code}</small>}
+        </span>
       </div>
       {onClose && <button onClick={onClose}><X size={14} color={C.crisis} /></button>}
     </div>
@@ -223,6 +231,37 @@ export function ConfirmPrompt({ open, title, description, confirmLabel = "تأك
         <Button onClick={onClose} variant="ghost" disabled={busy}>إلغاء</Button>
       </div>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------------
+   زرّ اختيار (متعدّد أو مفرد) — KANAF-ORD-0015 §2.3
+
+   كان المحدَّد في «أكواد الخصم» صبغة شفافة 10% على خلفية رمادية فاتحة: التحديد
+   يعمل (الحمولة تحمل الباقة) ولا تراه العين. والقاعدة الآن لكل اختيار في اللوحة:
+   المحدَّد تعبئة كاملة بلون العلامة ونصّ أبيض، وعلامة ✓، وحدّ متّصل أعرض، و
+   aria-pressed يتغيّر — فالفرق في الشكل والعلامة لا في اللون وحده. والمعطَّل حدّ
+   متقطّع وسبب مقروء.
+   ------------------------------------------------------------ */
+export function ToggleChip({ on, onClick, disabled = false, title = "", children, label }) {
+  return (
+    <button type="button" aria-pressed={on ? "true" : "false"} disabled={disabled} title={title} aria-label={label}
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-3.5 rounded-xl text-xs font-bold transition-colors"
+      style={{
+        minHeight: 40,
+        background: disabled ? C.surfaceAlt : on ? C.teal : C.surface,
+        color: disabled ? C.textFaint : on ? C.onAccent : C.text,
+        border: disabled ? `1.5px dashed ${C.line}` : on ? `2px solid ${C.teal}` : `1.5px solid ${C.line}`,
+        cursor: disabled ? "not-allowed" : "pointer",
+        boxShadow: on && !disabled ? "0 1px 3px rgba(43,35,51,.18)" : "none",
+      }}>
+      <span aria-hidden="true" className="inline-flex items-center justify-center rounded-md"
+        style={{ width: 16, height: 16, border: on ? "none" : `1.5px solid ${disabled ? C.line : C.textFaint}`, background: on ? "rgba(255,255,255,.22)" : "transparent" }}>
+        {on && <Check size={12} strokeWidth={3} />}
+      </span>
+      {children}
+    </button>
   );
 }
 

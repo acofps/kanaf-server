@@ -9,6 +9,8 @@
    عمداً، لأن كوكي SameSite=Strict لا يُرسل عبر المواقع مهما ضُبط
    CORS. هذا هو سبب استضافة اللوحة داخل Express نفسه.
    ============================================================ */
+import { arabicError } from "./errors.js";
+
 const BASE = "/admin";
 
 export class ApiError extends Error {
@@ -17,72 +19,9 @@ export class ApiError extends Error {
     this.status = status;
     this.body = body || {};
   }
-  /** رسالة عربية مفهومة بدل رمز إنجليزي في وجه المستخدم. */
-  get arabic() {
-    const map = {
-      insufficient_role: "صلاحيتك لا تسمح بهذا الإجراء.",
-      invalid_credentials: "البريد أو كلمة المرور غير صحيحة.",
-      session_expired: "انتهت الجلسة. سجّل الدخول من جديد.",
-      cannot_enable_unapproved_content: "لا يمكن نشر محتوى غير معتمد سريرياً.",
-      tier_change_requires_admin: "تغيير الطبقة قرار مالي — يحتاج صلاحية مدير.",
-      scope_required: "حدّد نطاق النشر (نوع أو عناصر) أو أكّد نشر الكل.",
-      push_not_configured: "قناة الإشعارات على الجهاز غير مضبوطة على الخادم.",
-      no_recipients_in_audience: "لا يوجد مستلمون في هذه الفئة.",
-      cannot_cancel_after_dispatch: "لا يمكن إلغاء حملة نُفّذت.",
-      unpublish_before_publish: "وقت الإيقاف يجب أن يكون بعد وقت النشر.",
-      title_cannot_be_empty: "العنوان لا يمكن أن يكون فارغاً.",
-      already_resolved: "هذا الطلب حُسم مسبقاً.",
-      cannot_self_approve: "لا يمكنك اعتماد طلبك بنفسك.",
-      refund_exceeds_available_amount: "المبلغ أكبر من المتبقّي القابل للاسترداد في هذه الدفعة.",
-      refund_already_recorded: "هذا الاسترداد مسجّل مسبقاً — لم يُكرَّر.",
-      already_fully_refunded: "هذه الدفعة مستردة بالكامل.",
-      payment_not_captured: "الدفعة غير محصّلة — لا شيء يُسترد.",
-      provider_refund_failed: "رفض المزوّد الاسترداد — لم يتغيّر شيء عندنا.",
-      provider_outcome_unknown: "لم يصل رد المزوّد — قد يكون الاسترداد نُفّذ. المبلغ محجوز لمنع التكرار؛ اضغط «مطابقة» على الدفعة بعد 10 دقائق قبل أي محاولة جديدة.",
-      refund_amount_must_be_positive: "مبلغ الاسترداد يجب أن يكون أكبر من صفر.",
-      refund_exceeds_captured_amount: "المبلغ أكبر من المحصَّل.",
-      no_provider_payment_id: "لا رقم معاملة لدى المزوّد لهذه الدفعة — لا يمكن مطابقتها.",
-      provider_status_not_actionable: "حالة الدفعة لدى المزوّد لا تستدعي تغييراً.",
-      replay_failed: "تعذّرت إعادة معالجة الحدث — التفاصيل في سجل الخادم.",
-      reconcile_failed: "تعذّرت المطابقة مع المزوّد — حاول لاحقاً.",
-      provider_unavailable: "تعذّر الوصول إلى المزوّد الآن — الحدث باقٍ محجوزاً، لم يتغيّر شيء. أعد الفحص لاحقاً.",
-      recheck_failed: "تعذّرت إعادة الفحص — التفاصيل في سجل الخادم.",
-      hold_not_open: "هذا الحدث لم يعد مفتوحاً.",
-      session_minutes_must_be_5_to_60: "عمر الجلسة عدد صحيح من 5 إلى 60 دقيقة.",
-      invalid_assistant_policy: "القيمة يجب أن تكون all_verified أو plus_only.",
-      /* KANAF-ORD-0013 §4.3 */
-      email_taken: "هذا البريد مسجّل لحساب آخر.",
-      invalid_email: "صيغة البريد غير صحيحة.",
-      invalid_name: "الاسم مطلوب، وبحد أقصى 80 حرفاً.",
-      invalid_saudi_phone: "الرقم السعودي تسع خانات ويبدأ بـ5، بلا الصفر ولا مفتاح الدولة.",
-      dial_country_mismatch: "رمز الاتصال لا يطابق الدولة المختارة.",
-      phone_incomplete: "أدخل رمز الدولة والرقم معاً.",
-      invalid_phone_length: "طول الرقم غير صالح.",
-      invalid_reminder_time: "الوقت بصيغة HH:MM بنظام 24 ساعة.",
-      invalid_timezone: "منطقة زمنية غير معروفة.",
-      nothing_to_update: "لا تغيير لحفظه.",
-      unknown_plan: "الباقة غير موجودة.",
-      invalid_period_end: "تاريخ انتهاء غير صالح.",
-      grant_requires_plan_and_period_end: "لا اشتراك سابق: المنح اليدوي يحتاج باقة وتاريخ انتهاء.",
-      unsupported_image: "نوع الصورة غير مدعوم (JPEG أو PNG أو WebP).",
-      image_too_large: "الصورة أكبر من الحد المسموح.",
-      channel_unavailable: "قناة معطّلة — اعتمادها غير مضبوط. أزلها أو اضبطها من «التكاملات».",
-      audience_count_changed: "تغيّر عدد المستلمين منذ عرضه — راجع العدد الجديد وأكّد من جديد.",
-      password_too_short: "الرقم السري خمسة عشر حرفاً على الأقل.",
-      invalid_duties: "اختر مهام إدارية أو مالية.",
-      invalid_pages: "صفحة غير معروفة.",
-      invalid_phone: "الجوال بصيغة دولية: + ثم 8 إلى 15 رقماً.",
-      email_already_exists: "هذا البريد مسجّل لحساب آخر.",
-      cannot_change_own_pages: "لا تقدر تضيّق صفحاتك بنفسك.",
-      no_open_deletion_request: "لا طلب حذف مفتوح لهذا الحساب — أُتمّ محوه سابقاً أو لم يطلب صاحبه الحذف.",
-      account_not_deactivated: "الحساب غير معطّل — المحو النهائي لحساب طلب صاحبه حذفه فقط.",
-    };
-    if (map[this.message]) return map[this.message];
-    if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
-    if (this.status === 401) return "انتهت الجلسة. سجّل الدخول من جديد.";
-    if (this.status >= 500) return "صار خلل في الخادم. حاول بعد شوي.";
-    return this.body?.message || "تعذّر تنفيذ الطلب.";
-  }
+  /** رسالة عربية مفهومة بدل رمز إنجليزي في وجه المستخدم (errors.js). */
+  get arabic() { return arabicError(this.status, { ...this.body, error: this.message }); }
+  get code() { return this.message; }
 }
 
 let refreshing = null;

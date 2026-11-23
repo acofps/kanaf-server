@@ -5,8 +5,10 @@ import { Link, navigate, useQueryState } from "../router.js";
 import { UserLink } from "./Users.jsx";
 import { C, fmtDateTime, can, toIsoWithOffset } from "../theme.js";
 import {
-  Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Screen, Field, Input, Select, useAsync, ConfirmPrompt,
+  Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Screen, Field, Input, Select, useAsync, ConfirmPrompt, ToggleChip,
 } from "../ui.jsx";
+
+import { discountProblems } from "../discount-rules.js";
 
 /* ============================================================
    أكواد الخصم — KANAF-ORD-0008 §6
@@ -128,7 +130,10 @@ function CreateModal({ open, plans, onClose, onDone }) {
   const [err, setErr] = useState("");
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
   const togglePlan = (k) => setF((x) => ({ ...x, planKeys: x.planKeys.includes(k) ? x.planKeys.filter((p) => p !== k) : [...x.planKeys, k] }));
+  const problems = discountProblems(f);
+  const blocked = Object.keys(problems).length > 0;
   const submit = async () => {
+    if (blocked) return;
     setBusy(true); setErr("");
     try {
       await api.createDiscountCode({
@@ -136,32 +141,32 @@ function CreateModal({ open, plans, onClose, onDone }) {
         validFrom: f.validFrom ? toIsoWithOffset(f.validFrom) : null, validUntil: f.validUntil ? toIsoWithOffset(f.validUntil) : null,
       });
       onDone();
-    } catch (e) { setErr(e?.arabic || e?.code || "تعذّر الإنشاء."); } finally { setBusy(false); }
+    } catch (e) { setErr(e?.arabic || "تعذّر الإنشاء."); } finally { setBusy(false); }
   };
   return (
     <Screen title="كود خصم جديد" back="/discounts" backLabel="أكواد الخصم">
       <div className="grid gap-3">
-        <Field label="الكود" hint="حروف لاتينية وأرقام و- و_ ، من 3 إلى 32. يُحفظ بحروف كبيرة."><Input value={f.code} onChange={set("code")} dir="ltr" /></Field>
+        <Field label="الكود" hint="حروف لاتينية وأرقام و- و_ ، من 3 إلى 32. يُحفظ بحروف كبيرة." error={problems.code}><Input value={f.code} onChange={set("code")} dir="ltr" aria-invalid={problems.code ? "true" : "false"} /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="النوع"><Select value={f.kind} onChange={set("kind")}><option value="percent">نسبة %</option><option value="amount">مبلغ ر.س</option></Select></Field>
-          <Field label="القيمة" hint={f.kind === "percent" ? "أقل من 100 — خصم 100% غير مسموح" : "أقل من سعر الباقة"}><Input type="number" min="0" step="0.01" value={f.value} onChange={set("value")} dir="ltr" /></Field>
+          <Field label="القيمة" hint={f.kind === "percent" ? "أقل من 100 — خصم 100% غير مسموح" : "أقل من سعر الباقة"} error={problems.value}><Input type="number" min="0" step="0.01" value={f.value} onChange={set("value")} dir="ltr" /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="يبدأ (اختياري)"><Input type="datetime-local" value={f.validFrom} onChange={set("validFrom")} /></Field>
-          <Field label="ينتهي (اختياري)"><Input type="datetime-local" value={f.validUntil} onChange={set("validUntil")} /></Field>
+          <Field label="ينتهي (اختياري)" error={problems.validUntil}><Input type="datetime-local" value={f.validUntil} onChange={set("validUntil")} /></Field>
         </div>
-        <Field label="حد الاستعمال (اختياري)"><Input type="number" min="1" value={f.maxRedemptions} onChange={set("maxRedemptions")} dir="ltr" /></Field>
-        <Field label="الباقات" hint="بلا اختيار = كل الباقات.">
+        <Field label="حد الاستعمال (اختياري)" error={problems.maxRedemptions}><Input type="number" min="1" value={f.maxRedemptions} onChange={set("maxRedemptions")} dir="ltr" /></Field>
+        <Field label="الباقات" hint={f.planKeys.length ? `الكود لـ${f.planKeys.length === plans.length ? "كل الباقات" : `${f.planKeys.length} من ${plans.length} باقات`} فقط.` : "بلا اختيار = كل الباقات."}>
           <div className="flex gap-2 flex-wrap">
             {plans.map((p) => (
-              <button key={p.plan_key} type="button" onClick={() => togglePlan(p.plan_key)} className="px-3 py-1.5 rounded-xl text-xs font-bold"
-                style={{ background: f.planKeys.includes(p.plan_key) ? C.tealSoft : C.surfaceAlt, color: f.planKeys.includes(p.plan_key) ? C.teal : C.textMuted }}>{p.name}</button>
+              <ToggleChip key={p.plan_key} on={f.planKeys.includes(p.plan_key)} onClick={() => togglePlan(p.plan_key)}>{p.name}</ToggleChip>
             ))}
           </div>
         </Field>
         <Field label="ملاحظة (اختياري)"><Input value={f.note} onChange={set("note")} /></Field>
         <ErrorBar error={err} />
-        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!f.code || !f.value}>إنشاء</Button><Button variant="ghost" onClick={onClose}>إلغاء</Button></div>
+        <div className="flex gap-2 items-center flex-wrap"><Button onClick={submit} busy={busy} disabled={blocked}>إنشاء</Button><Button variant="ghost" onClick={onClose}>إلغاء</Button>
+          {blocked && <span className="text-[11px]" style={{ color: C.textFaint }}>{Object.values(problems)[0]}</span>}</div>
       </div>
     </Screen>
   );
