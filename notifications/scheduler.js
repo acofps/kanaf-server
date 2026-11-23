@@ -61,6 +61,8 @@ let sweepInFlight = false;
 const REMINDER_SWEEP_MIN_INTERVAL_MS = Number(process.env.REMINDER_SWEEP_MIN_INTERVAL_MS || 300_000);
 let lastReminderSweepAt = 0;
 let reminderSweepInFlight = false;
+let lastAutorenewSweepAt = 0;
+let autorenewSweepInFlight = false;
 
 /**
  * ينفّذ كل حملة حان وقتها. آمن للاستدعاء المتزامن: قفل استشاري
@@ -163,6 +165,16 @@ export function sweepMiddleware(req, res, next) {
     sweepDailyReminders({ log: (m) => console.log(m) })
       .catch((err) => console.error("[scheduler] فشل مسح التذكيرات:", err))
       .finally(() => { reminderSweepInFlight = false; });
+  }
+  /* KANAF-ORD-0013 §7: التجديد التلقائي على الهامش أيضاً (بالإيقاع نفسه للتذكيرات) — حتى لا يتوقف
+     الخصم المعلَن للعضو إن لم يُضبط المشغّل الخارجي. معطَّل = عودة فورية بلا استعلام. */
+  if (process.env.AUTORENEW_ENABLED === "1" && !autorenewSweepInFlight && now - lastAutorenewSweepAt >= REMINDER_SWEEP_MIN_INTERVAL_MS) {
+    lastAutorenewSweepAt = now;
+    autorenewSweepInFlight = true;
+    import("../billing/autorenew.js")
+      .then(({ sweepAutoRenewals }) => sweepAutoRenewals({ log: (m) => console.log(m) }))
+      .catch((err) => console.error("[scheduler] فشل مسح التجديد التلقائي:", err?.code || err?.message))
+      .finally(() => { autorenewSweepInFlight = false; });
   }
 }
 

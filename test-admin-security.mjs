@@ -38,6 +38,7 @@ import { adminExportsRouter } from "./admin/exports.js";
 import { adminSettingsRouter, getAppSetting, SETTINGS_REGISTRY } from "./admin/settings.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
+import { autoReasonMiddleware } from "./admin/auto-reason.js"; // ملحق القرار 1: كما في index.js
 import { ROLES, ALL_PERMISSIONS, can, permissionsFor, matrixRows } from "./admin/permissions.js";
 
 const results = [];
@@ -50,6 +51,7 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(express.json());
 app.use(cookieParser());
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminAccountsRouter);
 app.use("/admin", adminExportsRouter);
 app.use("/admin", adminSettingsRouter);
@@ -129,7 +131,6 @@ const OWNER_ONLY = [
   ["PUT", "/admin/billing/settings", { vatRate: 0.2, reason: "محاولة" }],
   ["PUT", "/admin/app-settings/support_email", { value: "x@y.z", reason: "محاولة" }],
   ["POST", "/admin/content/bulk-publish", { all: true }],
-  ["POST", `/admin/break-glass/${UUID}/approve`, { hoursValid: 4 }],
   ["GET", `/admin/billing/webhook-events/${UUID}`],
 ];
 
@@ -216,14 +217,15 @@ async function run() {
     const r2 = await get("/admin/users");
     log("2-ب. المحاسب: دليل المستخدمين 403", r2.status === 403, String(r2.status));
 
+    // الوصول الطارئ أُلغي (ملحق KANAF-ORD-0013 الثاني، القرار 6): المسار لم يعد موجوداً لأحد.
     const r3 = await post("/admin/break-glass/request", { targetUserId: null, reason: "محاولة" });
-    log("2-ج. المحاسب: طلب الوصول الطارئ 403", r3.status === 403, String(r3.status));
+    log("2-ج. طلب الوصول الطارئ: المسار محذوف (404) — لا طريق إلى البيانات الخام", r3.status === 404, String(r3.status));
 
     const r4 = await get("/admin/exports/users.csv");
     log("2-د. المحاسب: تصدير المستخدمين 403", r4.status === 403, String(r4.status));
 
     // ولا صلاحية واحدة في مصفوفته تمسّ البيانات النفسية
-    const psych = ["users:view_sensitive", "users:view", "break_glass:request", "exports:users"];
+    const psych = ["users:view_sensitive", "users:view", "exports:users"];
     log("2-هـ. ولا واحدة من صلاحيات البيانات الشخصية في مصفوفة المحاسب",
       psych.every((p) => !can("accountant", p)), psych.filter((p) => can("accountant", p)).join(","));
 
@@ -277,7 +279,7 @@ async function run() {
       const r = await rq(m, p, b);
       if (r.status !== 403) leaked.push(`${p}=${r.status}`);
     }
-    log("4-أ. المدير: عشر عمليات محصورة بالمالك كلها 403", leaked.length === 0, leaked.join(" "));
+    log("4-أ. المدير: تسع عمليات محصورة بالمالك كلها 403 (العاشرة كانت اعتماد الوصول الطارئ — أُلغي)", leaked.length === 0, leaked.join(" "));
 
     const r1 = await get("/admin/tax-settings");
     log("4-ب. المدير يقرأ البيانات الضريبية ولا يعدّلها", r1.status === 200, String(r1.status));
@@ -376,7 +378,7 @@ async function run() {
     const all = await get("/admin/exports/users.csv");
     log("6-أ. التصدير يخرج CSV باسم ملف ونوع محتوى صحيحين",
       all.status === 200 && (all.headers.get("content-type") || "").includes("text/csv")
-        && /attachment; filename="kanaf-users-\d{4}-\d{2}-\d{2}\.csv"/.test(all.headers.get("content-disposition") || ""),
+        && /attachment; filename="tanaffus-users-\d{4}-\d{2}-\d{2}\.csv"/.test(all.headers.get("content-disposition") || ""),
       all.headers.get("content-disposition") || "");
 
     /* ⚠️ يُفحص بالبايتات الخام لا بنص fetch: TextDecoder يزيل BOM
@@ -440,17 +442,17 @@ async function run() {
     });
     log("7-أ. إنشاء باقة ينجح (201)", plan.status === 201, JSON.stringify(plan.body).slice(0, 60));
 
+    // ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب — الخادم يولّده، والأثر قبل/بعد كما هو.
     const noReason = await patch(`/admin/plans/${plan.body.id}`, { priceSar: 39 });
-    log("7-ب. تعديل الباقة بلا سبب مرفوض (400)", noReason.status === 400 && noReason.body.error === "reason_required");
-
-    await patch(`/admin/plans/${plan.body.id}`, { priceSar: 39, reason: "رفع السعر للاختبار" });
+    log("7-ب. تعديل الباقة بلا سبب مكتوب ينجح (200) بسبب تلقائي", noReason.status === 200);
     const { rows: planLog } = await query(
       `SELECT action, entity, entity_id, old_value, new_value, reason FROM admin_action_log
         WHERE entity = 'plan' ORDER BY created_at`
     );
     log("7-ج. تغيير السعر مسجَّل بالقيمة القديمة والجديدة معاً",
       planLog.length === 2 && planLog[1].action === "plan_price_changed"
-        && Number(planLog[1].old_value.price_sar) === 29 && Number(planLog[1].new_value.price_sar) === 39,
+        && Number(planLog[1].old_value.price_sar) === 29 && Number(planLog[1].new_value.price_sar) === 39
+        && planLog[1].reason === "تعديل باقة من اللوحة",
       JSON.stringify(planLog.map((r) => r.action)));
 
     /* ------------------------------------------------------------

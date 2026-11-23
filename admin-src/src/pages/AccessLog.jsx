@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { api } from "../api.js";
+import { useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 import { C, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, SearchBox, Spinner, Empty, ErrorBar, Table, Td, Pager, useAsync,
@@ -22,6 +24,7 @@ const ACTION_LABEL = {
   payment_refund: "استرداد دفعة",
   payment_reconcile: "مطابقة دفعة",
   webhook_replay: "إعادة تشغيل حدث دفع",
+  // الوصول الطارئ أُلغي (ملحق KANAF-ORD-0013 الثاني، القرار 6)؛ التسميتان تبقيان لقراءة صفوف السجل القديمة.
   break_glass_request: "طلب وصول طارئ",
   break_glass_approve: "اعتماد وصول طارئ",
   manual_subscription_cancel: "إلغاء اشتراك يدوي",
@@ -33,9 +36,9 @@ const ACTION_LABEL = {
 const SENSITIVE = new Set(["view_sensitive_data", "view_sent_messages", "break_glass_request", "break_glass_approve"]);
 
 export default function AccessLog() {
-  const [targetUserId, setTargetUserId] = useState("");
-  const [applied, setApplied] = useState("");
-  const [page, setPage] = useState(1);
+  const [targetUserId, setTargetUserId] = useState(() => new URLSearchParams(window.location.search).get("user") || "");
+  const [applied, setApplied] = useQueryState("user", "");
+  const [page, setPage] = useQueryState("page", 1);
   const state = useAsync(() => api.listAccessLog(applied || undefined, page), [applied, page]);
   const d = state.data;
   const rows = d?.entries || [];
@@ -74,7 +77,7 @@ export default function AccessLog() {
                     {ACTION_LABEL[e.action] || e.action}
                   </Badge>
                 </Td>
-                <Td>{e.target_user_id ? <code className="text-[10px]">{e.target_user_id}</code> : "—"}</Td>
+                <Td>{e.target_user_id ? <UserLink id={e.target_user_id} name={e.target_user_name || e.target_user_id.slice(0, 8)} /> : "—"}</Td>
                 <Td className="max-w-xs"><span style={{ color: C.textMuted }}>{e.reason || "—"}</span></Td>
                 <Td><code className="text-[10px]" style={{ color: C.textFaint }}>{e.ip_address || "—"}</code></Td>
                 <Td>{fmtDateTime(e.created_at)}</Td>

@@ -8,8 +8,10 @@ import {
 } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox,
-  Spinner, Empty, ErrorBar, Modal, ReasonPrompt, Table, Td, useAsync,
+  Spinner, Empty, ErrorBar, Screen, ConfirmPrompt, Table, Td, useAsync,
 } from "../ui.jsx";
+import { Link, navigate, useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 
 /* ============================================================
    الإشعارات.
@@ -33,16 +35,24 @@ const AUDIENCES = ["all", "active_subscribers", "trial_or_free", "account_status
 const MARKETING_ONLY = new Set(["abandoned_carts", "inactive"]);
 const ACCOUNT_STATUSES = ["active", "suspended", "pending_verification"];
 
-export default function Notifications({ me, toast }) {
-  const [status, setStatus] = useState("");
-  const [channel, setChannel] = useState("");
-  const [search, setSearch] = useState("");
-  const [offset, setOffset] = useState(0);
+export default function Notifications({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: «حملة جديدة» و«تفاصيل الحملة» صفحتان بعنوانين */
+  if (route[0] === "new") {
+    return <Compose open back="/notifications" onClose={() => navigate("/notifications")}
+      onDone={(msg) => { toast(msg); navigate("/notifications"); }} />;
+  }
+  if (route[0]) return <CampaignDetail id={route[0]} />;
+  return <CampaignList me={me} toast={toast} />;
+}
+
+function CampaignList({ me, toast }) {
+  const [status, setStatus] = useQueryState("status", "");
+  const [channel, setChannel] = useQueryState("channel", "");
+  const [search, setSearch] = useQueryState("q", "");
+  const [offset, setOffset] = useQueryState("offset", 0);
   const limit = 25;
 
-  const [compose, setCompose] = useState(false);
-  const [detail, setDetail] = useState(null);
-  const [reason, setReason] = useState(null);
+  const [pending, setPending] = useState(null);
 
   const list = useAsync(
     () => api.listCampaigns({ limit, offset, status, channel, search }),
@@ -56,7 +66,7 @@ export default function Notifications({ me, toast }) {
   const reloadAll = () => { list.reload(); sched.reload(); };
 
   const doSend = (c, retry = false) =>
-    setReason({
+    setPending({
       title: retry ? `إعادة محاولة الفاشلة في «${c.title}»` : `إرسال «${c.title}»`,
       /* B-11: الخادم يعيد محاولة صفوف التسليم الفاشلة وحدها لنفس الجمهور الأصلي؛ الناجح لا يُعاد،
          ومن ألغى البريد التسويقي بعد الإرسال الأول يُتجاوز في البريد. */
@@ -64,8 +74,8 @@ export default function Notifications({ me, toast }) {
         ? "تُعاد محاولة التسليمات الفاشلة فقط، لنفس المستلمين الأصليين — الرسائل الناجحة لا تُرسل مرة ثانية، ومن ألغى البريد التسويقي يُتجاوز. يُسجَّل باسمك في سجل التدقيق."
         : "الإرسال لا يمكن التراجع عنه. يُسجَّل باسمك في سجل التدقيق.",
       confirmLabel: retry ? "إعادة المحاولة" : "إرسال الآن",
-      run: async (r) => {
-        const res = await api.sendCampaign(c.id, r);
+      run: async () => {
+        const res = await api.sendCampaign(c.id);
         /* skipped في الرد رقم (عدد المتجاوَزين) أو true (الحملة نفسها لم
            تُنفَّذ) — كان يُقرأ بولياناً فيظهر «تُخطّيت: undefined». و202 =
            الإرسال مستمر في الخلفية (KANAF-ORD-0001 R15-13). */
@@ -81,12 +91,12 @@ export default function Notifications({ me, toast }) {
     });
 
   const doCancel = (c) =>
-    setReason({
+    setPending({
       title: `إلغاء «${c.title}»`,
       description: "الإلغاء متاح للمسودات والمجدولة فقط، لا لحملة نُفّذت.",
       confirmLabel: "إلغاء الحملة",
       danger: true,
-      run: async (r) => { await api.cancelCampaign(c.id, r); toast("أُلغيت الحملة."); reloadAll(); },
+      run: async () => { await api.cancelCampaign(c.id); toast("أُلغيت الحملة."); reloadAll(); },
     });
 
   const [sweeping, setSweeping] = useState(false);
@@ -110,9 +120,9 @@ export default function Notifications({ me, toast }) {
           <Button size="sm" variant="ghost" onClick={reloadAll}>
             <RefreshCw size={13} /> تحديث
           </Button>
-          <Button size="sm" onClick={() => setCompose(true)}>
-            <Plus size={13} /> حملة جديدة
-          </Button>
+          <Link to="/notifications/new">
+            <Button size="sm"><Plus size={13} /> حملة جديدة</Button>
+          </Link>
         </div>
       </PageTitle>
 
@@ -182,9 +192,9 @@ export default function Notifications({ me, toast }) {
                   </Td>
                   <Td>
                     <div className="flex gap-1.5 justify-end">
-                      <Button size="sm" variant="ghost" onClick={() => setDetail(c)}>
-                        <Eye size={12} /> التفاصيل
-                      </Button>
+                      <Link to={`/notifications/${c.id}`}>
+                        <Button size="sm" variant="ghost"><Eye size={12} /> التفاصيل</Button>
+                      </Link>
                       {retryable && (
                         <Button size="sm" variant="soft" onClick={() => doSend(c, true)}>
                           <RefreshCw size={12} /> إعادة محاولة الفاشلة
@@ -221,22 +231,15 @@ export default function Notifications({ me, toast }) {
         </div>
       </Card>
 
-      <Compose
-        open={compose}
-        onClose={() => setCompose(false)}
-        onDone={(msg) => { toast(msg); reloadAll(); }}
-      />
 
-      <DeliveriesModal campaign={detail} onClose={() => setDetail(null)} />
-
-      <ReasonPrompt
-        open={!!reason}
-        title={reason?.title || ""}
-        description={reason?.description}
-        confirmLabel={reason?.confirmLabel}
-        danger={reason?.danger}
-        onConfirm={(r) => reason.run(r)}
-        onClose={() => setReason(null)}
+      <ConfirmPrompt
+        open={!!pending}
+        title={pending?.title || ""}
+        description={pending?.description}
+        confirmLabel={pending?.confirmLabel}
+        danger={pending?.danger}
+        onConfirm={() => pending.run()}
+        onClose={() => setPending(null)}
       />
     </div>
   );
@@ -297,7 +300,40 @@ function SchedulerCard({ state, onSweep, sweeping }) {
    السبب: "أرسل للكل" في نظام فيه 4000 مستخدم قرار مختلف تماماً
    عنه في نظام فيه 12.
    ------------------------------------------------------------ */
-export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
+/* ------------------------------------------------------------
+   منتقي القنوات — KANAF-ORD-0013 §4.4 و§9.5. القنوات الخمس معروضة، والمعطّلة
+   (بلا اعتمادها) معروضة معطّلة بسببها كما يعيده الخادم، لا مخفية ولا مقبولة.
+   ------------------------------------------------------------ */
+export const ALL_CHANNELS = ["in_app", "email", "push", "whatsapp", "sms"];
+export function ChannelPicker({ value, onChange }) {
+  const av = useAsync(() => api.channelAvailability(), []);
+  const map = av.data?.channels || {};
+  return (
+    <div className="grid gap-2">
+      <div className="flex gap-2 flex-wrap">
+        {ALL_CHANNELS.map((ch) => {
+          const st = map[ch]; const off = st && !st.ok; const on = value.includes(ch);
+          return (
+            <button key={ch} type="button" disabled={off} title={off ? st.reason : ""}
+              onClick={() => onChange(on ? value.filter((x) => x !== ch) : [...value, ch])}
+              className="px-3 py-2 rounded-xl text-xs font-bold"
+              style={{
+                background: on ? C.tealSoft : C.surfaceAlt, color: off ? C.textFaint : on ? C.teal : C.textMuted,
+                border: `1px solid ${on ? C.teal : C.line}`, opacity: off ? 0.6 : 1, cursor: off ? "not-allowed" : "pointer",
+              }}>
+              {CHANNEL_LABEL[ch] || ch}{off ? " — معطّلة" : ""}
+            </button>
+          );
+        })}
+      </div>
+      {ALL_CHANNELS.filter((ch) => map[ch] && !map[ch].ok).map((ch) => (
+        <p key={ch} className="text-[11px]" style={{ color: C.textFaint }}>{CHANNEL_LABEL[ch] || ch}: {map[ch].reason}</p>
+      ))}
+    </div>
+  );
+}
+
+export function Compose({ open, onClose, onDone, initialAudience = "all", back, title: screenTitle = "حملة إشعارات جديدة", fixedUserIds = null, fixedLabel = "" }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [audience, setAudience] = useState(initialAudience);
@@ -306,7 +342,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
   const [optedOut, setOptedOut] = useState(null);
   const isMarketing = marketing || MARKETING_ONLY.has(audience);
   const [accountStatus, setAccountStatus] = useState("active");
-  const [userIds, setUserIds] = useState("");
+  const [userIds, setUserIds] = useState(fixedUserIds ? fixedUserIds.join(",") : "");
   const [channels, setChannels] = useState(["in_app"]);
   const [when, setWhen] = useState("now");        // now | schedule | draft
   const [scheduledAt, setScheduledAt] = useState("");
@@ -317,15 +353,17 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
 
   useEffect(() => {
     if (!open) return;
-    setTitle(""); setBody(""); setAudience(initialAudience); setAccountStatus("active");
+    setTitle(""); setBody(""); setAudience(fixedUserIds ? "selected_users" : initialAudience); setAccountStatus("active");
     setInactiveDays(30); setMarketing(false); setOptedOut(null);
-    setUserIds(""); setChannels(["in_app"]); setWhen("now"); setScheduledAt("");
+    setUserIds(fixedUserIds ? fixedUserIds.join(",") : ""); setChannels(["in_app"]); setWhen("now"); setScheduledAt("");
     setCount(null); setErr("");
   }, [open]);
 
   /* عدّ المستلمين — يُعاد الحساب كلما تغيّرت الفئة أو مرشِّحها. */
   useEffect(() => {
     if (!open) return;
+    /* قائمة مجمَّدة (ملف عضو أو صفحة الاشتراكات): العدد هو طولها، ويتحقق منه الخادم عند الإرسال (expectedCount). */
+    if (fixedUserIds) { setCount(fixedUserIds.length); return; }
     let alive = true;
     const params = { audience };
     if (audience === "account_status") params.status = accountStatus;
@@ -341,8 +379,6 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
     return () => { alive = false; };
   }, [open, audience, accountStatus, userIds, inactiveDays, isMarketing]);
 
-  const toggleChannel = (ch) =>
-    setChannels((cur) => (cur.includes(ch) ? cur.filter((x) => x !== ch) : [...cur, ch]));
 
   const submit = async () => {
     if (!title.trim() || !body.trim()) { setErr("العنوان والنص مطلوبان."); return; }
@@ -363,6 +399,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
     }
     if (audience === "inactive") payload.audienceFilter = { days: Number(inactiveDays) };
     if (isMarketing) payload.audienceFilter = { ...(payload.audienceFilter || {}), marketing: true };
+    if (fixedUserIds) { payload.audience = "selected_users"; payload.audienceFilter = { ...(payload.audienceFilter || {}), userIds: fixedUserIds }; payload.expectedCount = fixedUserIds.length; }
 
     setBusy(true); setErr("");
     try {
@@ -382,7 +419,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="حملة إشعارات جديدة" width={640}>
+    <Screen title={screenTitle} back={back}>
       <div className="grid gap-3">
         <Field label="العنوان">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} />
@@ -391,6 +428,11 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
           <Textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
         </Field>
 
+        {fixedUserIds ? (
+          <div className="rounded-xl px-3 py-2 text-xs" style={{ background: C.surfaceAlt, color: C.textMuted }}>
+            المستلمون: {fixedLabel || `${fixedUserIds.length} مستلم`}
+          </div>
+        ) : (<>
         <Field label="الفئة المستهدفة">
           <Select value={audience} onChange={(e) => setAudience(e.target.value)}>
             {AUDIENCES.map((a) => <option key={a} value={a}>{AUDIENCE_LABEL[a]}</option>)}
@@ -431,21 +473,10 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
             <Textarea rows={3} value={userIds} onChange={(e) => setUserIds(e.target.value)} />
           </Field>
         )}
+        </>)}
 
-        <Field label="القنوات" hint="«داخل التطبيق» يصل دائماً. البريد والإشعار قد يُتجاوزان لمن أوقفهما أو لم يشترك فيهما.">
-          <div className="flex gap-2 flex-wrap">
-            {CHANNELS.map((ch) => (
-              <button key={ch} type="button" onClick={() => toggleChannel(ch)}
-                className="px-3 py-2 rounded-xl text-xs font-bold"
-                style={{
-                  background: channels.includes(ch) ? C.tealSoft : C.surfaceAlt,
-                  color: channels.includes(ch) ? C.teal : C.textMuted,
-                  border: `1px solid ${channels.includes(ch) ? C.teal : C.line}`,
-                }}>
-                {CHANNEL_LABEL[ch]}
-              </button>
-            ))}
-          </div>
+        <Field label="القنوات" hint="«داخل التطبيق» يصل دائماً. البريد والإشعار قد يُتجاوزان لمن أوقفهما أو لم يشترك فيهما. والقناة المعطّلة لا تُقبل.">
+          <ChannelPicker value={channels} onChange={setChannels} />
         </Field>
 
         <Field label="التوقيت">
@@ -481,7 +512,7 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 
@@ -491,26 +522,25 @@ export function Compose({ open, onClose, onDone, initialAudience = "all" }) {
    البريد مُقنَّع من الخادم لا من الواجهة — إخفاء في المتصفح يبقى
    كشفاً في الشبكة.
    ------------------------------------------------------------ */
-function DeliveriesModal({ campaign, onClose }) {
-  const [fStatus, setFStatus] = useState("");
-  const [fChannel, setFChannel] = useState("");
-  const [offset, setOffset] = useState(0);
+function CampaignDetail({ id }) {
+  const [fStatus, setFStatus] = useQueryState("status", "");
+  const [fChannel, setFChannel] = useQueryState("channel", "");
+  const [offset, setOffset] = useQueryState("offset", 0);
   const limit = 100;
 
-  useEffect(() => { setFStatus(""); setFChannel(""); setOffset(0); }, [campaign?.id]);
-
+  const head = useAsync(() => api.getCampaign(id), [id]);
   const state = useAsync(
-    () => (campaign ? api.campaignDeliveries(campaign.id, { status: fStatus, channel: fChannel, limit, offset })
-                    : Promise.resolve(null)),
-    [campaign?.id, fStatus, fChannel, offset]
+    () => api.campaignDeliveries(id, { status: fStatus, channel: fChannel, limit, offset }),
+    [id, fStatus, fChannel, offset]
   );
-
-  if (!campaign) return null;
+  const campaign = head.data?.campaign;
+  if (head.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+  if (!campaign) return <Screen title="الحملة" back="/notifications"><ErrorBar error={head.error || "الحملة غير موجودة."} /></Screen>;
   const rows = state.data?.deliveries || [];
   const summary = state.data?.summary || [];
 
   return (
-    <Modal open onClose={onClose} title={`تفاصيل: ${campaign.title}`} width={860}>
+    <Screen title={`تفاصيل: ${campaign.title}`} back="/notifications" backLabel="الإشعارات والتسويق">
       <p className="text-[11px] leading-6 mb-3" style={{ color: C.textFaint }}>
         {AUDIENCE_LABEL[campaign.audience] || campaign.audience} ·{" "}
         {(campaign.channels || []).map((ch) => CHANNEL_LABEL[ch] || ch).join(" · ")} ·{" "}
@@ -556,7 +586,7 @@ function DeliveriesModal({ campaign, onClose }) {
             return (
               <tr key={r.id}>
                 <Td>
-                  <div>{r.user_name || "—"}</div>
+                  <div><UserLink id={r.user_id} name={r.user_name} /></div>
                   <div className="text-[10px]" style={{ color: C.textFaint }}>{r.user_email_masked}</div>
                 </Td>
                 <Td>{CHANNEL_LABEL[r.channel] || r.channel}</Td>
@@ -585,6 +615,6 @@ function DeliveriesModal({ campaign, onClose }) {
         <Button size="sm" variant="ghost" disabled={rows.length < limit}
           onClick={() => setOffset(offset + limit)}>التالي</Button>
       </div>
-    </Modal>
+    </Screen>
   );
 }

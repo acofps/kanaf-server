@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { api } from "../api.js";
+import { Link, navigate, useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 import { C, fmtDateTime, can, toIsoWithOffset } from "../theme.js";
 import {
-  Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Modal, Field, Input, Select, useAsync, ReasonPrompt,
+  Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Screen, Field, Input, Select, useAsync, ConfirmPrompt,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -21,9 +23,21 @@ const REASON_LABEL = {
 };
 const fmt = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
 
-export default function Discounts({ me, toast }) {
-  const [page, setPage] = useState(1);
-  const [creating, setCreating] = useState(false);
+export default function Discounts({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: «كود جديد» صفحة /discounts/new، واستخدامات الكود /discounts/<id> */
+  if (route[0] === "new") return <NewCodeScreen toast={toast} />;
+  if (route[0]) return <RedemptionsScreen id={route[0]} />;
+  return <DiscountList me={me} toast={toast} />;
+}
+
+function NewCodeScreen({ toast }) {
+  const plans = useAsync(() => api.listPlans(), []);
+  return <CreateModal open plans={plans.data?.plans || []} onClose={() => navigate("/discounts")}
+    onDone={() => { toast?.("أُنشئ الكود."); navigate("/discounts"); }} />;
+}
+
+function DiscountList({ me, toast }) {
+  const [page, setPage] = useQueryState("page", 1);
   const [toggle, setToggle] = useState(null);
   const state = useAsync(() => api.listDiscountCodes({ page }), [page]);
   const plans = useAsync(() => api.listPlans(), []);
@@ -34,7 +48,7 @@ export default function Discounts({ me, toast }) {
   return (
     <div>
       <PageTitle title="أكواد الخصم" subtitle="تُنشأ وتُفحص هنا. غير مربوطة بالدفع ولا بالفاتورة بعد — ربطها أمر مستقل.">
-        {canEdit && <Button size="sm" onClick={() => setCreating(true)}><span className="inline-flex items-center gap-1.5"><Plus size={14} /> كود جديد</span></Button>}
+        {canEdit && <Link to="/discounts/new"><Button size="sm"><span className="inline-flex items-center gap-1.5"><Plus size={14} /> كود جديد</span></Button></Link>}
       </PageTitle>
 
       <div className="rounded-xl px-4 py-3 mb-4 text-[12px] leading-6" style={{ background: C.amberSoft, color: C.amber }}>
@@ -56,7 +70,7 @@ export default function Discounts({ me, toast }) {
                     <Td><code className="font-bold" dir="ltr">{c.code}</code>{c.note && <div className="text-[11px]" style={{ color: C.textFaint }}>{c.note}</div>}</Td>
                     <Td>{c.kind === "percent" ? `${fmt(c.value)}%` : `${fmt(c.value)} ر.س`}</Td>
                     <Td className="text-[12px]">{c.valid_from ? fmtDateTime(c.valid_from) : "—"} ← {c.valid_until ? fmtDateTime(c.valid_until) : "مفتوح"}</Td>
-                    <Td>{c.used}{c.max_redemptions ? ` / ${c.max_redemptions}` : ""}</Td>
+                    <Td><Link to={`/discounts/${c.id}`} className="underline-offset-2 hover:underline" style={{ color: C.teal }}>{c.used}{c.max_redemptions ? ` / ${c.max_redemptions}` : ""}</Link></Td>
                     <Td className="text-[12px]">{c.plan_keys?.length ? c.plan_keys.join("، ") : "كل الباقات"}</Td>
                     <Td><Badge color={c.is_active ? "green" : "textMuted"}>{c.is_active ? "فعّال" : "موقوف"}</Badge></Td>
                     <Td className="text-[12px]">{fmtDateTime(c.created_at)}<div style={{ color: C.textFaint }}>{c.created_by_name}</div></Td>
@@ -69,11 +83,9 @@ export default function Discounts({ me, toast }) {
           )}
       </Card>
 
-      <CreateModal open={creating} plans={plans.data?.plans || []} onClose={() => setCreating(false)}
-        onDone={() => { setCreating(false); toast?.("أُنشئ الكود."); state.reload(); }} />
-      <ReasonPrompt open={!!toggle} title={toggle?.is_active ? `إيقاف ${toggle?.code}` : `تفعيل ${toggle?.code}`}
+      <ConfirmPrompt open={!!toggle} title={toggle?.is_active ? `إيقاف ${toggle?.code}` : `تفعيل ${toggle?.code}`}
         onClose={() => setToggle(null)}
-        onConfirm={async (reason) => { await api.setDiscountActive(toggle.id, !toggle.is_active, reason); setToggle(null); state.reload(); }} />
+        onConfirm={async () => { await api.setDiscountActive(toggle.id, !toggle.is_active); setToggle(null); state.reload(); }} />
     </div>
   );
 }
@@ -111,7 +123,7 @@ function CheckBox({ plans }) {
 }
 
 function CreateModal({ open, plans, onClose, onDone }) {
-  const [f, setF] = useState({ code: "", kind: "percent", value: "", validFrom: "", validUntil: "", maxRedemptions: "", planKeys: [], note: "", reason: "" });
+  const [f, setF] = useState({ code: "", kind: "percent", value: "", validFrom: "", validUntil: "", maxRedemptions: "", planKeys: [], note: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -127,7 +139,7 @@ function CreateModal({ open, plans, onClose, onDone }) {
     } catch (e) { setErr(e?.arabic || e?.code || "تعذّر الإنشاء."); } finally { setBusy(false); }
   };
   return (
-    <Modal open={open} onClose={onClose} title="كود خصم جديد">
+    <Screen title="كود خصم جديد" back="/discounts" backLabel="أكواد الخصم">
       <div className="grid gap-3">
         <Field label="الكود" hint="حروف لاتينية وأرقام و- و_ ، من 3 إلى 32. يُحفظ بحروف كبيرة."><Input value={f.code} onChange={set("code")} dir="ltr" /></Field>
         <div className="grid grid-cols-2 gap-3">
@@ -148,10 +160,35 @@ function CreateModal({ open, plans, onClose, onDone }) {
           </div>
         </Field>
         <Field label="ملاحظة (اختياري)"><Input value={f.note} onChange={set("note")} /></Field>
-        <Field label="السبب" hint="يُسجَّل في سجل الإجراءات."><Input value={f.reason} onChange={set("reason")} /></Field>
         <ErrorBar error={err} />
-        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!f.code || !f.value || !f.reason.trim()}>إنشاء</Button><Button variant="ghost" onClick={onClose}>إلغاء</Button></div>
+        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!f.code || !f.value}>إنشاء</Button><Button variant="ghost" onClick={onClose}>إلغاء</Button></div>
       </div>
-    </Modal>
+    </Screen>
+  );
+}
+
+/* KANAF-ORD-0013 §3.2/§4.2: من استعمل الكود — صفحة بعنوانها، والاسم رابط إلى الملف.
+   فارغة حتى يُربط الخصم بالدفع (أمر مستقل). */
+function RedemptionsScreen({ id }) {
+  const st = useAsync(() => api.discountRedemptions(id), [id]);
+  const rows = st.data?.redemptions || [];
+  return (
+    <Screen title="استخدامات الكود" back="/discounts" backLabel="أكواد الخصم">
+      <ErrorBar error={st.error} />
+      {st.loading ? <div className="py-8 flex justify-center"><Spinner /></div>
+        : rows.length === 0 ? <Empty>لم يُستعمل هذا الكود بعد. الخصم غير مربوط بالدفع حتى الآن.</Empty>
+        : (
+          <Table head={["العميل", "البريد", "الفاتورة", "الوقت"]}>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <Td><UserLink id={r.user_id} name={r.user_name} /></Td>
+                <Td dir="ltr">{r.user_email_masked}</Td>
+                <Td>{r.invoice_id ? <code className="text-[10px]">{r.invoice_id}</code> : "—"}</Td>
+                <Td>{fmtDateTime(r.redeemed_at)}</Td>
+              </tr>
+            ))}
+          </Table>
+        )}
+    </Screen>
   );
 }

@@ -21,7 +21,6 @@ export class ApiError extends Error {
   get arabic() {
     const map = {
       insufficient_role: "صلاحيتك لا تسمح بهذا الإجراء.",
-      reason_required: "لازم تكتب سبباً قبل هذا الإجراء.",
       invalid_credentials: "البريد أو كلمة المرور غير صحيحة.",
       session_expired: "انتهت الجلسة. سجّل الدخول من جديد.",
       cannot_enable_unapproved_content: "لا يمكن نشر محتوى غير معتمد سريرياً.",
@@ -51,6 +50,32 @@ export class ApiError extends Error {
       hold_not_open: "هذا الحدث لم يعد مفتوحاً.",
       session_minutes_must_be_5_to_60: "عمر الجلسة عدد صحيح من 5 إلى 60 دقيقة.",
       invalid_assistant_policy: "القيمة يجب أن تكون all_verified أو plus_only.",
+      /* KANAF-ORD-0013 §4.3 */
+      email_taken: "هذا البريد مسجّل لحساب آخر.",
+      invalid_email: "صيغة البريد غير صحيحة.",
+      invalid_name: "الاسم مطلوب، وبحد أقصى 80 حرفاً.",
+      invalid_saudi_phone: "الرقم السعودي تسع خانات ويبدأ بـ5، بلا الصفر ولا مفتاح الدولة.",
+      dial_country_mismatch: "رمز الاتصال لا يطابق الدولة المختارة.",
+      phone_incomplete: "أدخل رمز الدولة والرقم معاً.",
+      invalid_phone_length: "طول الرقم غير صالح.",
+      invalid_reminder_time: "الوقت بصيغة HH:MM بنظام 24 ساعة.",
+      invalid_timezone: "منطقة زمنية غير معروفة.",
+      nothing_to_update: "لا تغيير لحفظه.",
+      unknown_plan: "الباقة غير موجودة.",
+      invalid_period_end: "تاريخ انتهاء غير صالح.",
+      grant_requires_plan_and_period_end: "لا اشتراك سابق: المنح اليدوي يحتاج باقة وتاريخ انتهاء.",
+      unsupported_image: "نوع الصورة غير مدعوم (JPEG أو PNG أو WebP).",
+      image_too_large: "الصورة أكبر من الحد المسموح.",
+      channel_unavailable: "قناة معطّلة — اعتمادها غير مضبوط. أزلها أو اضبطها من «التكاملات».",
+      audience_count_changed: "تغيّر عدد المستلمين منذ عرضه — راجع العدد الجديد وأكّد من جديد.",
+      password_too_short: "الرقم السري خمسة عشر حرفاً على الأقل.",
+      invalid_duties: "اختر مهام إدارية أو مالية.",
+      invalid_pages: "صفحة غير معروفة.",
+      invalid_phone: "الجوال بصيغة دولية: + ثم 8 إلى 15 رقماً.",
+      email_already_exists: "هذا البريد مسجّل لحساب آخر.",
+      cannot_change_own_pages: "لا تقدر تضيّق صفحاتك بنفسك.",
+      no_open_deletion_request: "لا طلب حذف مفتوح لهذا الحساب — أُتمّ محوه سابقاً أو لم يطلب صاحبه الحذف.",
+      account_not_deactivated: "الحساب غير معطّل — المحو النهائي لحساب طلب صاحبه حذفه فقط.",
     };
     if (map[this.message]) return map[this.message];
     if (this.status === 403) return "صلاحيتك لا تسمح بهذا الإجراء.";
@@ -70,7 +95,7 @@ function refreshOnce() {
   return refreshing;
 }
 
-async function req(path, { method = "GET", body, params, retried = false } = {}) {
+async function req(path, { method = "GET", body, params, retried = false, raw = null } = {}) {
   const url = new URL(`${BASE}${path}`, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
@@ -80,14 +105,15 @@ async function req(path, { method = "GET", body, params, retried = false } = {})
   const res = await fetch(url.toString(), {
     method,
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
+    /* raw: ملف كما هو (صورة) بنوعه — KANAF-ORD-0013 §4.3 */
+    headers: { "Content-Type": raw ? (raw.type || "application/octet-stream") : "application/json" },
+    body: raw || (body ? JSON.stringify(body) : undefined),
   });
 
   if (res.status === 401 && !retried && path !== "/auth/refresh" && path !== "/auth/login") {
     try {
       await refreshOnce();
-      return req(path, { method, body, params, retried: true });
+      return req(path, { method, body, params, retried: true, raw });
     } catch {
       window.dispatchEvent(new CustomEvent("kanaf-admin-session-expired"));
       throw new ApiError(401, { error: "session_expired" });
@@ -116,22 +142,28 @@ export const api = {
   // KANAF-ORD-0008 §6 — غير مربوطة بالدفع
   listDiscountCodes: (params) => req("/discount-codes", { params }),
   createDiscountCode: (body) => req("/discount-codes", { method: "POST", body }),
-  setDiscountActive: (id, active, reason) => req(`/discount-codes/${id}/active`, { method: "POST", body: { active, reason } }),
+  setDiscountActive: (id, active) => req(`/discount-codes/${id}/active`, { method: "POST", body: { active } }),
   checkDiscountCode: (body) => req("/discount-codes/check", { method: "POST", body }),
+  discountRedemptions: (id) => req(`/discount-codes/${id}/redemptions`),
   // KANAF-ORD-0008 §7 — اعتمادات لا تكامل؛ لا مسار يعيد سرّاً
   listIntegrations: () => req("/integrations"),
-  setIntegrationKey: (service, key, value, reason) => req(`/integrations/${service}/${key}`, { method: "PUT", body: { value, reason } }),
-  deleteIntegrationKey: (service, key, reason) => req(`/integrations/${service}/${key}`, { method: "DELETE", body: { reason } }),
-  testIntegration: (service, reason) => req(`/integrations/${service}/test`, { method: "POST", body: { reason } }),
+  setIntegrationKey: (service, key, value) => req(`/integrations/${service}/${key}`, { method: "PUT", body: { value } }),
+  deleteIntegrationKey: (service, key) => req(`/integrations/${service}/${key}`, { method: "DELETE" }),
+  testIntegration: (service) => req(`/integrations/${service}/test`, { method: "POST" }),
   getUser: (id) => req(`/users/${id}`),
+  /* KANAF-ORD-0013 §4.3 — تعديل الملف يُسجَّل بالقيمتين، والسبب تلقائي من الخادم (ملحق القرار 1) */
+  editUserProfile: (id, body) => req(`/users/${id}/profile`, { method: "PATCH", body }),
+  setUserAvatar: (id, file) => req(`/users/${id}/avatar`, { method: "PUT", raw: file }),
+  deleteUserAvatar: (id) => req(`/users/${id}/avatar`, { method: "DELETE" }),
+  editUserSubscription: (id, body) => req(`/users/${id}/subscription`, { method: "PATCH", body }),
   getUserActions: (id) => req(`/users/${id}/actions`),
-  getUserSensitive: (id, reason) => req(`/users/${id}/sensitive`, { params: { reason } }),
-  suspendUser: (id, reason) => req(`/users/${id}/suspend`, { method: "POST", body: { reason } }),
-  restoreUser: (id, reason) => req(`/users/${id}/restore`, { method: "POST", body: { reason } }),
-  cancelSubscription: (id, reason, atPeriodEnd) =>
-    req(`/users/${id}/subscription/cancel`, { method: "POST", body: { reason, atPeriodEnd } }),
-  refundSubscription: (id, reason, amountSar) =>
-    req(`/users/${id}/subscription/refund`, { method: "POST", body: { reason, amountSar } }),
+  getUserSensitive: (id) => req(`/users/${id}/sensitive`),
+  suspendUser: (id) => req(`/users/${id}/suspend`, { method: "POST" }),
+  restoreUser: (id) => req(`/users/${id}/restore`, { method: "POST" }),
+  cancelSubscription: (id, atPeriodEnd) =>
+    req(`/users/${id}/subscription/cancel`, { method: "POST", body: { atPeriodEnd } }),
+  refundSubscription: (id, amountSar) =>
+    req(`/users/${id}/subscription/refund`, { method: "POST", body: { amountSar } }),
 
   /* ---------- الرسائل ---------- */
   // الصفحة تقول «أحدث 100 رسالة»؛ بلا pageSize كان الخادم يعيد 50 (افتراضيه)
@@ -142,8 +174,8 @@ export const api = {
   listContent: (params) => req("/content", { params }),
   getContentItem: (type, key) => req(`/content/${encodeURIComponent(type)}/${encodeURIComponent(key)}`),
   reviewContent: (id, status, notes) => req(`/content/${id}/review`, { method: "POST", body: { status, notes } }),
-  toggleContentLaunch: (id, enabled, reason) =>
-    req(`/content/${id}/toggle-launch`, { method: "POST", body: { enabled, reason } }),
+  toggleContentLaunch: (id, enabled) =>
+    req(`/content/${id}/toggle-launch`, { method: "POST", body: { enabled } }),
   updateContentPresentation: (type, key, patch) =>
     req(`/content/${encodeURIComponent(type)}/${encodeURIComponent(key)}/presentation`, { method: "PATCH", body: patch }),
   scheduleContent: (type, key, body) =>
@@ -152,11 +184,38 @@ export const api = {
 
   /* ---------- الإشعارات ---------- */
   listCampaigns: (params) => req("/notifications", { params }),
+  getCampaign: (id) => req(`/notifications/${id}`),
+  channelAvailability: () => req("/notifications-channels"),
+  /* KANAF-ORD-0013 §6 */
+  listSubscribers: (params) => req("/subscribers", { params }),
+  subscriberRecipients: (params) => req("/subscribers/recipients", { params }),
+  /* KANAF-ORD-0013 §5 */
+  createAdminDirect: (body) => req("/admin-users/direct", { method: "POST", body }),
+  updateAdminPages: (id, body) => req(`/admin-users/${id}/pages`, { method: "PATCH", body }),
+  /* KANAF-ORD-0013 §11 */
+  listSystemErrors: (params) => req("/system-errors", { params }),
+  clearSystemError: (id) => req(`/system-errors/${id}`, { method: "DELETE" }),
+  /* KANAF-ORD-0013 §7.8 */
+  userAutorenew: (id) => req(`/users/${id}/autorenew`),
+  disableUserAutorenew: (id) => req(`/users/${id}/autorenew/disable`, { method: "POST" }),
+  listAutorenewCycles: (params) => req("/autorenew", { params }),
+  /* KANAF-ORD-0013 §9 */
+  messageCatalog: () => req("/message-catalog"),
+  saveMessage: (key, body) => req(`/message-catalog/${key}`, { method: "PUT", body }),
+  resetMessage: (key) => req(`/message-catalog/${key}`, { method: "DELETE" }),
+  previewMessage: (key, body) => req(`/message-catalog/${key}/preview`, { method: "POST", body }),
+  testSendMessage: (key, body) => req(`/message-catalog/${key}/test-send`, { method: "POST", body }),
+  createTemplate: (body) => req("/message-templates", { method: "POST", body }),
+  updateTemplate: (id, body) => req(`/message-templates/${id}`, { method: "PUT", body }),
+  deleteTemplate: (id) => req(`/message-templates/${id}`, { method: "DELETE" }),
+  /* KANAF-ORD-0013 §8 */
+  listCancelledMembers: (params) => req("/cancelled-members", { params }),
+  purgeMember: (id) => req(`/users/${id}/purge`, { method: "POST", body: { confirm: "PURGE" } }),
   campaignDeliveries: (id, params) => req(`/notifications/${id}/deliveries`, { params }),
   audienceCount: (params) => req("/notifications/audience-count", { params }),
   createCampaign: (body) => req("/notifications", { method: "POST", body }),
-  sendCampaign: (id, reason) => req(`/notifications/${id}/send`, { method: "POST", body: { reason } }),
-  cancelCampaign: (id, reason) => req(`/notifications/${id}/cancel`, { method: "POST", body: { reason } }),
+  sendCampaign: (id) => req(`/notifications/${id}/send`, { method: "POST" }),
+  cancelCampaign: (id) => req(`/notifications/${id}/cancel`, { method: "POST" }),
   schedulerStatus: () => req("/notifications-scheduler/status"),
   runSweep: () => req("/notifications-scheduler/sweep", { method: "POST" }),
 
@@ -164,7 +223,7 @@ export const api = {
   listPlans: () => req("/plans"),
   createPlan: (body) => req("/plans", { method: "POST", body }),
   updatePlan: (id, body) => req(`/plans/${id}`, { method: "PATCH", body }),
-  togglePlanActive: (id, active, reason) => req(`/plans/${id}/toggle-active`, { method: "POST", body: { active, reason } }),
+  togglePlanActive: (id, active) => req(`/plans/${id}/toggle-active`, { method: "POST", body: { active } }),
   getTaxSettings: () => req("/tax-settings"),
   saveTaxSettings: (body) => req("/tax-settings", { method: "PUT", body }),
 
@@ -176,11 +235,6 @@ export const api = {
   creditNotePdfUrl: (id) => `${BASE}/credit-notes/${id}/pdf`,
 
   /* ---------- وصول الطوارئ وسجل الوصول ---------- */
-  requestBreakGlass: (targetUserId, reason) =>
-    req("/break-glass/request", { method: "POST", body: { targetUserId, reason } }),
-  listPendingBreakGlass: () => req("/break-glass/pending"),
-  approveBreakGlass: (id, hoursValid) =>
-    req(`/break-glass/${id}/approve`, { method: "POST", body: { hoursValid } }),
   listAccessLog: (targetUserId, page) => req("/access-log", { params: { targetUserId, page } }),
 
   /* ---------- حسابات الإدارة ---------- */
@@ -189,8 +243,8 @@ export const api = {
      دائماً يُسلَّم بقناة خارج النظام. */
   inviteAdminUser: (body) => req("/admin-users", { method: "POST", body }),
   updateAdminUser: (id, body) => req(`/admin-users/${id}`, { method: "PATCH", body }),
-  resendInvite: (id, reason) => req(`/admin-users/${id}/resend-invite`, { method: "POST", body: { reason } }),
-  resetAdminPassword: (id, reason) => req(`/admin-users/${id}/reset-password`, { method: "POST", body: { reason } }),
+  resendInvite: (id) => req(`/admin-users/${id}/resend-invite`, { method: "POST" }),
+  resetAdminPassword: (id) => req(`/admin-users/${id}/reset-password`, { method: "POST" }),
 
   /* ---------- قبول الدعوة وضبط كلمة المرور — بلا مصادقة ---------- */
   validateSetupToken: (token) => req("/setup/validate", { params: { token } }),
@@ -202,23 +256,23 @@ export const api = {
   billingSubscriptions: (params) => req("/billing/subscriptions", { params }),
   billingPayments: (params) => req("/billing/payments", { params }),
   billingRefunds: (params) => req("/billing/refunds", { params }),
-  refundPayment: (id, reason, amountSar) =>
-    req(`/billing/payments/${id}/refund`, { method: "POST", body: { reason, amountSar } }),
-  reconcilePayment: (id, reason) => req(`/billing/payments/${id}/reconcile`, { method: "POST", body: { reason } }),
+  refundPayment: (id, amountSar) =>
+    req(`/billing/payments/${id}/refund`, { method: "POST", body: { amountSar } }),
+  reconcilePayment: (id) => req(`/billing/payments/${id}/reconcile`, { method: "POST" }),
   webhookEvents: (params) => req("/billing/webhook-events", { params }),
   webhookEvent: (id) => req(`/billing/webhook-events/${id}`),
-  replayWebhookEvent: (id, reason) => req(`/billing/webhook-events/${id}/replay`, { method: "POST", body: { reason } }),
+  replayWebhookEvent: (id) => req(`/billing/webhook-events/${id}/replay`, { method: "POST" }),
   billingIntegrity: () => req("/billing/integrity"),
   paymentHolds: (status) => req("/billing/payment-holds", { params: { status } }),
-  recheckPaymentHold: (id, reason) => req(`/billing/payment-holds/${id}/recheck`, { method: "POST", body: { reason } }),
-  dismissPaymentHold: (id, reason) => req(`/billing/payment-holds/${id}/dismiss`, { method: "POST", body: { reason } }),
+  recheckPaymentHold: (id) => req(`/billing/payment-holds/${id}/recheck`, { method: "POST" }),
+  dismissPaymentHold: (id) => req(`/billing/payment-holds/${id}/dismiss`, { method: "POST" }),
   userBilling: (id) => req(`/billing/users/${id}/billing`),
 
   /* ---------- الإعدادات ---------- */
   settingsOverview: () => req("/settings/overview"),
   listAppSettings: () => req("/app-settings"),
-  updateAppSetting: (key, value, reason) =>
-    req(`/app-settings/${encodeURIComponent(key)}`, { method: "PUT", body: { value, reason } }),
+  updateAppSetting: (key, value) =>
+    req(`/app-settings/${encodeURIComponent(key)}`, { method: "PUT", body: { value } }),
   getBillingSettings: () => req("/billing/settings"),
   saveBillingSettings: (body) => req("/billing/settings", { method: "PUT", body }),
 

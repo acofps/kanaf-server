@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { Loader2, X, AlertTriangle, Search } from "lucide-react";
+import { Loader2, X, AlertTriangle, Search, ArrowRight } from "lucide-react";
 import { C } from "./theme.js";
+import { Link } from "./router.js";
 
 /* ============================================================
    مكوّنات مشتركة — تُبنى مرة وتُستخدم في كل الشاشات، فلا يختلف
@@ -162,23 +163,53 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
 }
 
 /* ------------------------------------------------------------
-   مطالبة السبب.
-
-   كل مسار حساس في الخادم يشترط سبباً مكتوباً ويسجّله **قبل**
-   تنفيذ القراءة. هذا المكوّن يجعل ذلك ظاهراً للمسؤول بدل أن يظهر
-   له خطأ 400 غامض.
+   شاشة — KANAF-ORD-0013 §3.2: ما كان نافذة منبثقة للمحتوى (ملف،
+   تفاصيل، تحرير، إنشاء) صار صفحة بعنوانها. «رجوع» رابط حقيقي إلى
+   الصفحة الأم، فيعمل معه زر الرجوع في المتصفّح والفتح في تبويب.
+   تبقى Modal لصناديق التأكيد القصيرة وحدها (ConfirmPrompt وما شابه).
    ------------------------------------------------------------ */
-export function ReasonPrompt({ open, title, description, confirmLabel = "تأكيد", danger, onConfirm, onClose }) {
-  const [reason, setReason] = useState("");
+export function Screen({ title, back, backLabel = "رجوع", children, actions }) {
+  /* عنوان التبويب = عنوان الشاشة (KANAF-ORD-0014 §2.7) — يُحفظ في المفضّلة باسم ما فيه. */
+  useEffect(() => { if (title) document.title = `${title} · لوحة تنفس بحرية`; }, [title]);
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          {back && (
+            <Link to={back} className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold shrink-0"
+              style={{ color: C.textMuted, background: C.surface, border: `1px solid ${C.line}` }}>
+              <ArrowRight size={13} /> {backLabel}
+            </Link>
+          )}
+          <h2 className="text-lg font-bold truncate" style={{ color: C.text }}>{title}</h2>
+        </div>
+        {actions && <div className="flex gap-2">{actions}</div>}
+      </div>
+      <Card>{children}</Card>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------
+   تأكيد بنقرة — ملحق KANAF-ORD-0013، قرار المالك 1.
+
+   كانت هنا «مطالبة السبب» (ReasonPrompt): حقل سبب إلزامي قبل كل إجراء.
+   أُلغيت بنصّ المالك: «ولا في أي مكان اكتب السبب». السبب يولّده الخادم
+   من الإجراء وهدفه (admin/auto-reason.js)، والأثر الحقيقي باقٍ: من،
+   ومتى، والقيمة قبل، والقيمة بعد، وعنوان IP.
+
+   يبقى تأكيد بنقرة واحدة للأفعال التي كانت تمرّ بالمطالبة — لا كتابة
+   فيه — حتى لا تُنفَّذ نقرةٌ خاطئة استرداداً أو حذفاً.
+   ------------------------------------------------------------ */
+export function ConfirmPrompt({ open, title, description, confirmLabel = "تأكيد", danger, onConfirm, onClose }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  useEffect(() => { if (open) { setReason(""); setErr(""); setBusy(false); } }, [open]);
+  useEffect(() => { if (open) { setErr(""); setBusy(false); } }, [open]);
 
   const submit = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
     setBusy(true); setErr("");
-    try { await onConfirm(reason.trim()); onClose(); }
+    try { await onConfirm(); onClose(); }
     catch (e) { setErr(e?.arabic || "تعذّر التنفيذ."); }
     finally { setBusy(false); }
   };
@@ -186,9 +217,6 @@ export function ReasonPrompt({ open, title, description, confirmLabel = "تأك�
   return (
     <Modal open={open} onClose={onClose} title={title}>
       {description && <p className="text-xs leading-6 mb-3" style={{ color: C.textMuted }}>{description}</p>}
-      <Field label="السبب" hint="يُحفظ في سجل التدقيق باسمك ووقت التنفيذ، ولا يمكن تعديله لاحقاً.">
-        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
-      </Field>
       <ErrorBar error={err} />
       <div className="flex gap-2 mt-4">
         <Button onClick={submit} busy={busy} variant={danger ? "danger" : "primary"}>{confirmLabel}</Button>

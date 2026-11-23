@@ -15,7 +15,9 @@ import { serviceEmailExtra } from "./email-template.js";
    يُبتلع ولا يُفشل الإرسال — ويُطبع سطرٌ بلا عنوان ولا نص.
    ============================================================ */
 
-export const SYSTEM_MESSAGE_KINDS = ["email_verification", "password_reset", "existing_account_notice", "daily_reminder"];
+export const SYSTEM_MESSAGE_KINDS = ["email_verification", "password_reset", "existing_account_notice", "daily_reminder",
+  // KANAF-ORD-0013 §7 (الترحيل 025 وسّع قيد النوع)
+  "renewal_notice", "renewal_succeeded", "renewal_failed", "renewal_stopped"];
 
 /** يكتب صفاً واحداً. userId أو email (يُحلّ إلى المستخدم داخل الاستعلام). لا يرمي أبداً. */
 export async function logSystemMessage({ userId = null, email = null, kind, channel, status, errorCode = null }) {
@@ -54,4 +56,11 @@ export async function sendSystemEmail(kind, to, subject, text, extra = {}) {
     errorCode: result && result.dev ? "mail_not_configured" : null,
   });
   return result;
+}
+
+/* KANAF-ORD-0013 §9: رسالة نظام من السجلّ (النص والقالب كما حفظهما المالك، أو الافتراضي). */
+export async function sendSystemMessageEmail(key, to, vars) {
+  const { renderMessage } = await import("./messages.js");
+  const m = await renderMessage(key, vars);
+  return sendSystemEmail(key, to, m.subject, m.text, m.extra);
 }

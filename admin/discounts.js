@@ -40,7 +40,7 @@ discountsRouter.get("/discount-codes", requireAdminAuth, requirePermission("disc
 discountsRouter.get("/discount-codes/:id/redemptions", requireAdminAuth, requirePermission("discounts:view"), requireUuidParam("id"), async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT r.id, r.redeemed_at, r.invoice_id, u.name AS user_name,
+      `SELECT r.id, r.redeemed_at, r.invoice_id, r.user_id, u.name AS user_name, -- user_id: §4.2 الاسم رابط
               regexp_replace(u.email, '(^.).*(@.*$)', '\\1***\\2') AS user_email_masked
        FROM discount_code_redemptions r JOIN users u ON u.id = r.user_id
        WHERE r.discount_code_id = $1 ORDER BY r.redeemed_at DESC LIMIT 200`, [req.params.id]);

@@ -112,7 +112,8 @@ export function isMarketingCampaign(campaign) {
   return MARKETING_AUDIENCES.includes(campaign?.audience) || campaign?.audience_filter?.marketing === true;
 }
 
-export const VALID_CHANNELS = ["in_app", "email", "push"];
+/* sms وwhatsapp: KANAF-ORD-0013 §4.4 (الترحيل 021). القبول في حملة يمرّ أيضاً بـchannelAvailability. */
+export const VALID_CHANNELS = ["in_app", "email", "push", "sms", "whatsapp"];
 
 function audienceParams(audience, filter = {}) {
   if (audience === "selected_users") {
@@ -364,6 +365,11 @@ async function deliverOne(delivery, user, campaign) {
       result = await deliverEmail(delivery, user, campaign);
     } else if (delivery.channel === "push") {
       result = await deliverPush(delivery, campaign);
+    } else if (delivery.channel === "whatsapp") {
+      result = await deliverWhatsApp(delivery, campaign);
+    } else if (delivery.channel === "sms") {
+      // لا مزوّد محدَّداً — لا يصل إلى هنا إلا لو تغيّر الإعداد بعد إنشاء الحملة. فشل صريح لا صامت.
+      result = { status: "failed", errorCode: "sms_provider_not_configured", errorDetail: "مزوّد الرسائل النصية لم يُحدَّد" };
     } else {
       result = { status: "failed", errorCode: "unknown_channel", errorDetail: delivery.channel };
     }
@@ -434,6 +440,42 @@ async function deliverEmail(delivery, user, campaign) {
   }
   // sent لا delivered: SMTP قبِل الرسالة، ولا نعرف مصيرها بعدها.
   return { status: "sent" };
+}
+
+/* واتساب — WhatsApp Cloud API (KANAF-ORD-0013 §4.4). المسار نفسه الذي يفحصه
+   «فحص الاتصال» في التكاملات (graph.facebook.com). رسالة نصية للرقم المحفوظ في
+   ملف العميل. ⚠️ قيد ميتا: الرسالة الحرة خارج نافذة 24 ساعة من آخر رسالة من
+   العميل تُرفض (قالب معتمد مطلوب) — فتُسجَّل failed برمز المزوّد، لا sent كاذبة. */
+async function deliverWhatsApp(delivery, campaign) {
+  const { integrationValues } = await import("./channels.js");
+  const v = await integrationValues("whatsapp");
+  if (!v.access_token || !v.phone_number_id) {
+    return { status: "failed", errorCode: "whatsapp_not_configured", errorDetail: "تكامل واتساب غير مضبوط" };
+  }
+  const { rows } = await query(`SELECT phone_country_code, phone_national FROM user_profile WHERE user_id = $1`, [delivery.user_id]);
+  const p = rows[0];
+  if (!p?.phone_country_code || !p?.phone_national) {
+    return { status: "skipped", errorCode: "no_phone", errorDetail: "لا رقم جوال في ملف العميل" };
+  }
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const r = await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(v.phone_number_id)}/messages`, {
+      method: "POST", signal: ctrl.signal,
+      headers: { Authorization: `Bearer ${v.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp", to: `${p.phone_country_code}${p.phone_national}`, type: "text",
+        text: { body: `${campaign.title}\n\n${campaign.body}`.slice(0, 4096) },
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      return { status: "failed", errorCode: `whatsapp_${data?.error?.code || r.status}`, errorDetail: String(data?.error?.message || `HTTP ${r.status}`).slice(0, 300) };
+    }
+    return { status: "sent", providerMessageId: data?.messages?.[0]?.id || null };
+  } catch (err) {
+    return { status: "failed", errorCode: err?.name === "AbortError" ? "whatsapp_timeout" : "whatsapp_network", errorDetail: String(err?.message || err).slice(0, 300) };
+  } finally { clearTimeout(t); }
 }
 
 async function deliverPush(delivery, campaign) {

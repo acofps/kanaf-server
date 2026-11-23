@@ -1,4 +1,5 @@
 import { query, pool } from "../db/pool.js";
+import { effectiveDefinition } from "./messages.js";
 import { notifyUser } from "./service.js";
 import { sendPushToUser, isPushConfigured } from "./push.js";
 import { logSystemMessage } from "./system-log.js";
@@ -83,8 +84,7 @@ const REMINDER_BATCH_LIMIT = 200;
    الغد ولا تُجمَع. */
 const REMINDER_WINDOW_SECONDS = 3 * 60 * 60;
 
-const REMINDER_TITLE = "وقت تسجيل يومك";
-const REMINDER_BODY = "دقيقة وحدة بس: سجّل مزاجك ونومك وطاقتك، وخلّ بوصلتك تقرأ أسبوعك صح.";
+/* النص الافتراضي للتذكير انتقل إلى notifications/messages.js (KANAF-ORD-0013 §9). */
 
 /**
  * من يستحق تذكيراً الآن؟
@@ -154,6 +154,10 @@ async function findDueUsers(limit) {
  * مرساة عدم التكرار الثانية.
  */
 async function remindOne(row) {
+  /* KANAF-ORD-0013 §9: العنوان والنص والقنوات من سجلّ الرسائل (الافتراضي = النص الثابت السابق).
+     داخل التطبيق إلزامي — هو مرساة منع التكرار؛ وPush قابل للإطفاء. */
+  const def = await effectiveDefinition("daily_reminder");
+  const REMINDER_TITLE = def.subject, REMINDER_BODY = def.body;
   const dedupKey = `daily_checkin:${row.local_date instanceof Date
     ? row.local_date.toISOString().slice(0, 10)
     : String(row.local_date).slice(0, 10)}`;
@@ -181,6 +185,10 @@ async function remindOne(row) {
 
      وهذا هو الفرق الذي أُصلح في المرحلة 4 بين sent و delivered:
      قبول القناة ليس وصولاً، وتسميته وصولاً هي الكذبة نفسها. */
+  if (!def.channels.includes("push")) {
+    await logSystemMessage({ userId: row.user_id, kind: "daily_reminder", channel: "push", status: "skipped", errorCode: "channel_disabled" });
+    return { userId: row.user_id, status: "inbox_only", pushReason: "channel_disabled" };
+  }
   if (!isPushConfigured()) {
     await logSystemMessage({ userId: row.user_id, kind: "daily_reminder", channel: "push", status: "skipped", errorCode: "push_not_configured" });
     return { userId: row.user_id, status: "inbox_only", pushReason: "push_not_configured" };

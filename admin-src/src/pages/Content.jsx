@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { Check, X, Power, CalendarClock, Pencil, History, Rocket } from "lucide-react";
 import { api } from "../api.js";
+import { Link, navigate, useQueryState } from "../router.js";
 import { C, CONTENT_TYPE_LABEL, REVIEW_LABEL, can, fmtDateTime, toIsoWithOffset, toLocalInput } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Select, SearchBox, Spinner, Empty,
-  ErrorBar, Modal, ReasonPrompt, Table, Td, Pager, useAsync,
+  ErrorBar, Modal, Screen, ConfirmPrompt, Table, Td, Pager, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -25,18 +26,33 @@ import {
 const TYPES = ["", "journey", "overlay", "notebook", "cbt_tool", "library_article"];
 const STATUSES = ["", "review_required", "approved", "rejected", "retired"];
 
-export default function Content({ me, toast }) {
-  const [type, setType] = useState("");
-  const [status, setStatus] = useState("");
-  const [published, setPublished] = useState("");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+export default function Content({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: التحرير والجدولة والسجل صفحات: /content/<type>/<key>/<edit|schedule|history> */
+  if (route.length >= 3) return <ContentItemScreen type={route[0]} ckey={route[1]} action={route[2]} me={me} toast={toast} />;
+  return <ContentList me={me} toast={toast} />;
+}
+
+function ContentItemScreen({ type, ckey, action, me, toast }) {
+  const st = useAsync(() => api.getContentItem(type, ckey), [type, ckey]);
+  const item = st.data?.item;
+  const done = (msg) => { toast(msg); navigate("/content"); };
+  const close = () => navigate("/content");
+  if (st.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+  if (!item) return <Screen title="المحتوى" back="/content"><ErrorBar error={st.error || "العنصر غير موجود."} /></Screen>;
+  if (action === "edit") return <EditPresentation item={item} me={me} onClose={close} onDone={() => done("حُدّث العرض.")} />;
+  if (action === "schedule") return <ScheduleContent item={item} onClose={close} onDone={() => done("حُفظت الجدولة.")} />;
+  return <HistoryScreen item={item} onClose={close} />;
+}
+
+function ContentList({ me, toast }) {
+  const [type, setType] = useQueryState("type", "");
+  const [status, setStatus] = useQueryState("status", "");
+  const [published, setPublished] = useQueryState("published", "");
+  const [search, setSearch] = useQueryState("q", "");
+  const [page, setPage] = useQueryState("page", 1);
   const pageSize = 25;
 
-  const [reason, setReason] = useState(null);   // { title, description, danger, run }
-  const [editing, setEditing] = useState(null);
-  const [scheduling, setScheduling] = useState(null);
-  const [history, setHistory] = useState(null);
+  const [pending, setPending] = useState(null);   // { title, description, danger, run }
   const [bulk, setBulk] = useState(false);
   const [err, setErr] = useState("");
 
@@ -136,39 +152,39 @@ export default function Content({ me, toast }) {
                     <Td>
                       <div className="flex gap-1.5 flex-wrap justify-end">
                         {canReview && it.clinical_review_status !== "approved" && (
-                          <Button size="sm" variant="good" onClick={() => setReason({
+                          <Button size="sm" variant="good" onClick={() => setPending({
                             title: `اعتماد «${it.title || it.content_key}»`,
                             description: "اعتماد سريري يعني أن هذا النص صالح للعرض على شخص قد يكون في ضائقة.",
-                            run: (r) => run(() => api.reviewContent(it.id, "approved", r), "اعتُمد المحتوى."),
+                            run: () => run(() => api.reviewContent(it.id, "approved"), "اعتُمد المحتوى."),
                           })}><Check size={12} /> اعتماد</Button>
                         )}
                         {canReview && it.clinical_review_status !== "rejected" && (
-                          <Button size="sm" variant="ghost" onClick={() => setReason({
+                          <Button size="sm" variant="ghost" onClick={() => setPending({
                             title: `رفض «${it.title || it.content_key}»`,
                             description: "الرفض ينزل مفتاح الإطلاق معه، ولا يمسّه النشر الجماعي بعدها.",
                             danger: true,
-                            run: (r) => run(() => api.reviewContent(it.id, "rejected", r), "رُفض المحتوى."),
+                            run: () => run(() => api.reviewContent(it.id, "rejected"), "رُفض المحتوى."),
                           })}><X size={12} /> رفض</Button>
                         )}
                         {canReview && it.clinical_review_status === "approved" && (
                           <Button size="sm" variant={it.launch_enabled ? "warn" : "primary"}
-                            onClick={() => setReason({
+                            onClick={() => setPending({
                               title: it.launch_enabled ? `إيقاف «${it.title}»` : `نشر «${it.title}»`,
                               description: it.launch_enabled
                                 ? "سيختفي من التطبيق فوراً لكل المستخدمين."
                                 : "سيظهر في التطبيق فوراً لكل من تسمح له طبقته.",
                               danger: it.launch_enabled,
-                              run: (r) => run(
-                                () => api.toggleContentLaunch(it.id, !it.launch_enabled, r),
+                              run: () => run(
+                                () => api.toggleContentLaunch(it.id, !it.launch_enabled),
                                 it.launch_enabled ? "أُوقف المحتوى." : "نُشر المحتوى."
                               ),
                             })}>
                             <Power size={12} /> {it.launch_enabled ? "إيقاف" : "نشر"}
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={() => setEditing(it)}><Pencil size={12} /></Button>
-                        {canSchedule && <Button size="sm" variant="ghost" onClick={() => setScheduling(it)}><CalendarClock size={12} /></Button>}
-                        <Button size="sm" variant="ghost" onClick={() => setHistory(it)}><History size={12} /></Button>
+                        <Link to={`/content/${encodeURIComponent(it.content_type)}/${encodeURIComponent(it.content_key)}/edit`} title="تحرير"><Button size="sm" variant="ghost"><Pencil size={12} /></Button></Link>
+                        {canSchedule && <Link to={`/content/${encodeURIComponent(it.content_type)}/${encodeURIComponent(it.content_key)}/schedule`} title="جدولة"><Button size="sm" variant="ghost"><CalendarClock size={12} /></Button></Link>}
+                        <Link to={`/content/${encodeURIComponent(it.content_type)}/${encodeURIComponent(it.content_key)}/history`} title="السجل"><Button size="sm" variant="ghost"><History size={12} /></Button></Link>
                       </div>
                     </Td>
                   </tr>
@@ -179,22 +195,17 @@ export default function Content({ me, toast }) {
           )}
       </Card>
 
-      <ReasonPrompt
-        open={!!reason}
-        title={reason?.title || ""}
-        description={reason?.description}
-        danger={reason?.danger}
-        onConfirm={(r) => reason.run(r)}
-        onClose={() => setReason(null)}
+      <ConfirmPrompt
+        open={!!pending}
+        title={pending?.title || ""}
+        description={pending?.description}
+        danger={pending?.danger}
+        onConfirm={() => pending.run()}
+        onClose={() => setPending(null)}
       />
 
-      {editing && <EditPresentation item={editing} me={me} onClose={() => setEditing(null)}
-        onDone={() => { setEditing(null); list.reload(); toast("حُدّث العرض."); }} />}
 
-      {scheduling && <ScheduleContent item={scheduling} onClose={() => setScheduling(null)}
-        onDone={() => { setScheduling(null); list.reload(); toast("حُفظت الجدولة."); }} />}
 
-      {history && <HistoryModal item={history} onClose={() => setHistory(null)} />}
 
       <BulkPublish open={bulk} onClose={() => setBulk(false)}
         onDone={(n) => { setBulk(false); list.reload(); toast(`نُشر ${n} عنصراً.`); }} />
@@ -214,7 +225,6 @@ function EditPresentation({ item, me, onClose, onDone }) {
   const [category, setCategory] = useState(item.category || "");
   const [order, setOrder] = useState(item.display_order ?? 0);
   const [tier, setTier] = useState(item.subscription_tier || "free");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const canTier = can(me, "content:change_tier");
@@ -222,7 +232,7 @@ function EditPresentation({ item, me, onClose, onDone }) {
   const save = async () => {
     setBusy(true); setErr("");
     try {
-      const patch = { title, category, displayOrder: Number(order), reason };
+      const patch = { title, category, displayOrder: Number(order) };
       if (canTier && tier !== item.subscription_tier) patch.subscriptionTier = tier;
       await api.updateContentPresentation(item.content_type, item.content_key, patch);
       onDone();
@@ -231,7 +241,7 @@ function EditPresentation({ item, me, onClose, onDone }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={`تحرير «${item.content_key}»`}>
+    <Screen title={`تحرير «${item.content_key}»`} back="/content" backLabel="المحتوى">
       <div className="space-y-3">
         <Field label="العنوان"><Input value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
         <Field label="التصنيف"><Input value={category} onChange={(e) => setCategory(e.target.value)} /></Field>
@@ -242,14 +252,13 @@ function EditPresentation({ item, me, onClose, onDone }) {
             <option value="plus">تنفس+</option>
           </Select>
         </Field>
-        <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="اختياري" /></Field>
         <ErrorBar error={err} />
         <div className="flex gap-2 pt-1">
           <Button onClick={save} busy={busy}>حفظ</Button>
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 
@@ -266,7 +275,6 @@ function EditPresentation({ item, me, onClose, onDone }) {
 function ScheduleContent({ item, onClose, onDone }) {
   const [pub, setPub] = useState(toLocalInput(item.publish_at));
   const [unpub, setUnpub] = useState(toLocalInput(item.unpublish_at));
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -276,7 +284,6 @@ function ScheduleContent({ item, onClose, onDone }) {
       await api.scheduleContent(item.content_type, item.content_key, {
         publishAt: toIsoWithOffset(pub),
         unpublishAt: toIsoWithOffset(unpub),
-        reason,
       });
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّرت الجدولة."); }
@@ -284,7 +291,7 @@ function ScheduleContent({ item, onClose, onDone }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={`جدولة «${item.content_key}»`}>
+    <Screen title={`جدولة «${item.content_key}»`} back="/content" backLabel="المحتوى">
       <div className="space-y-3">
         <p className="text-xs leading-6" style={{ color: C.textMuted }}>
           الجدولة وحدها لا تنشر — لا بد أن يكون العنصر معتمداً ومفتاح الإطلاق مرفوعاً أيضاً.
@@ -295,7 +302,6 @@ function ScheduleContent({ item, onClose, onDone }) {
         <Field label="يختفي عند" hint="اتركه فارغاً ليبقى بلا نهاية.">
           <Input type="datetime-local" value={unpub} onChange={(e) => setUnpub(e.target.value)} />
         </Field>
-        <Field label="السبب"><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="اختياري" /></Field>
         <ErrorBar error={err} />
         <div className="flex gap-2 pt-1">
           <Button onClick={save} busy={busy}>حفظ الجدولة</Button>
@@ -303,12 +309,12 @@ function ScheduleContent({ item, onClose, onDone }) {
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 
 /** سجل تغييرات العنصر — يُكتب صف لكل تغيير ولا يُعدَّل ولا يُحذف. */
-function HistoryModal({ item, onClose }) {
+function HistoryScreen({ item, onClose }) {
   const h = useAsync(() => api.getContentItem(item.content_type, item.content_key), [item.content_key]);
   const rows = h.data?.history || [];
   const KIND = {
@@ -316,7 +322,7 @@ function HistoryModal({ item, onClose }) {
     schedule: "جدولة", tier_change: "تغيير طبقة", presentation: "تحرير عرض", seed: "بذر",
   };
   return (
-    <Modal open onClose={onClose} title={`سجل «${item.content_key}»`} width={640}>
+    <Screen title={`سجل «${item.content_key}»`} back="/content" backLabel="المحتوى">
       {h.loading ? <div className="py-6 flex justify-center"><Spinner /></div>
         : rows.length === 0 ? <Empty>ما فيه تغييرات مسجّلة.</Empty>
         : (
@@ -335,7 +341,7 @@ function HistoryModal({ item, onClose }) {
             ))}
           </div>
         )}
-    </Modal>
+    </Screen>
   );
 }
 
@@ -347,15 +353,13 @@ function HistoryModal({ item, onClose }) {
    ------------------------------------------------------------ */
 function BulkPublish({ open, onClose, onDone }) {
   const [scope, setScope] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const submit = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     setBusy(true); setErr("");
     try {
-      const body = { reason: reason.trim() };
+      const body = {};
       if (scope) body.type = scope; else body.all = true;
       const r = await api.bulkPublish(body);
       onDone(r.published ?? 0);
@@ -377,9 +381,6 @@ function BulkPublish({ open, onClose, onDone }) {
             <option value="">كل المحتوى</option>
             {TYPES.filter(Boolean).map((t) => <option key={t} value={t}>{CONTENT_TYPE_LABEL[t]}</option>)}
           </Select>
-        </Field>
-        <Field label="السبب" hint="يُكتب في سجل النسخ لكل عنصر وفي سجل التدقيق.">
-          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <ErrorBar error={err} />
         <div className="flex gap-2">

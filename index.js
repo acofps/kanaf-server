@@ -6,6 +6,16 @@ import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 import Anthropic from "@anthropic-ai/sdk";
 import { adminRouter } from "./admin/routes.js";
+import { userEditRouter } from "./admin/user-edit.js";
+import { ADMIN_MIN_PASSWORD_LENGTH } from "./admin/password-rule.js";
+import { subscribersRouter } from "./admin/subscribers.js";
+import { recordError } from "./ops/error-log.js";
+import { systemErrorsRouter } from "./admin/system-errors.js";
+import { membersRouter } from "./admin/members.js";
+import { messageCatalogRouter } from "./admin/message-catalog.js";
+import { adminAutorenewRouter } from "./admin/autorenew.js";
+import { autoReasonMiddleware } from "./admin/auto-reason.js";
+import { autorenewRouter } from "./billing/autorenew-routes.js";
 import { paymentsRouter } from "./payments/routes.js";
 import { authRouter } from "./auth/routes.js";
 import { sendEmail, verifySmtpConnection } from "./mail/send.js";
@@ -389,7 +399,7 @@ function containsCrisisSignal(text = "") {
   return false;
 }
 
-const CHAT_SYSTEM_PROMPT = `أنت مساعد تثقيفي داعم داخل تطبيق للصحة النفسية اسمه Kanaf، اسمك "رفيق". قواعدك صارمة ولا يجوز كسرها:
+const CHAT_SYSTEM_PROMPT = `أنت مساعد تثقيفي داعم داخل تطبيق للصحة النفسية اسمه «تنفس بحرية»، اسمك "رفيق". قواعدك صارمة ولا يجوز كسرها:
 1. لا تقدّم أبداً تشخيصاً طبياً قاطعاً. استخدم "الأعراض التي وصفتها تشبه نمط..." بدل "أنت مصاب بـ...".
 2. لا تذكر أي دواء أو جرعة إطلاقاً.
 3. لا تقدّم "خطة علاجية" متكاملة. قدّم خطوة أو خطوتين دعم ذاتي فوريتين بسيطتين، وأحل الباقي لأخصائي مرخّص.
@@ -397,7 +407,7 @@ const CHAT_SYSTEM_PROMPT = `أنت مساعد تثقيفي داعم داخل ت�
 5. كن دافئاً، مختصراً، تعاطفياً، وتكلم بالعربية.
 6. لست بديلاً عن أخصائي.`;
 
-const PLAN_SYSTEM_PROMPT = `أنت مولّد "خطط تحسين جودة حياة" داخل تطبيق Kanaf. ليست خطة علاجية أو إكلينيكية:
+const PLAN_SYSTEM_PROMPT = `أنت مولّد "خطط تحسين جودة حياة" داخل تطبيق «تنفس بحرية». ليست خطة علاجية أو إكلينيكية:
 1. ركّز فقط على أسلوب الحياة: النوم، الحركة، الروتين، التواصل الاجتماعي، إدارة التوتر.
 2. ممنوع أي لغة تشخيصية أو ذكر أدوية أو "علاج".
 3. الأهداف صغيرة وقابلة للتحقيق خلال أسبوع واحد فقط.
@@ -883,7 +893,8 @@ app.get("/api/support-info", async (req, res) => {
     res.json({
       supportEmail: s.support_email ?? null,
       supportHours: s.support_hours ?? null,
-      appName: s.app_public_name ?? "تنفس",
+      // الاحتياطي وحده — القيمة الحية من الإعداد app_public_name أولاً (ملحق ORD-0013 الثاني، القرار 5).
+      appName: s.app_public_name ?? "تنفس بحرية",
       whatsapp: {
         enabled: whatsappUsable,
         url: whatsappUsable ? `https://wa.me/${digits}` : null,
@@ -900,7 +911,7 @@ app.get("/api/support-info", async (req, res) => {
        قراءة الإعداد لا يجوز أن يُظهر زراً برقم لا نعرفه. */
     console.error("[support-info] تعذّرت القراءة:", err.message);
     res.json({
-      supportEmail: null, supportHours: null, appName: "تنفس",
+      supportEmail: null, supportHours: null, appName: "تنفس بحرية",
       whatsapp: { enabled: false, url: null },
       social: { x: null, instagram: null },
       dailyReminderTime: "20:00",
@@ -928,7 +939,7 @@ app.get("/api/unsubscribe", (req, res) => {
       <p>الرابط غير صالح أو منتهي.</p></body></html>`);
   }
   res.send(`<!DOCTYPE html><html dir="rtl" lang="ar"><body style="font-family:Arial;text-align:center;padding:40px;">
-    <p>تأكيد إلغاء الاشتراك من رسائل تنفس التسويقية؟</p>
+    <p>تأكيد إلغاء الاشتراك من رسائل تنفس بحرية التسويقية؟</p>
     <form method="POST" action="/api/unsubscribe">
       <input type="hidden" name="token" value="${String(req.query.token).replace(/"/g, "&quot;")}">
       <button type="submit" style="padding:10px 24px;border-radius:8px;background:#735890;color:#fff;border:none;font-size:14px;">تأكيد إلغاء الاشتراك</button>
@@ -967,6 +978,9 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
    فيه **بلا مصادقة** بالضرورة (المدعوّ لا حساب له بعد، ومن نسي
    كلمة مروره لا يقدر يثبت هويته إلا بالرمز)، فلا يجوز أن يسبقهما
    موجّه يفرض كوكي إدارة. */
+/* ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب في أي موضع. الخادم يولّده من الإجراء وهدفه
+   قبل أي معالج (admin/auto-reason.js)، فيبقى admin_action_log.reason غير فارغ بلا مطالبة. */
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminAccountsRouter);
 app.use("/admin", adminExportsRouter);
 app.use("/admin", adminSettingsRouter);
@@ -976,6 +990,12 @@ app.use("/admin", sentMessagesRouter); // KANAF-ORD-0008 §3
 app.use("/admin", cartsRouter); // KANAF-ORD-0008 §4
 app.use("/admin", discountsRouter); // KANAF-ORD-0008 §6 — غير مربوط بالدفع
 app.use("/admin", integrationsRouter); // KANAF-ORD-0008 §7 — اعتمادات لا تكامل
+app.use("/admin", userEditRouter); // KANAF-ORD-0013 §4.3 — تعديل ملف العميل
+app.use("/admin", subscribersRouter); // KANAF-ORD-0013 §6 — الاشتراكات
+app.use("/admin", systemErrorsRouter); // KANAF-ORD-0013 §11 — سجلّ أخطاء النظام
+app.use("/admin", membersRouter); // KANAF-ORD-0013 §8 — الأعضاء الملغون
+app.use("/admin", messageCatalogRouter); // KANAF-ORD-0013 §9 — محتوى الإشعارات وقوالبها
+app.use("/admin", adminAutorenewRouter); // KANAF-ORD-0013 §7.8 — التجديد التلقائي (عرض وإيقاف)
 app.use("/admin", adminRouter);
 
 /* ---------------------------------------------------------
@@ -1019,7 +1039,7 @@ app.post("/api/setup/create-first-admin", async (req, res) => {
     if (!name?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ error: "name_email_password_required" });
     }
-    if (password.length < 15) {
+    if (password.length < ADMIN_MIN_PASSWORD_LENGTH) { // ORD-0013 §5.4: موضع واحد
       return res.status(400).json({ error: "password_must_be_at_least_15_chars" });
     }
 
@@ -1077,6 +1097,7 @@ app.post("/api/setup/run-migrations", async (req, res) => {
 });
 
 app.use("/api/payments", paymentsRouter);
+app.use("/api/billing/autorenew", autorenewRouter); // KANAF-ORD-0013 §7 — خلف AUTORENEW_ENABLED (الإلغاء متاح دائماً)
 
 /* ---------------------------------------------------------
    Admin UI — served from this same origin, on purpose.
@@ -1092,12 +1113,16 @@ app.use("/api/payments", paymentsRouter);
 --------------------------------------------------------- */
 const adminUiPath = path.join(__dirname, "admin-ui");
 app.use(express.static(adminUiPath));
-// SPA catch-all: any GET that isn't an API route falls through to
-// index.html so client-side routing (React state, not real URLs)
-// still works correctly on a hard refresh or direct link.
-app.get(/^(?!\/admin|\/api).*/, (req, res) => {
+/* SPA catch-all — KANAF-ORD-0013 §3.1. اللوحة صارت توجّه بعناوين حقيقية
+   (/users/<id>، /admin-users …)، فتحديث الصفحة على أي منها يجب أن يعيد index.html.
+   🔴 ويُستثنى /admin و/api **كمقطع كامل** لا كبادئة: النمط القديم ^(?!\/admin|\/api)
+   كان يستثني /admin-users و/apix أيضاً فيردّ 404 على شاشة حقيقية، ولا يستثني شيئاً
+   خطأً في الاتجاه الآخر. ومسارات الـAPI المجهولة تردّ JSON 404 أدناه، لا صفحة HTML. */
+export const SPA_PATH = /^\/(?!(?:admin|api)(?:\/|$))[^.]*$/;
+app.get(SPA_PATH, (req, res) => {
   res.sendFile(path.join(adminUiPath, "index.html"));
 });
+app.use(["/admin", "/api"], (req, res) => res.status(404).json({ error: "not_found" }));
 
 /* ---------------------------------------------------------
    معالج الأخطاء النهائي.
@@ -1113,6 +1138,7 @@ app.get(/^(?!\/admin|\/api).*/, (req, res) => {
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   console.error("[unhandled]", req.method, req.originalUrl, err);
+  if (!(err?.status && err.status < 500)) recordError(err, { location: `${req.method} ${req.originalUrl}`, status: 500 }); // ORD-0013 §11
   res.status(err?.status && err.status < 600 ? err.status : 500).json({ error: "internal_error" });
 });
 
@@ -1140,6 +1166,12 @@ const server = app.listen(PORT, async () => {
       );
     }
   }
+});
+
+/* KANAF-ORD-0013 §11: الرفض غير المعالَج يُسجَّل منقّى أيضاً — ولا يغيّر سلوك العملية. */
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+  recordError(reason instanceof Error ? reason : new Error(String(reason)), { location: "process:unhandledRejection" });
 });
 
 // إغلاق نظيف: Render يرسل SIGTERM عند كل نشر. متصفّح لا يُغلق

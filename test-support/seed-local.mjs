@@ -30,7 +30,7 @@ for (const [k, role, assigned] of [["admin", "admin"], ["support", "support"], [
 }
 /* بيانات بائع اصطناعية — بدونها لا تصدر أرقام فواتير ضريبية ولا إشعارات
    دائنة (السلوك الصحيح للنظام). ليست بيانات المالك الحقيقية. */
-await query(`INSERT INTO tax_settings (singleton, legal_name, vat_number, address) VALUES (true, 'مؤسسة اختبار كنف', '399999999900003', 'جدة')
+await query(`INSERT INTO tax_settings (singleton, legal_name, vat_number, address) VALUES (true, 'مؤسسة اختبار تنفس بحرية', '399999999900003', 'جدة')
              ON CONFLICT (singleton) DO NOTHING`);
 for (const k of ["user", "user2"]) {
   await query(`INSERT INTO users (name, email, password_hash, confirmed_adult, agreed_policy_at, email_verified_at)

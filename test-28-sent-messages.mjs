@@ -91,12 +91,16 @@ try {
   r = await call("GET", "/admin/sent-messages?reason=x");
   ok("P1 دور بلا notifications:view_sent → 403 من الخادم", r.status === 403, String(r.status));
   await as("owner");
-  r = await call("GET", "/admin/sent-messages");
-  ok("P2 بلا سبب → 400 reason_required", r.status === 400 && r.body.error === "reason_required", String(r.status));
+  /* KANAF-ORD-0013 §10: لا بوابة سبب — والأثر باقٍ، صامتاً. (كان P2: بلا سبب → 400.) */
   const before = (await query(`SELECT count(*)::int AS n FROM admin_access_log WHERE action = 'view_sent_messages'`)).rows[0].n;
-  r = await call("GET", "/admin/sent-messages?reason=" + encodeURIComponent("مراجعة تسليم"));
+  r = await call("GET", "/admin/sent-messages");
   const after = (await query(`SELECT count(*)::int AS n FROM admin_access_log WHERE action = 'view_sent_messages'`)).rows[0].n;
-  ok("P3 بسبب → 200، وصف في سجل الوصول بالسبب", r.status === 200 && after === before + 1, `${r.status} ${before}->${after}`);
+  const { rows: [acc] } = await query(`SELECT admin_user_id, reason, created_at FROM admin_access_log WHERE action = 'view_sent_messages' ORDER BY created_at DESC LIMIT 1`);
+  ok("P2 الفتح بلا سبب → 200 مباشرةً، لا مطالبة", r.status === 200 && Array.isArray(r.body.messages), String(r.status));
+  ok("P3 ويُسجَّل صف في سجل الوصول صامتاً: المطّلع ووقته وما اطّلع عليه (سبب تلقائي)", after === before + 1 && acc.admin_user_id && /^فتح صفحة الرسائل المرسلة \(صفحة 1\)$/.test(acc.reason) && acc.created_at, `${before}->${after} ${acc?.reason}`);
+  const f2 = await call("GET", "/admin/sent-messages?page=2&channel=email");
+  const { rows: [acc2] } = await query(`SELECT reason FROM admin_access_log WHERE action = 'view_sent_messages' ORDER BY created_at DESC LIMIT 1`);
+  ok("P4 السبب التلقائي يذكر الصفحة والمرشّحات المطّلع عليها", f2.status === 200 && acc2.reason.includes("صفحة 2") && acc2.reason.includes("channel=email"), acc2.reason);
 
   /* ---- 🔴 C2) لا كود في رد المسار الإداري ---- */
   const leaked = CODES.filter((c) => r.raw.includes(c));

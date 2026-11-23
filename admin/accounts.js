@@ -8,9 +8,11 @@ import {
   requireAdminAuth, requirePermission, requireUuidParam,
   logAdminAction, fail, httpError,
 } from "./middleware.js";
-import { ROLES, ROLE_LABEL, isValidRole, baseRoleFor, needsAssignmentRow } from "./permissions.js";
+import { ROLES, ROLE_LABEL, isValidRole, baseRoleFor, needsAssignmentRow, PANEL_PAGES, PAGE_KEYS, isValidPageList } from "./permissions.js";
+import { adminPasswordError } from "./password-rule.js";
 import { sendEmail } from "../mail/send.js";
-import { serviceEmailExtra } from "../notifications/email-template.js";
+import { ADMIN_MIN_PASSWORD_LENGTH as MIN_PASSWORD_LENGTH } from "./password-rule.js"; // ORD-0013 §5.4: موضع واحد
+import { renderMessage } from "../notifications/messages.js"; // §9: النص والقالب من سجلّ الرسائل
 
 export const adminAccountsRouter = express.Router();
 
@@ -41,7 +43,6 @@ export const adminAccountsRouter = express.Router();
 
 const INVITE_TTL_HOURS = 48;
 const RESET_TTL_HOURS = 2;
-const MIN_PASSWORD_LENGTH = 15;
 
 /* حدّ ضيّق على المسارات العامة: الرمز 32 بايتاً لا يُخمَّن، لكن
    حدّاً على التجربة يمنع استخدام المسار كقناة إغراق. */
@@ -100,35 +101,7 @@ function setupUrl(token) {
   return `${base}/?setup=${token}`;
 }
 
-function inviteEmailBody(name, url, hours, roleLabel) {
-  return `مرحباً ${name}،
 
-أُنشئ لك حساب في لوحة إدارة تنفس بصلاحية «${roleLabel}».
-
-لتفعيل حسابك واختيار كلمة مرورك، افتح الرابط التالي:
-
-${url}
-
-الرابط صالح ${hours} ساعة ولمرة واحدة. لو انتهى، اطلب من المالك إعادة إرسال الدعوة.
-
-إذا ما كنت تتوقع هذه الرسالة، تجاهلها — الحساب لا يعمل قبل فتح الرابط.
-
-فريق تنفس`;
-}
-
-function resetEmailBody(name, url, hours) {
-  return `مرحباً ${name}،
-
-وصلنا طلب لإعادة ضبط كلمة مرور حسابك في لوحة إدارة تنفس.
-
-${url}
-
-الرابط صالح ${hours} ساعة ولمرة واحدة.
-
-إذا ما طلبت هذا، تجاهل الرسالة — كلمة مرورك الحالية ما زالت تعمل، ويُستحسن تخبر المالك.
-
-فريق تنفس`;
-}
 
 /* ------------------------------------------------------------
    كتابة الدور — في مكانين لا مكان واحد
@@ -194,13 +167,13 @@ adminAccountsRouter.get(
                 au.role AS base_role,
                 ra.role AS assigned_role,
                 ra.assigned_at, ra.assigned_by,
-                au.active, au.created_at, au.last_login_at,
+                au.active, au.created_at, au.last_login_at, au.phone, au.page_grants,
                 ${ACCOUNT_STATE_SQL} AS account_state
            FROM admin_users au
            LEFT JOIN admin_role_assignments ra ON ra.admin_user_id = au.id
           ORDER BY au.created_at ASC`
       );
-      res.json({ adminUsers: rows, roles: ROLES, roleLabels: ROLE_LABEL });
+      res.json({ adminUsers: rows, roles: ROLES, roleLabels: ROLE_LABEL, pages: PANEL_PAGES });
     } catch (err) { fail(res, err, "admin/accounts:list", req); }
   }
 );
@@ -273,9 +246,8 @@ adminAccountsRouter.post(
       let emailed = false;
       let emailError = null;
       try {
-        const subject = "دعوة إلى لوحة إدارة تنفس";
-        const text = inviteEmailBody(created.admin.name, url, created.expiresInHours, ROLE_LABEL[role] || role);
-        await sendEmail(created.admin.email, subject, text, await serviceEmailExtra(subject, text));
+        const m = await renderMessage("admin_invite", { name: created.admin.name, url, hours: created.expiresInHours, role: ROLE_LABEL[role] || role });
+        await sendEmail(created.admin.email, m.subject, m.text, m.extra);
         emailed = true;
       } catch (err) {
         /* ليس فشلاً صامتاً ولا فشلاً للطلب: الحساب أُنشئ فعلاً
@@ -301,6 +273,107 @@ adminAccountsRouter.post(
     }
   }
 );
+
+/* ============================================================
+   الإضافة المباشرة — KANAF-ORD-0013 §5 (بجانب الدعوة، لا بدلها: المالك يختار)
+
+   POST /admin/admin-users/direct
+     { name, email, phone?, password, duties: ["admin"|"finance"], pages?: [...], reason }
+
+   • «المهام» دوران قائمان لا مفهوم ثالث (§5.1): إدارية → admin، مالية → accountant.
+     والاثنتان معاً → admin (صلاحياته تشمل صلاحيات المحاسب كلها).
+     ⚠️ accountant يقرأ الدفاتر ولا يحرّك مالاً: لا استرداد ولا تعديل فاتورة.
+   • pages: منح الصفحات — تضييق فوق الدور (§5.2). غيابها = بلا تضييق.
+   • لا دور owner من هنا بحال (§5.6): المهام لا تخرج عن admin/accountant.
+   • الرقم السري من قاعدة واحدة (password-rule.js، §5.4). لا يُسجَّل ولا يُعاد.
+   • الحساب فعّال فوراً — المالك اختار كلمة مروره، وهذا ما طلبه بدل الدعوة.
+   ============================================================ */
+const DUTY_ROLE = { admin: "admin", finance: "accountant" };
+const E164 = /^\+[1-9][0-9]{7,14}$/;
+
+adminAccountsRouter.post("/admin-users/direct", requireAdminAuth, requirePermission("admins:invite"), async (req, res) => {
+  const b = req.body || {};
+  const reason = String(b.reason || "").trim();
+  try {
+    const name = String(b.name || "").trim();
+    const email = String(b.email || "").trim().toLowerCase();
+    if (!name || !email) throw httpError(400, "name_email_required");
+    if (!reason) throw httpError(400, "reason_required");
+    const pwErr = adminPasswordError(b.password);
+    if (pwErr) throw httpError(400, pwErr, `الحد الأدنى ${MIN_PASSWORD_LENGTH} حرفاً.`);
+    const duties = Array.isArray(b.duties) ? [...new Set(b.duties)] : [];
+    if (!duties.length || duties.some((d) => !DUTY_ROLE[d])) throw httpError(400, "invalid_duties");
+    const role = duties.includes("admin") ? "admin" : "accountant";
+    let phone = null;
+    if (b.phone !== undefined && b.phone !== null && String(b.phone).trim()) {
+      phone = String(b.phone).replace(/[\s-]/g, "");
+      if (!E164.test(phone)) throw httpError(400, "invalid_phone");
+    }
+    let pages = null;
+    if (b.pages !== undefined && b.pages !== null) {
+      if (!isValidPageList(b.pages)) throw httpError(400, "invalid_pages", PAGE_KEYS.join(","));
+      pages = [...new Set(b.pages)];
+    }
+
+    const created = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO admin_users (name, email, password_hash, role, active, phone, page_grants)
+         VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING id, name, email, phone, page_grants, created_at`,
+        [name, email, await hashPassword(b.password), baseRoleFor(role), phone, pages]);
+      await writeRole(client, { adminUserId: rows[0].id, role, assignedBy: req.admin.id, note: reason });
+      return rows[0];
+    });
+
+    await logAdminAction({
+      adminUserId: req.admin.id, action: "admin_account_created_direct",
+      entity: "admin_user", entityId: created.id, oldValue: null,
+      newValue: { name: created.name, email: created.email, phone: created.phone, role, duties, pages }, // لا كلمة مرور
+      reason, ipAddress: req.ip,
+    });
+    res.status(201).json({ adminUser: { id: created.id, name: created.name, email: created.email, phone: created.phone, role, pageGrants: pages, active: true, account_state: "active" } });
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "email_already_exists" });
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) });
+    fail(res, err, "admin/accounts:direct", req);
+  }
+});
+
+/* PATCH /admin/admin-users/:id/pages  { pages: [...] | null, phone?, reason }
+   تعديل منح الصفحات (null = إزالة التضييق) والجوال. تضييق لا توسيع: لا يمسّ الدور. */
+adminAccountsRouter.patch("/admin-users/:id/pages", requireAdminAuth, requirePermission("admins:change_role"), requireUuidParam("id"), async (req, res) => {
+  const b = req.body || {};
+  const reason = String(b.reason || "").trim();
+  try {
+    if (!reason) throw httpError(400, "reason_required");
+    if (!("pages" in b) && !("phone" in b)) throw httpError(400, "nothing_to_change");
+    let pages;
+    if ("pages" in b) {
+      if (b.pages !== null && !isValidPageList(b.pages)) throw httpError(400, "invalid_pages", PAGE_KEYS.join(","));
+      pages = b.pages === null ? null : [...new Set(b.pages)];
+    }
+    let phone;
+    if ("phone" in b) {
+      phone = b.phone ? String(b.phone).replace(/[\s-]/g, "") : null;
+      if (phone && !E164.test(phone)) throw httpError(400, "invalid_phone");
+    }
+    if (req.params.id === req.admin.id && pages !== undefined) throw httpError(409, "cannot_change_own_pages");
+    const { rows: [before] } = await query(`SELECT page_grants, phone FROM admin_users WHERE id = $1`, [req.params.id]);
+    if (!before) throw httpError(404, "not_found");
+    const { rows: [after] } = await query(
+      `UPDATE admin_users SET page_grants = CASE WHEN $2 THEN $3::text[] ELSE page_grants END,
+              phone = CASE WHEN $4 THEN $5 ELSE phone END
+        WHERE id = $1 RETURNING page_grants, phone`,
+      [req.params.id, pages !== undefined, pages ?? null, phone !== undefined, phone ?? null]);
+    await logAdminAction({
+      adminUserId: req.admin.id, action: "admin_account_pages_changed", entity: "admin_user", entityId: req.params.id,
+      oldValue: { pages: before.page_grants, phone: before.phone }, newValue: { pages: after.page_grants, phone: after.phone }, reason, ipAddress: req.ip,
+    });
+    res.json({ ok: true, pageGrants: after.page_grants, phone: after.phone });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) });
+    fail(res, err, "admin/accounts:pages", req);
+  }
+});
 
 // POST /admin/admin-users/:id/resend-invite  { reason }
 adminAccountsRouter.post(
@@ -329,8 +402,8 @@ adminAccountsRouter.post(
       const url = setupUrl(issued.token);
       let emailed = false, emailError = null;
       try {
-        const text = inviteEmailBody(admin.name, url, issued.expiresInHours, "");
-        await sendEmail(admin.email, "دعوة إلى لوحة إدارة تنفس", text, await serviceEmailExtra("دعوة إلى لوحة إدارة تنفس", text));
+        const m = await renderMessage("admin_invite", { name: admin.name, url, hours: issued.expiresInHours, role: "" });
+        await sendEmail(admin.email, m.subject, m.text, m.extra);
         emailed = true;
       } catch (err) { emailError = err.message; console.error("[admin/accounts] تعذّر إعادة الإرسال:", err.message); }
 
@@ -367,8 +440,8 @@ adminAccountsRouter.post(
       const url = setupUrl(issued.token);
       let emailed = false, emailError = null;
       try {
-        const text = resetEmailBody(admin.name, url, issued.expiresInHours);
-        await sendEmail(admin.email, "إعادة ضبط كلمة مرور لوحة تنفس", text, await serviceEmailExtra("إعادة ضبط كلمة مرور لوحة تنفس", text));
+        const m = await renderMessage("admin_password_reset", { name: admin.name, url, hours: issued.expiresInHours });
+        await sendEmail(admin.email, m.subject, m.text, m.extra);
         emailed = true;
       } catch (err) { emailError = err.message; console.error("[admin/accounts] تعذّر إرسال الاستعادة:", err.message); }
 

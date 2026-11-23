@@ -847,7 +847,8 @@ billingRouter.get("/integrity", requireAdminAuth, requirePermission("reports:vie
          LIMIT 100`
       ),
       // أرقام معاملات مكررة. الفهرس الفريد على payments يمنعها من
-      // الآن، لكن invoices لا يمكن فهرسته (قيد الملكية) فيبقى الفحص.
+      // الآن، ولا فهرس فريد على invoices.provider_payment_id — فيبقى الفحص.
+      // (كان ذلك لقيد الملكية؛ القيد سقط منذ ORD-0012 وصار الفهرس ممكناً بترحيلة — KANAF-ORD-0014 §2.8)
       query(
         `SELECT provider_payment_id, count(*)::int AS n FROM invoices
          WHERE provider_payment_id IS NOT NULL

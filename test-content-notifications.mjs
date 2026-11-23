@@ -25,6 +25,7 @@ import { contentRouter } from "./content/routes.js";
 import { adminContentRouter } from "./admin/content.js";
 import { adminNotificationsRouter } from "./admin/notifications.js";
 import { adminRouter } from "./admin/routes.js";
+import { autoReasonMiddleware } from "./admin/auto-reason.js"; // ملحق القرار 1: كما في index.js
 import { sweepDueCampaigns } from "./notifications/scheduler.js";
 
 const results = [];
@@ -43,6 +44,7 @@ app.use(cookieParser());
 app.use("/api/content", contentRouter);
 app.use("/api", pushPublicKeyRouter);
 app.use("/api/me", userDataRouter);
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminContentRouter);
 app.use("/admin", adminNotificationsRouter);
 app.use("/admin", adminRouter);
@@ -183,14 +185,18 @@ await query(
 }
 
 /* ------------------------------------------------------------
-   4ب) النشر بلا سبب يُرفض في الخادم ولا يغيّر شيئاً
+   4ب) ملحق KANAF-ORD-0013، قرار المالك 1: النشر بلا سبب مكتوب ينجح، والسبب تلقائي من الخادم
    ------------------------------------------------------------ */
 {
   const item = await contentRow("journey", JOURNEY);
-  const r1 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: true });
-  const r2 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: true, reason: "   " });
+  const r1 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: !item.launch_enabled });
+  const mid = await contentRow("journey", JOURNEY);
+  const r2 = await post(`/admin/content/${item.id}/toggle-launch`, { enabled: item.launch_enabled, reason: "   " });
   const after = await contentRow("journey", JOURNEY);
-  log("4ب. النشر بلا سبب (غائب أو مسافات) → 400 reason_required، والحالة كما هي", r1.status === 400 && r1.body?.error === "reason_required" && r2.status === 400 && after.launch_enabled === item.launch_enabled);
+  const { rows: logs4 } = await query(`SELECT reason, old_value, new_value FROM admin_action_log WHERE metadata->>'content_key' = $1 AND action IN ('content_publish','content_unpublish') ORDER BY created_at DESC LIMIT 2`, [JOURNEY]);
+  log("4ب. النشر بلا سبب (غائب أو مسافات) → 200 بسبب تلقائي غير فارغ في السجل، والحالة تتغيّر ثم تعود",
+    r1.status === 200 && r2.status === 200 && mid.launch_enabled === !item.launch_enabled && after.launch_enabled === item.launch_enabled
+    && logs4.length === 2 && logs4.every((l) => l.reason === "تبديل إتاحة محتوى عند الإطلاق من اللوحة"), JSON.stringify(logs4));
 }
 
 /* ------------------------------------------------------------
@@ -498,7 +504,7 @@ let scheduledId = null;
 }
 
 /* ------------------------------------------------------------
-   26) شرط بوصلة تنفس يُحسب من قاعدة البيانات
+   26) شرط بوصلة تنفس بحرية يُحسب من قاعدة البيانات
    ------------------------------------------------------------ */
 {
   CURRENT_USER_TOKEN = userToken(alice.id);
@@ -591,18 +597,18 @@ let scheduledId = null;
 }
 
 /* ------------------------------------------------------------
-   29) الوصول للبيانات الحساسة يشترط سبباً ويُسجَّل
+   29) الوصول للبيانات الحساسة يُسجَّل دائماً — وبلا سبب مكتوب صار سبباً تلقائياً (ملحق KANAF-ORD-0013، القرار 1)
    ------------------------------------------------------------ */
 {
   CURRENT_ADMIN = adminUser;
   const noReason = await get(`/admin/users/${alice.id}/sensitive`);
   const { rows } = await query(
-    `SELECT count(*)::int AS n FROM admin_access_log
+    `SELECT count(*)::int AS n, max(reason) FILTER (WHERE reason = 'عرض بيانات المتابعة الحسّاسة في ملف العميل') AS auto FROM admin_access_log
      WHERE admin_user_id = $1 AND target_user_id = $2 AND action = 'view_sensitive_data'`,
     [adminUser.id, alice.id]
   );
-  log("29. قراءة البيانات الحساسة بلا سبب مرفوضة، والمسموحة مسجَّلة",
-    noReason.status === 400 && rows[0].n >= 1);
+  log("29. قراءة البيانات الحساسة بلا سبب مكتوب: تنجح، ومسجَّلة في سجل الوصول بسبب تلقائي غير فارغ",
+    noReason.status === 200 && rows[0].n >= 1 && rows[0].auto === "عرض بيانات المتابعة الحسّاسة في ملف العميل");
 }
 
 /* ------------------------------------------------------------

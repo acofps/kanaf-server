@@ -25,7 +25,7 @@ const SOURCE_LABEL = {
   daily_log: "تدوين يومي",
   manual: "زر الأزمة",
   notebook: "دفتر",
-  cbt: "أداة تنفس",
+  cbt: "أداة تنفس بحرية",
 };
 
 /* tone = لون القسم (sectionTone) — يتكرر في القائمة وفي بطاقة الرقم.
@@ -108,7 +108,7 @@ export default function Overview({ me }) {
         <Card>
           <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>إشارات الأزمة حسب المصدر</h3>
           <p className="text-[11px] mb-3 leading-6" style={{ color: C.textFaint }}>
-            عدد فقط. لا هوية ولا نص — الوصول إلى التفاصيل يمر بطلب وصول طارئ موثّق.
+            عدد فقط. لا هوية ولا نص، ولا مسار في اللوحة يصل إلى التفاصيل.
           </p>
           {crisis.length === 0 ? <Empty>لا إشارات في آخر 30 يوماً.</Empty> : crisis.map((r, i) => (
             <div key={i} className="flex items-center justify-between py-2 text-xs"

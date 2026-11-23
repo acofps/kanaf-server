@@ -30,7 +30,7 @@ export default function Login({ onDone }) {
     <div className="min-h-screen flex items-center justify-center p-5" style={{ background: C.bg }}>
       <form onSubmit={submit} className="w-full rounded-2xl p-6"
         style={{ maxWidth: 400, background: C.surface, border: `1px solid ${C.line}` }}>
-        <h1 className="text-lg font-bold mb-1" style={{ color: C.text }}>لوحة تنفس</h1>
+        <h1 className="text-lg font-bold mb-1" style={{ color: C.text }}>لوحة تنفس بحرية</h1>
         <p className="text-xs mb-5 leading-6" style={{ color: C.textMuted }}>
           كل إجراء حساس هنا يُسجَّل باسمك ووقتك.
         </p>

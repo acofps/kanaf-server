@@ -19,6 +19,8 @@ const jwt = (await import("jsonwebtoken")).default;
 const { query, pool } = await import("./db/pool.js");
 const { discountsRouter } = await import("./admin/discounts.js");
 const { integrationsRouter } = await import("./admin/integrations.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js"); // ملحق القرار 1: كما في index.js
+
 const { INTEGRATIONS, allFullKeyNames } = await import("./integrations/catalog.js");
 const { SETTINGS_REGISTRY } = await import("./admin/settings.js");
 
@@ -37,7 +39,7 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 
 const R = []; const ok = (l, c, x = "") => R.push([l, !!c, x]);
-const app = express(); app.use(express.json()); app.use(cookieParser()); app.use("/admin", discountsRouter); app.use("/admin", integrationsRouter);
+const app = express(); app.use(express.json()); app.use(cookieParser()); app.use("/admin", autoReasonMiddleware); app.use("/admin", discountsRouter); app.use("/admin", integrationsRouter);
 const server = app.listen(4630); const B = "http://127.0.0.1:4630";
 let cookie = "";
 const as = async (role) => {
@@ -61,11 +63,10 @@ try {
   let r = await call("GET", "/admin/discount-codes");
   ok("D0 حالة فارغة: 200، صفر، وlinkedToPayments=false", r.status === 200 && r.body.total === 0 && r.body.codes.length === 0 && r.body.linkedToPayments === false);
   r = await call("POST", "/admin/discount-codes", { code: "spring20", kind: "percent", value: 20 });
-  ok("D1 بلا سبب → 400", r.status === 400 && r.body.error === "reason_required");
-  r = await call("POST", "/admin/discount-codes", { code: "spring20", kind: "percent", value: 20, reason: "حملة الربيع" });
+  ok("D1 (ملحق القرار 1) بلا سبب مكتوب → 201", r.status === 201, r.raw);
   ok("D2 إنشاء → 201 والكود بحروف كبيرة", r.status === 201 && r.body.code === "SPRING20", r.raw);
   const audit = (await query(`SELECT action, reason FROM admin_action_log WHERE entity = 'discount_code' AND entity_id = $1`, [r.body.id])).rows;
-  ok("D3 الإنشاء في سجل الإجراءات بسببه", audit.length === 1 && audit[0].action === "discount_code_create" && audit[0].reason === "حملة الربيع");
+  ok("D3 الإنشاء في سجل الإجراءات بسبب تلقائي من الخادم", audit.length === 1 && audit[0].action === "discount_code_create" && audit[0].reason === "إنشاء كود خصم من اللوحة", JSON.stringify(audit));
   r = await call("POST", "/admin/discount-codes", { code: "SPRING20", kind: "amount", value: 5, reason: "x" });
   ok("D4 كود مكرر → 409", r.status === 409);
   r = await call("POST", "/admin/discount-codes", { code: "FREE100", kind: "percent", value: 100, reason: "x" });
@@ -104,8 +105,19 @@ try {
   /* ================= L) لا ربط بالدفع ================= */
   const scan = ["payments", "invoicing", "mail", "notifications", "auth", "userdata", "content"].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".js")).map((f) => path.join(d, f)))
     .concat(["billing/subscription.js", "billing/config.js", "index.js"]);
-  const linked = scan.filter((f) => /from\s+["'][^"']*(billing\/discounts|integrations\/)/.test(fs.readFileSync(f, "utf8")));
-  ok(`L1 🔴 لا ملف تشغيلي يستورد الخصم أو التكاملات (${scan.length} ملفاً)`, linked.length === 0, linked.join(" "));
+  /* استثناء واحد صريح (KANAF-ORD-0013 §4.4 و§9.5): قنوات المراسلة تقرأ اعتماداتها المحفوظة (واتساب/SMS)
+     لتعمل أو تُعرض معطّلة — notifications/channels.js يستورد integrations/crypto.js وحده. لا علاقة له بالدفع،
+     وأي استيراد آخر منه (الخصم، أو غير crypto) يُسقط الفحص. */
+  const ALLOWED = { "notifications/channels.js": /from\s+["']\.\.\/integrations\/crypto\.js["']/g };
+  const linked = scan.filter((f) => {
+    const src = fs.readFileSync(f, "utf8").replace(ALLOWED[f] || /$^/, "");
+    return /from\s+["'][^"']*(billing\/discounts|integrations\/)/.test(src);
+  });
+  ok(`L1 🔴 لا ملف تشغيلي يستورد الخصم أو التكاملات (${scan.length} ملفاً؛ استثناء قنوات المراسلة لـcrypto وحده)`, linked.length === 0, linked.join(" "));
+  /* L1b — مسار الدفع كله (ومعه التجديد التلقائي §7) لا يستورد أكواد الخصم ولا كتالوج اعتمادات التكاملات. */
+  const payPath = ["payments", "invoicing", "billing"].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".js") && f !== "discounts.js").map((f) => path.join(d, f)));
+  const payLinked = payPath.filter((f) => /from\s+["'][^"']*(billing\/discounts|\/discounts\.js|integrations\/catalog)/.test(fs.readFileSync(f, "utf8")));
+  ok(`L1b 🔴 مسار الدفع (${payPath.length} ملفاً) بلا أكواد خصم ولا اعتمادات تكاملات`, payLinked.length === 0, payLinked.join(" "));
 
   /* ================= K) التكاملات ================= */
   const SECRET = `sk_test_${"Q".repeat(12)}Zx9WAbcd`;
@@ -120,8 +132,7 @@ try {
   ok("K3 بلا INTEGRATIONS_ENC_KEY لا حفظ إطلاقاً (503) ولا صف", r.status === 503 && (await query(`SELECT count(*)::int AS n FROM integration_credentials`)).rows[0].n === 0);
   process.env.INTEGRATIONS_ENC_KEY = "a".repeat(64);
   r = await call("PUT", "/admin/integrations/moyasar/secret_key", { value: SECRET });
-  ok("K4 بلا سبب → 400", r.status === 400);
-  r = await call("PUT", "/admin/integrations/moyasar/secret_key", { value: SECRET, reason: "ضبط مفتاح الاختبار" });
+  ok("K4 (ملحق القرار 1) بلا سبب مكتوب → 200", r.status === 200, r.raw);
   ok("K5 الحفظ → 200 ومقنَّع بآخر أربعة فقط", r.status === 200 && r.body.masked === "••••Abcd" && !r.raw.includes(SECRET.slice(0, -4)), r.raw);
   const { rows: [row] } = await query(`SELECT ciphertext, iv, auth_tag, last4 FROM integration_credentials WHERE service='moyasar' AND key_name='secret_key'`);
   ok("K6 المخزَّن مشفَّر: لا نص صريح في البايتات", row && !Buffer.from(row.ciphertext).toString("latin1").includes("sk_test_") && row.iv.length === 12 && row.auth_tag.length === 16);
@@ -134,8 +145,8 @@ try {
     if (rows[0].n) hits.push(`${tb}.${col}`);
   }
   ok("K7 🔴 السرّ غير موجود في أي عمود نصي — ولا في سجل الإجراءات", hits.length === 0, hits.join(" "));
-  const logRows = (await query(`SELECT action, old_value, new_value, metadata FROM admin_action_log WHERE entity = 'integration_credential'`)).rows;
-  ok("K8 سجل الإجراءات: صف بالسبب، بلا قيمة ولا آخر أربعة", logRows.length === 1 && logRows[0].action === "integration_credential_set" && !JSON.stringify(logRows).includes("Abcd"), JSON.stringify(logRows));
+  const logRows = (await query(`SELECT action, old_value, new_value, metadata, reason FROM admin_action_log WHERE entity = 'integration_credential'`)).rows;
+  ok("K8 سجل الإجراءات: صف بسبب تلقائي، بلا قيمة ولا آخر أربعة", logRows.length === 1 && logRows[0].action === "integration_credential_set" && logRows[0].reason === "حفظ اعتماد تكامل من اللوحة" && !JSON.stringify(logRows).includes("Abcd"), JSON.stringify(logRows));
   r = await call("GET", "/admin/integrations");
   const mf = r.body.services.find((s) => s.service === "moyasar").fields.find((f) => f.key === "secret_key");
   ok("K9 القائمة: configured ومقنَّع، ولا سرّ في الرد كله", mf.configured === true && mf.masked === "••••Abcd" && !r.raw.includes(SECRET.slice(0, 12)));

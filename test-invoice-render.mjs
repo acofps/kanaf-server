@@ -63,10 +63,10 @@ const SETTINGS = {
   documentNumberToken: "KANAF",
   sellerEmail: "billing@example.com",
   sellerPhone: "00966500000000",
-  sellerDisplaySuffix: "( خدمات منصة كنف )",
+  sellerDisplaySuffix: "( خدمات منصة تنفس بحرية )",
 };
 const TAX = {
-  legalName: "مؤسسة كنف",
+  legalName: "مؤسسة تنفس بحرية",
   vatNumber: "300000000000003",
   address: "جدة / السعودية",
 };
@@ -170,7 +170,9 @@ try {
     const lost = words.filter((w) => !t.includes(w));
     ok("T17 العربية نص حقيقي متّصل قابل للاستخراج", lost.length === 0, lost.join(","));
     ok("T18 أرقام الوثيقة لاتينية لا عربية-هندية", !/[٠-٩]/.test(t));
-    ok("T19 لاحقة اسم المنشأة تظهر في العرض", t.includes("خدمات منصة كنف"));
+    /* pdftotext يُدرج مسافة بعد «ر» (حرف لا يتصل بما بعده) فيستخرج «بحر ية»؛ الصفحة نفسها سليمة
+       (رُوجعت مرئياً بعد تسمية «تنفس بحرية»). المقارنة بلا مسافات لهذا السبب وحده. */
+    ok("T19 لاحقة اسم المنشأة تظهر في العرض", t.replace(/\s+/g, "").includes("خدماتمنصةتنفسبحرية"));
   } else {
     skip("T15-T19 فحوص النص وعدد الصفحات", "poppler-utils غير مثبّتة");
   }
@@ -273,7 +275,7 @@ try {
 
   /* ---------- 10) بيانات ناقصة ---------- */
   const sparse = await generateInvoicePdf({
-    taxSettings: { legalName: "مؤسسة كنف", vatNumber: "300000000000003", address: null },
+    taxSettings: { legalName: "مؤسسة تنفس بحرية", vatNumber: "300000000000003", address: null },
     settings: { ...SETTINGS, sellerEmail: null, sellerPhone: null, sellerDisplaySuffix: null },
     invoice: baseInvoice({
       invoiceNumber: "INV-KANAF-000300", buyerName: null,

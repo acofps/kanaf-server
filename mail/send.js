@@ -22,7 +22,7 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 let transporter = null;
 
-function isConfigured() {
+export function isConfigured() {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 

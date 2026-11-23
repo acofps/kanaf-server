@@ -78,7 +78,7 @@ function makeWebhookBody(type, { providerInvoiceId, amountSar, metadata, payment
     refunded: refundedSar !== undefined ? Math.round(refundedSar * 100) : 0,
     refunded_amount: refundedSar !== undefined ? Math.round(refundedSar * 100) : 0,
     invoice_id: providerInvoiceId || null,
-    description: "اشتراك كنف+",
+    description: "اشتراك تنفس+",
     source: { type: "creditcard", company: "mada", number: "XXXXXXXXXXXX4444", message: message || null },
     metadata: metadata || {},
   };
@@ -100,6 +100,7 @@ function makeWebhookBody(type, { providerInvoiceId, amountSar, metadata, payment
 const { authRouter } = await import("./auth/routes.js");
 const { paymentsRouter } = await import("./payments/routes.js");
 const { adminRouter } = await import("./admin/routes.js");
+const { autoReasonMiddleware } = await import("./admin/auto-reason.js"); // ملحق القرار 1: كما في index.js
 
 let CURRENT_ADMIN = null;
 const app = express();
@@ -108,6 +109,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.use("/api/auth", authRouter);
 app.use("/api/payments", paymentsRouter);
+app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminRouter);
 const server = app.listen(4599);
 const B = "http://127.0.0.1:4599";
@@ -182,7 +184,7 @@ async function run() {
   requireDedicatedDatabase(import.meta.url);
   await query(
     `INSERT INTO subscription_plans (plan_key, name, price_sar, duration_days, features, display_order) VALUES
-       ('monthly', 'الباقة الشهرية', 29.00, 30, ARRAY['كل أدوات تنفس الأربع'], 1),
+       ('monthly', 'الباقة الشهرية', 29.00, 30, ARRAY['كل أدوات تنفس بحرية الأربع'], 1),
        ('6_months', 'باقة 6 أشهر', 139.00, 182, ARRAY['خصم مقارنة بالدفع الشهري'], 2),
        ('annual', 'الباقة السنوية', 229.00, 365, ARRAY['أكبر خصم متاح'], 3)
      ON CONFLICT (plan_key) DO NOTHING`
@@ -190,7 +192,7 @@ async function run() {
   await query(`INSERT INTO billing_settings (singleton) VALUES (true) ON CONFLICT (singleton) DO UPDATE SET vat_rate = 0.15, currency = 'SAR', reporting_timezone = 'Asia/Riyadh'`);
   await query(`INSERT INTO admin_users (id, name, email, password_hash, role) VALUES ($1,'مالك','owner@kanaf.test','x','owner')`, [ADMIN_ID]);
   await query(`INSERT INTO tax_settings (singleton, legal_name, vat_number, address)
-               VALUES (true,'مؤسسة كنف','300000000000003','الرياض')
+               VALUES (true,'مؤسسة تنفس بحرية','300000000000003','الرياض')
                ON CONFLICT (singleton) DO UPDATE SET legal_name = EXCLUDED.legal_name`);
   CURRENT_ADMIN = { id: ADMIN_ID, role: "owner" };
 
@@ -531,8 +533,12 @@ async function run() {
   log("J3 موظف الدعم لا يعدّل الإعداد الضريبي", r.status === 403, String(r.status));
 
   CURRENT_ADMIN = { id: ADMIN_ID, role: "admin" };
-  r = await post(`/admin/billing/payments/${payment5.id}/refund`, {});
-  log("J4 الاسترداد بلا سبب مكتوب مرفوض", r.status === 400 && r.body.error === "reason_required", JSON.stringify(r.body));
+  // ملحق KANAF-ORD-0013، قرار المالك 1: لا سبب مكتوب — الخادم يولّده، والوصول والاسترداد يُسجَّلان به.
+  const { rows: [pj4] } = await query(`SELECT id FROM payments WHERE status = 'paid' AND refunded_amount = 0 AND amount > 1 AND provider = 'moyasar' AND provider_payment_id = ANY($1::text[]) ORDER BY created_at LIMIT 1`, [[...moyasarState.payments.keys()]]);
+  r = await post(`/admin/billing/payments/${pj4.id}/refund`, { amountSar: 1 });
+  const { rows: [j4a] } = await query(`SELECT reason FROM admin_access_log WHERE action = 'payment_refund' ORDER BY created_at DESC LIMIT 1`);
+  const { rows: [j4r] } = await query(`SELECT reason FROM refunds WHERE payment_id = $1 ORDER BY created_at DESC LIMIT 1`, [pj4.id]);
+  log("J4 الاسترداد بلا سبب مكتوب ينجح، بسبب تلقائي في سجل الوصول وفي الاسترداد", r.status === 200 && j4a?.reason === "استرداد دفعة من اللوحة" && j4r?.reason === "استرداد دفعة من اللوحة", JSON.stringify({ s: r.status, j4a, j4r, b: r.body }).slice(0, 300));
 
   CURRENT_ADMIN = null;
   r = await get("/admin/billing/payments");

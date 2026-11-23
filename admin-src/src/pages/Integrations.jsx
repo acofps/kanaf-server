@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { KeyRound, PlugZap, Trash2, ShieldCheck } from "lucide-react";
 import { api } from "../api.js";
 import { C, fmtDateTime } from "../theme.js";
-import { Card, PageTitle, Button, Badge, Spinner, ErrorBar, Modal, Field, Input, useAsync, ReasonPrompt } from "../ui.jsx";
+import { Card, PageTitle, Button, Badge, Spinner, ErrorBar, Screen, Field, Input, useAsync, ConfirmPrompt } from "../ui.jsx";
+import { Link, navigate } from "../router.js";
 
 /* ============================================================
    التكاملات — صفحة اعتمادات، لا تكامل (KANAF-ORD-0008 §7)
@@ -13,9 +14,21 @@ import { Card, PageTitle, Button, Badge, Spinner, ErrorBar, Modal, Field, Input,
    أربعة محارف. للمالك وحده.
    ============================================================ */
 
-export default function Integrations({ toast }) {
+export default function Integrations({ toast, route = [] }) {
   const state = useAsync(() => api.listIntegrations(), []);
-  const [edit, setEdit] = useState(null);     // { service, key, label }
+  /* KANAF-ORD-0013 §3.2: ضبط مفتاح صفحة /integrations/<service>/<key> */
+  if (route[0] && route[1]) {
+    if (state.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+    const svc = (state.data?.services || []).find((x) => x.service === route[0]);
+    const f = svc?.fields?.find((x) => x.key === route[1]);
+    if (!f || !state.data?.encryptionConfigured) return <Screen title="التكاملات" back="/integrations"><ErrorBar error={state.error || (f ? "الحفظ معطّل: INTEGRATIONS_ENC_KEY غير مضبوط." : "المفتاح غير معروف.")} /></Screen>;
+    return <SetModal target={{ service: svc.service, key: f.key, label: f.label }} onClose={() => navigate("/integrations")}
+      onDone={() => { toast?.("حُفظ مشفَّراً."); navigate("/integrations"); }} />;
+  }
+  return <IntegrationList toast={toast} state={state} />;
+}
+
+function IntegrationList({ toast, state }) {
   const [del, setDel] = useState(null);
   const [test, setTest] = useState(null);     // service
   const [results, setResults] = useState({});
@@ -56,7 +69,7 @@ export default function Integrations({ toast }) {
                       </p>
                     </div>
                     <div className="flex gap-1 shrink-0">
-                      <Button size="sm" variant="ghost" disabled={!d.encryptionConfigured} onClick={() => setEdit({ service: s.service, key: f.key, label: f.label })}>
+                      <Button size="sm" variant="ghost" disabled={!d.encryptionConfigured} onClick={() => navigate(`/integrations/${s.service}/${f.key}`)}>
                         <span className="inline-flex items-center gap-1"><KeyRound size={13} /> {f.configured ? "استبدال" : "ضبط"}</span>
                       </Button>
                       {f.configured && <Button size="sm" variant="ghost" onClick={() => setDel({ service: s.service, key: f.key })}><Trash2 size={13} /></Button>}
@@ -69,39 +82,36 @@ export default function Integrations({ toast }) {
         </div>
       )}
 
-      <SetModal target={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); toast?.("حُفظ مشفَّراً."); state.reload(); }} />
-      <ReasonPrompt open={!!del} title="حذف المفتاح" danger onClose={() => setDel(null)}
-        onConfirm={async (reason) => { await api.deleteIntegrationKey(del.service, del.key, reason); setDel(null); state.reload(); }} />
-      <ReasonPrompt open={!!test} title="فحص الاتصال" description="قراءة واحدة من المزوّد. تُسجَّل النتيجة في سجل الإجراءات بلا أي مفتاح."
+      <ConfirmPrompt open={!!del} title="حذف المفتاح" danger onClose={() => setDel(null)}
+        onConfirm={async () => { await api.deleteIntegrationKey(del.service, del.key); setDel(null); state.reload(); }} />
+      <ConfirmPrompt open={!!test} title="فحص الاتصال" description="قراءة واحدة من المزوّد. تُسجَّل النتيجة في سجل الإجراءات بلا أي مفتاح."
         onClose={() => setTest(null)}
-        onConfirm={async (reason) => { const r = await api.testIntegration(test, reason); setResults((x) => ({ ...x, [test]: r })); setTest(null); }} />
+        onConfirm={async () => { const r = await api.testIntegration(test); setResults((x) => ({ ...x, [test]: r })); setTest(null); }} />
     </div>
   );
 }
 
 function SetModal({ target, onClose, onDone }) {
   const [value, setValue] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const close = () => { setValue(""); setReason(""); setErr(""); onClose(); };
+  const close = () => { setValue(""); setErr(""); onClose(); };
   const submit = async () => {
     setBusy(true); setErr("");
-    try { await api.setIntegrationKey(target.service, target.key, value, reason); setValue(""); setReason(""); onDone(); }
+    try { await api.setIntegrationKey(target.service, target.key, value); setValue(""); onDone(); }
     catch (e) { setErr(e?.arabic || e?.code || "تعذّر الحفظ."); } finally { setBusy(false); }
   };
   return (
-    <Modal open={!!target} onClose={close} title={target ? `ضبط: ${target.label}` : ""}>
+    <Screen title={target ? `ضبط: ${target.label}` : ""} back="/integrations" backLabel="التكاملات">
       <div className="grid gap-3">
         <div className="flex items-start gap-2 text-[12px] leading-6" style={{ color: C.textMuted }}>
           <ShieldCheck size={16} className="shrink-0 mt-1" />
           تُشفَّر القيمة في الخادم قبل التخزين، ولا تعود إلى أي شاشة بعد الحفظ — يظهر آخر أربعة محارف فقط.
         </div>
         <Field label="القيمة"><Input type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} dir="ltr" /></Field>
-        <Field label="السبب" hint="يُسجَّل في سجل الإجراءات بلا القيمة."><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <ErrorBar error={err} />
-        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!value.trim() || !reason.trim()}>حفظ مشفَّراً</Button><Button variant="ghost" onClick={close}>إلغاء</Button></div>
+        <div className="flex gap-2"><Button onClick={submit} busy={busy} disabled={!value.trim()}>حفظ مشفَّراً</Button><Button variant="ghost" onClick={close}>إلغاء</Button></div>
       </div>
-    </Modal>
+    </Screen>
   );
 }

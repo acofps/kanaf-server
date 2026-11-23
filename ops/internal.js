@@ -4,6 +4,7 @@ import { query } from "../db/pool.js";
 import { documentSlotStats } from "../invoicing/slot.js";
 import { sweepDueCampaigns } from "../notifications/scheduler.js";
 import { sweepDailyReminders } from "../notifications/reminders.js";
+import { sweepAutoRenewals } from "../billing/autorenew.js";
 
 /* ============================================================
    نقطة تشغيل محمية للمجدول + تنظيف الرموز المنتهية
@@ -82,6 +83,8 @@ internalRouter.post("/sweep", async (req, res) => {
   try {
     const campaigns = await sweepDueCampaigns();
     const reminders = await sweepDailyReminders();
+    // KANAF-ORD-0013 §7: بلا AUTORENEW_ENABLED=1 يعود فوراً { skipped: autorenew_disabled } بلا أي استعلام.
+    const autorenew = await sweepAutoRenewals({ log: (m) => console.log(m) });
     const days = process.env.AUTH_CLEANUP_RETENTION_DAYS ? Number(process.env.AUTH_CLEANUP_RETENTION_DAYS) : null;
     const cleanup = days ? await cleanupExpiredAuthArtifacts({ retentionDays: days }) : { skipped: "AUTH_CLEANUP_RETENTION_DAYS غير مضبوط (D-01)" };
     state.lastSuccessAt = new Date().toISOString();
@@ -89,6 +92,7 @@ internalRouter.post("/sweep", async (req, res) => {
       campaigns: { swept: campaigns.swept ?? 0, skipped: Boolean(campaigns.skipped) },
       reminders: { swept: reminders.swept ?? 0, failed: reminders.failed ?? 0, skipped: Boolean(reminders.skipped) },
       cleanup,
+      autorenew: autorenew.skipped ? { skipped: autorenew.reason } : { noticed: autorenew.noticed, charged: autorenew.charged, attempted: autorenew.results.length },
     };
     res.json({ ok: true, ...state.lastResult });
   } catch (err) {

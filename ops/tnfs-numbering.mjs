@@ -1,4 +1,4 @@
-// ترقيم «تنفس» — مشغّل ops/tnfs-numbering.sql من Render Shell (لا psql هناك). KANAF-ORD-0012 §6.5
+// ترقيم «تنفس بحرية» — مشغّل ops/tnfs-numbering.sql من Render Shell (لا psql هناك). KANAF-ORD-0012 §6.5
 //
 //   node ops/tnfs-numbering.mjs           ← تجربة: ينفّذ داخل معاملة ثم يتراجع. لا أثر.
 //   node ops/tnfs-numbering.mjs --apply   ← تثبيت: نفس الشيء ثم COMMIT.

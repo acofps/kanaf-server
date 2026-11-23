@@ -53,6 +53,13 @@ const safeName = (name, fallback) =>
     .replace(/[^a-zA-Z0-9]/g, "")          // لا شرطات ولا نقاط ولا شرطات سفلية
     .toLowerCase() || fallback;
 
+/* ------------------------------------------------------------
+   KANAF-ORD-0014 §2.1: البناء إنتاجي دائماً، مهما كان NODE_ENV في الصدفة.
+   بلا هذا كان `NODE_ENV=development npm run build` (أو test) يُخرج نسخة
+   React التطويرية — ضعف الحجم وبتحذيرات تطويرية — ويُدفع بلا أن يسقط شيء.
+   ------------------------------------------------------------ */
+if (process.argv.includes("build")) process.env.NODE_ENV = "production";
+
 export default defineConfig({
   plugins: [react()],
   build: {

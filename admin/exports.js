@@ -218,7 +218,7 @@ adminExportsRouter.get("/exports/payments.csv", requireAdminAuth, requirePermiss
     const settings = await getBillingSettings();
     const { fromAndJoins, params, orderBy, filters } = buildPaymentFilter(req.query);
 
-    startCsv(res, `kanaf-payments-${stamp()}.csv`);
+    startCsv(res, `tanaffus-payments-${stamp()}.csv`); // ORD-0013 §12: اسم معروض للمسؤول
     writeMeta(res, { title: "المدفوعات", admin: req.admin, filters, timezone: settings.reportingTimezone });
 
     const rows = await streamRows(res, {
@@ -254,7 +254,7 @@ adminExportsRouter.get("/exports/invoices.csv", requireAdminAuth, requirePermiss
     const settings = await getBillingSettings();
     const { fromAndJoins, params, orderBy, filters } = buildInvoiceFilter(req.query);
 
-    startCsv(res, `kanaf-invoices-${stamp()}.csv`);
+    startCsv(res, `tanaffus-invoices-${stamp()}.csv`); // ORD-0013 §12: اسم معروض للمسؤول
     writeMeta(res, { title: "الفواتير الضريبية", admin: req.admin, filters, timezone: settings.reportingTimezone });
 
     const rows = await streamRows(res, {
@@ -292,7 +292,7 @@ adminExportsRouter.get("/exports/subscriptions.csv", requireAdminAuth, requirePe
     const settings = await getBillingSettings();
     const { fromAndJoins, params, statusExpr, orderBy, filters } = buildSubscriptionFilter(req.query);
 
-    startCsv(res, `kanaf-subscriptions-${stamp()}.csv`);
+    startCsv(res, `tanaffus-subscriptions-${stamp()}.csv`); // ORD-0013 §12: اسم معروض للمسؤول
     writeMeta(res, { title: "الاشتراكات", admin: req.admin, filters, timezone: settings.reportingTimezone });
 
     const rows = await streamRows(res, {
@@ -336,7 +336,7 @@ adminExportsRouter.get("/exports/refunds.csv", requireAdminAuth, requirePermissi
     const settings = await getBillingSettings();
     const { fromAndJoins, params, orderBy, filters } = buildRefundFilter(req.query);
 
-    startCsv(res, `kanaf-refunds-${stamp()}.csv`);
+    startCsv(res, `tanaffus-refunds-${stamp()}.csv`); // ORD-0013 §12: اسم معروض للمسؤول
     writeMeta(res, { title: "الاستردادات", admin: req.admin, filters, timezone: settings.reportingTimezone });
 
     const rows = await streamRows(res, {
@@ -378,7 +378,7 @@ adminExportsRouter.get("/exports/users.csv", requireAdminAuth, requirePermission
     const settings = await getBillingSettings();
     const { fromAndJoins, params, filters, subscriptionStatusExpr } = buildUserListFilter(req.query);
 
-    startCsv(res, `kanaf-users-${stamp()}.csv`);
+    startCsv(res, `tanaffus-users-${stamp()}.csv`); // ORD-0013 §12: اسم معروض للمسؤول
     writeMeta(res, { title: "المستخدمون", admin: req.admin, filters, timezone: settings.reportingTimezone });
 
     const rows = await streamRows(res, {
@@ -432,7 +432,7 @@ adminExportsRouter.get("/exports/audit-log.csv", requireAdminAuth, requirePermis
     const { reportingTimezone } = await getBillingSettings();
     const { whereSql, params, filters } = buildAuditFilter(req.query, reportingTimezone);
 
-    startCsv(res, `kanaf-audit-log-${stamp()}.csv`);
+    startCsv(res, `tanaffus-audit-log-${stamp()}.csv`); // ORD-0013 §12: اسم معروض للمسؤول
     writeMeta(res, { title: "سجل الإجراءات الإدارية", admin: req.admin, filters, timezone: settings.reportingTimezone });
 
     const rows = await streamRows(res, {

@@ -5,6 +5,7 @@
 import "dotenv/config";
 import { pool } from "./pool.js";
 import { hashPassword } from "../admin/auth.js";
+import { ADMIN_MIN_PASSWORD_LENGTH } from "../admin/password-rule.js"; // ORD-0013 §5.4
 
 const [name, email, password] = process.argv.slice(2);
 
@@ -12,10 +13,10 @@ if (!name || !email || !password) {
   console.error('Usage: node db/seed_first_admin.js "الاسم" "email@domain.com" "كلمة مرور قوية"');
   process.exit(1);
 }
-if (password.length < 15) {
+if (password.length < ADMIN_MIN_PASSWORD_LENGTH) {
   // Matches the NIST SP 800-63B guidance the engineering review cited
   // for single-factor password auth.
-  console.error("Password must be at least 15 characters for a single-factor admin account.");
+  console.error(`Password must be at least ${ADMIN_MIN_PASSWORD_LENGTH} characters for a single-factor admin account.`);
   process.exit(1);
 }
 

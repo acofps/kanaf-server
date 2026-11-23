@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import express from "express";
 import { query, withTransaction } from "../db/pool.js";
+import { recordError } from "../ops/error-log.js";
 import { requireVerifiedUser } from "../auth/middleware.js";
 import { getUserSubscription } from "../billing/subscription.js";
 import { assertContentAvailable } from "../content/catalog.js";
@@ -27,7 +28,7 @@ export const userDataRouter = express.Router();
    ------------------------------------------------------------
    الأثر التجاري المباشر
    ------------------------------------------------------------
-   شرط فتح "بوصلة تنفس" (ميزة تنفس+ المدفوعة) هو
+   شرط فتح "بوصلة تنفس بحرية" (ميزة تنفس+ المدفوعة) هو
    trackedDays >= 7 || hasScreening، والعدّاد يصفّر مع كل تحديث.
    أي أن ميزة مدفوعة كان يستحيل الوصول إليها. GET /api/me/summary
    أدناه هو المصدر الذي يقرأ منه التطبيق هذين الرقمين الآن — من
@@ -78,6 +79,7 @@ function sendCreated(res, { row, replayed }) {
 function fail(res, err, where) {
   if (err.status) return res.status(err.status).json({ error: err.message });
   console.error(`[userdata/${where}]`, err);
+  recordError(err, { location: `userdata/${where}`, status: 500 }); // KANAF-ORD-0013 §11
   return res.status(500).json({ error: "internal_error" });
 }
 
@@ -176,7 +178,7 @@ userDataRouter.post("/push/unsubscribe", requireVerifiedUser, async (req, res) =
      • ولو أرسل "2026-08-10" الصحيح → يُقارَن بيوم الخادم (9)
        فيُرفض بـlogged_on_in_future.
 
-   والعدّاد نفسه هو ما يفتح «بوصلة تنفس» المدفوعة.
+   والعدّاد نفسه هو ما يفتح «بوصلة تنفس بحرية» المدفوعة.
 
    الآن: تاريخ مجرد فقط، ومهلة يوم كامل في فحص المستقبل تغطي كل
    المناطق الزمنية (UTC−12 إلى UTC+14) بلا الحاجة لمعرفة إزاحة
@@ -243,8 +245,8 @@ userDataRouter.get("/logs", requireVerifiedUser, async (req, res) => {
    4) الاستبيانات — screenings
 
    answers (إجابات البنود) تُحفظ لأن المستخدم يملكها ويراها في
-   تطبيقه. لا مسار إداري في هذا المستودع يختار هذا العمود؛ الوصول
-   إليه يمر بـbreak-glass بموافق ثانٍ. التفصيل في
+   تطبيقه. لا مسار إداري في هذا المستودع يختار هذا العمود، ولا
+   طريق للإدارة إليه (الوصول الطارئ أُلغي). التفصيل في
    04_PRIVACY_CLASSIFICATION.md.
 
    ⚠️ لا يُحسب هنا أي مؤشر خطر ولا يُطلق أي مسار أمان — التطبيق
@@ -557,7 +559,7 @@ userDataRouter.delete("/notebooks/:id", requireVerifiedUser, async (req, res) =>
 });
 
 /* ============================================================
-   7) جلسات أدوات تنفس
+   7) جلسات أدوات تنفس بحرية
    ============================================================ */
 
 userDataRouter.post("/cbt-sessions", requireVerifiedUser, async (req, res) => {
@@ -624,7 +626,7 @@ userDataRouter.get("/cbt-sessions", requireVerifiedUser, async (req, res) => {
    ============================================================ */
 
 /** هل يعرف المحرّك هذه المنطقة الزمنية فعلاً؟ */
-function isKnownTimeZone(tz) {
+export function isKnownTimeZone(tz) {
   if (typeof tz !== "string" || !tz) return false;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
@@ -925,6 +927,137 @@ userDataRouter.get("/profile", requireVerifiedUser, async (req, res) => {
   } catch (err) { fail(res, err, "profile"); }
 });
 
+/* ============================================================
+   قواعد الملف الشخصي — مصدر واحد (KANAF-ORD-0013 §4.3).
+   كانت داخل PATCH /api/me/profile وحده. واللوحة صارت تعدّل الحقول
+   نفسها، فاستُخرجت كما هي حرفاً ليستدعيها المساران معاً: قاعدة واحدة
+   لرقم سعودي أو لمطابقة رمز الاتصال، لا نسختان تفترقان يوماً.
+   storedCountry: دالة تعيد الدولة المخزّنة حين لا تصل في الطلب.
+   ============================================================ */
+export async function validateProfilePatch(body, storedCountry) {
+  body = body || {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  let ageRange;
+  if (has("ageRange")) {
+    ageRange = body.ageRange === null || body.ageRange === "" ? null : String(body.ageRange);
+    if (ageRange !== null && !AGE_RANGES.includes(ageRange)) {
+      return { error: { status: 400, body: { error: "invalid_age_range", allowed: AGE_RANGES } } };
+    }
+  }
+
+  let gender;
+  if (has("gender")) {
+    gender = body.gender === null || body.gender === "" ? null : String(body.gender);
+    if (gender !== null && !GENDERS.includes(gender)) {
+      return { error: { status: 400, body: { error: "invalid_gender", allowed: GENDERS } } };
+    }
+  }
+
+  let country;
+  if (has("country")) {
+    country = body.country === null || body.country === "" ? null : String(body.country).toUpperCase();
+    if (country !== null && !COUNTRY_BY_CODE.has(country)) {
+      return { error: { status: 400, body: { error: "invalid_country" } } };
+    }
+  }
+
+  let phoneDial;
+  let phoneNational;
+  if (has("phone")) {
+    const p = body.phone;
+    if (p === null) {
+      phoneDial = null;
+      phoneNational = null;
+    } else {
+      const dial = normalizeDigits(p?.dial).replace(/^0+/, "");
+      const national = normalizeDigits(p?.national).replace(/^0+/, "");
+
+      if (!dial || !national) return { error: { status: 400, body: { error: "phone_incomplete" } } };
+      if (!/^[1-9][0-9]{0,3}$/.test(dial)) return { error: { status: 400, body: { error: "invalid_dial_code" } } };
+
+      /* السعودية: تسع خانات تبدأ بـ5. مكتوبة كقاعدة خاصة لدولة
+         واحدة عمداً — تعميمها على كل الدول (وهو ما تحذّر منه
+         المرحلة نصّاً) كان سيرفض أرقاماً صحيحة من نصف العالم. */
+      if (dial === "966") {
+        if (!/^5[0-9]{8}$/.test(national)) {
+          return { error: { status: 400, body: {
+            error: "invalid_saudi_phone",
+            message: "الرقم السعودي تسع خانات ويبدأ بـ5 (مثال: 512345678) بلا الصفر ولا مفتاح الدولة.",
+          } } };
+        }
+      } else if (national.length < 4 || national.length > 14) {
+        return { error: { status: 400, body: { error: "invalid_phone_length" } } };
+      }
+
+      // الحدّ الأقصى لطول E.164 خمس عشرة خانة شاملة رمز الدولة.
+      if (dial.length + national.length > 15) {
+        return { error: { status: 400, body: { error: "invalid_phone_length" } } };
+      }
+
+      /* رمز الاتصال يجب أن يطابق الدولة المختارة. بدون هذا الفحص
+         يستقر في الصف "دولة = مصر ورقم سعودي" — وهو نوع التعارض
+         الذي لا يُكتشف إلا يوم يُتصل بالرقم.
+
+         وحين لا تصل الدولة في نفس النداء (المستخدم غيّر رقمه
+         وحده)، تُقرأ **الدولة المخزّنة** لا يُتغاضى عن الفحص.
+         التغاضي كان سيجعل تحديث الرقم منفرداً ثغرةً في قاعدة
+         تسري على تحديثه مع الدولة. */
+      let effectiveCountry = country;
+      if (effectiveCountry === undefined) {
+        effectiveCountry = await storedCountry();
+      }
+      const target = effectiveCountry ? COUNTRY_BY_CODE.get(effectiveCountry) : null;
+      if (target && target.dial !== dial) {
+        return { error: { status: 400, body: { error: "dial_country_mismatch", expected: target.dial } } };
+      }
+      if (!target && ![...COUNTRY_BY_CODE.values()].some((c) => c.dial === dial)) {
+        return { error: { status: 400, body: { error: "unsupported_dial_code" } } };
+      }
+
+      phoneDial = dial;
+      phoneNational = national;
+    }
+  }
+
+  const touchesUsers = ageRange !== undefined || gender !== undefined;
+  const touchesProfile = country !== undefined || phoneDial !== undefined;
+  return { fields: { ageRange, gender, country, phoneDial, phoneNational, touchesUsers, touchesProfile } };
+}
+
+/** الكتابة: جدولان، داخل معاملة المستدعي. لا try/catch: أي عبارة تفشل تُلغي المعاملة كاملة. */
+export async function writeProfilePatch(client, userId, { ageRange, gender, country, phoneDial, phoneNational, touchesUsers, touchesProfile }) {
+  if (touchesUsers) {
+    await client.query(
+      `UPDATE users
+       SET age_range  = CASE WHEN $2 THEN $3 ELSE age_range END,
+           gender     = CASE WHEN $4 THEN $5 ELSE gender END,
+           updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [userId, ageRange !== undefined, ageRange ?? null, gender !== undefined, gender ?? null]
+    );
+  }
+
+  if (touchesProfile) {
+    /* COALESCE لا تصلح هنا: هي تعني "أبقِ القديم لو الجديد
+       NULL"، ونحن نحتاج NULL أن يعني "امسح". فالتمييز بعَلَم
+       منطقي مستقل عن القيمة. */
+    await client.query(
+      `INSERT INTO user_profile (user_id, country_code, phone_country_code, phone_national, updated_at)
+       VALUES ($1, $3, $5, $6, now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         country_code       = CASE WHEN $2 THEN $3 ELSE user_profile.country_code END,
+         phone_country_code = CASE WHEN $4 THEN $5 ELSE user_profile.phone_country_code END,
+         phone_national     = CASE WHEN $4 THEN $6 ELSE user_profile.phone_national END,
+         updated_at         = now()`,
+      [
+        userId,
+        country !== undefined, country ?? null,
+        phoneDial !== undefined, phoneDial ?? null, phoneNational ?? null,
+      ]
+    );
+  }
+}
+
 /**
  * PATCH /api/me/profile  { ageRange, gender, country, phone: { dial, national } }
  *
@@ -955,94 +1088,13 @@ userDataRouter.patch("/profile", requireVerifiedUser, async (req, res) => {
        سيترك نصف تعديل — أو أسوأ: عبارة فاشلة تُفسد المعاملة
        فيتحوّل COMMIT إلى ROLLBACK صامت. الدرس الذي كلّف المشروع
        أول دفعة حقيقية. */
-    let ageRange;
-    if (has("ageRange")) {
-      ageRange = body.ageRange === null || body.ageRange === "" ? null : String(body.ageRange);
-      if (ageRange !== null && !AGE_RANGES.includes(ageRange)) {
-        return res.status(400).json({ error: "invalid_age_range", allowed: AGE_RANGES });
-      }
-    }
+    const v = await validateProfilePatch(body, async () => {
+      const { rows: current } = await query(`SELECT country_code FROM user_profile WHERE user_id = $1`, [req.userId]);
+      return current[0]?.country_code || null;
+    });
+    if (v.error) return res.status(v.error.status).json(v.error.body);
+    const { touchesUsers, touchesProfile } = v.fields;
 
-    let gender;
-    if (has("gender")) {
-      gender = body.gender === null || body.gender === "" ? null : String(body.gender);
-      if (gender !== null && !GENDERS.includes(gender)) {
-        return res.status(400).json({ error: "invalid_gender", allowed: GENDERS });
-      }
-    }
-
-    let country;
-    if (has("country")) {
-      country = body.country === null || body.country === "" ? null : String(body.country).toUpperCase();
-      if (country !== null && !COUNTRY_BY_CODE.has(country)) {
-        return res.status(400).json({ error: "invalid_country" });
-      }
-    }
-
-    let phoneDial;
-    let phoneNational;
-    if (has("phone")) {
-      const p = body.phone;
-      if (p === null) {
-        phoneDial = null;
-        phoneNational = null;
-      } else {
-        const dial = normalizeDigits(p?.dial).replace(/^0+/, "");
-        const national = normalizeDigits(p?.national).replace(/^0+/, "");
-
-        if (!dial || !national) return res.status(400).json({ error: "phone_incomplete" });
-        if (!/^[1-9][0-9]{0,3}$/.test(dial)) return res.status(400).json({ error: "invalid_dial_code" });
-
-        /* السعودية: تسع خانات تبدأ بـ5. مكتوبة كقاعدة خاصة لدولة
-           واحدة عمداً — تعميمها على كل الدول (وهو ما تحذّر منه
-           المرحلة نصّاً) كان سيرفض أرقاماً صحيحة من نصف العالم. */
-        if (dial === "966") {
-          if (!/^5[0-9]{8}$/.test(national)) {
-            return res.status(400).json({
-              error: "invalid_saudi_phone",
-              message: "الرقم السعودي تسع خانات ويبدأ بـ5 (مثال: 512345678) بلا الصفر ولا مفتاح الدولة.",
-            });
-          }
-        } else if (national.length < 4 || national.length > 14) {
-          return res.status(400).json({ error: "invalid_phone_length" });
-        }
-
-        // الحدّ الأقصى لطول E.164 خمس عشرة خانة شاملة رمز الدولة.
-        if (dial.length + national.length > 15) {
-          return res.status(400).json({ error: "invalid_phone_length" });
-        }
-
-        /* رمز الاتصال يجب أن يطابق الدولة المختارة. بدون هذا الفحص
-           يستقر في الصف "دولة = مصر ورقم سعودي" — وهو نوع التعارض
-           الذي لا يُكتشف إلا يوم يُتصل بالرقم.
-
-           وحين لا تصل الدولة في نفس النداء (المستخدم غيّر رقمه
-           وحده)، تُقرأ **الدولة المخزّنة** لا يُتغاضى عن الفحص.
-           التغاضي كان سيجعل تحديث الرقم منفرداً ثغرةً في قاعدة
-           تسري على تحديثه مع الدولة. */
-        let effectiveCountry = country;
-        if (effectiveCountry === undefined) {
-          const { rows: current } = await query(
-            `SELECT country_code FROM user_profile WHERE user_id = $1`,
-            [req.userId]
-          );
-          effectiveCountry = current[0]?.country_code || null;
-        }
-        const target = effectiveCountry ? COUNTRY_BY_CODE.get(effectiveCountry) : null;
-        if (target && target.dial !== dial) {
-          return res.status(400).json({ error: "dial_country_mismatch", expected: target.dial });
-        }
-        if (!target && ![...COUNTRY_BY_CODE.values()].some((c) => c.dial === dial)) {
-          return res.status(400).json({ error: "unsupported_dial_code" });
-        }
-
-        phoneDial = dial;
-        phoneNational = national;
-      }
-    }
-
-    const touchesUsers = ageRange !== undefined || gender !== undefined;
-    const touchesProfile = country !== undefined || phoneDial !== undefined;
     if (!touchesUsers && !touchesProfile) {
       return res.status(400).json({ error: "nothing_to_update" });
     }
@@ -1050,38 +1102,7 @@ userDataRouter.patch("/profile", requireVerifiedUser, async (req, res) => {
     /* -------- الكتابة: جدولان، معاملة واحدة --------
        ولا try/catch داخلها. أي عبارة تفشل ترمي، والمعاملة تُلغى
        كاملة، فلا يستقر نصف ملف شخصي. */
-    await withTransaction(async (client) => {
-      if (touchesUsers) {
-        await client.query(
-          `UPDATE users
-           SET age_range  = CASE WHEN $2 THEN $3 ELSE age_range END,
-               gender     = CASE WHEN $4 THEN $5 ELSE gender END,
-               updated_at = now()
-           WHERE id = $1 AND deleted_at IS NULL`,
-          [req.userId, ageRange !== undefined, ageRange ?? null, gender !== undefined, gender ?? null]
-        );
-      }
-
-      if (touchesProfile) {
-        /* COALESCE لا تصلح هنا: هي تعني "أبقِ القديم لو الجديد
-           NULL"، ونحن نحتاج NULL أن يعني "امسح". فالتمييز بعَلَم
-           منطقي مستقل عن القيمة. */
-        await client.query(
-          `INSERT INTO user_profile (user_id, country_code, phone_country_code, phone_national, updated_at)
-           VALUES ($1, $3, $5, $6, now())
-           ON CONFLICT (user_id) DO UPDATE SET
-             country_code       = CASE WHEN $2 THEN $3 ELSE user_profile.country_code END,
-             phone_country_code = CASE WHEN $4 THEN $5 ELSE user_profile.phone_country_code END,
-             phone_national     = CASE WHEN $4 THEN $6 ELSE user_profile.phone_national END,
-             updated_at         = now()`,
-          [
-            req.userId,
-            country !== undefined, country ?? null,
-            phoneDial !== undefined, phoneDial ?? null, phoneNational ?? null,
-          ]
-        );
-      }
-    });
+    await withTransaction((client) => writeProfilePatch(client, req.userId, v.fields));
 
     /* الرد هو ما في القاعدة بعد الكتابة، لا ما أرسله العميل.
        إعادة صدى المدخلات كانت ستُظهر "حُفظ" لقيمة لم تصل. */
@@ -1198,6 +1219,44 @@ function readImageMeta(buf) {
  * محلّل خاص بهذا المسار لا يمسّ بقية المسارات — express.json لا
  * يعمل أصلاً على نوع محتوى ليس JSON.
  */
+/* تخزين الصورة — مصدر واحد للمسارين: المستخدم (PUT /api/me/avatar) واللوحة
+   (KANAF-ORD-0013 §4.3). الفحص نفسه: النوع من البايتات لا من الترويسة، والحدّان. */
+export async function storeAvatar(userId, body) {
+  const buf = body;
+  if (!Buffer.isBuffer(buf) || buf.length === 0) {
+    return { error: { status: 400, body: { error: "empty_body", message: "أرسل بايتات الصورة مع Content-Type صورة." } } };
+  }
+  if (buf.length < AVATAR_MIN_BYTES) return { error: { status: 400, body: { error: "image_too_small" } } };
+  if (buf.length > AVATAR_MAX_BYTES) return { error: { status: 413, body: { error: "image_too_large" } } };
+
+  const meta = readImageMeta(buf);
+  if (!meta) return { error: { status: 415, body: { error: "unsupported_image" } } };
+  if (meta.width && meta.height && (meta.width > 4096 || meta.height > 4096)) {
+    return { error: { status: 413, body: { error: "image_dimensions_too_large" } } };
+  }
+
+  /* md5 هنا **بصمة محتوى للتخزين المؤقت لا أداة أمنية**: قيمة
+     ETag تتغيّر مع أي تغيّر في البايتات وتكفي لإبطال نسخة
+     المتصفح. لا قرار أمني مبني عليها في أي مكان. */
+  const checksum = crypto.createHash("md5").update(buf).digest("hex");
+
+  const { rows } = await query(
+    `INSERT INTO user_avatars (user_id, mime, bytes, byte_size, width, height, checksum, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+     ON CONFLICT (user_id) DO UPDATE SET
+       mime = EXCLUDED.mime, bytes = EXCLUDED.bytes, byte_size = EXCLUDED.byte_size,
+       width = EXCLUDED.width, height = EXCLUDED.height,
+       checksum = EXCLUDED.checksum, updated_at = now()
+     RETURNING checksum, mime, byte_size, width, height, updated_at`,
+    [userId, meta.mime, buf, buf.length, meta.width ?? null, meta.height ?? null, checksum]
+  );
+
+  /* users.photo_url لا يُكتب فيه شيء — عمداً وليس نسياناً.
+     مؤشر في users وبايتات في user_avatars مصدرا حقيقة، وأولهما
+     سيكذب يوم يفشل تحديثه. مكتوب في رأس الترحيل 010. */
+  return { row: rows[0] };
+}
+
 userDataRouter.put(
   "/avatar",
   requireVerifiedUser,
@@ -1228,38 +1287,9 @@ userDataRouter.put(
 
   async (req, res) => {
     try {
-      const buf = req.body;
-      if (!Buffer.isBuffer(buf) || buf.length === 0) {
-        return res.status(400).json({ error: "empty_body", message: "أرسل بايتات الصورة مع Content-Type صورة." });
-      }
-      if (buf.length < AVATAR_MIN_BYTES) return res.status(400).json({ error: "image_too_small" });
-      if (buf.length > AVATAR_MAX_BYTES) return res.status(413).json({ error: "image_too_large" });
-
-      const meta = readImageMeta(buf);
-      if (!meta) return res.status(415).json({ error: "unsupported_image" });
-      if (meta.width && meta.height && (meta.width > 4096 || meta.height > 4096)) {
-        return res.status(413).json({ error: "image_dimensions_too_large" });
-      }
-
-      /* md5 هنا **بصمة محتوى للتخزين المؤقت لا أداة أمنية**: قيمة
-         ETag تتغيّر مع أي تغيّر في البايتات وتكفي لإبطال نسخة
-         المتصفح. لا قرار أمني مبني عليها في أي مكان. */
-      const checksum = crypto.createHash("md5").update(buf).digest("hex");
-
-      const { rows } = await query(
-        `INSERT INTO user_avatars (user_id, mime, bytes, byte_size, width, height, checksum, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-         ON CONFLICT (user_id) DO UPDATE SET
-           mime = EXCLUDED.mime, bytes = EXCLUDED.bytes, byte_size = EXCLUDED.byte_size,
-           width = EXCLUDED.width, height = EXCLUDED.height,
-           checksum = EXCLUDED.checksum, updated_at = now()
-         RETURNING checksum, mime, byte_size, width, height, updated_at`,
-        [req.userId, meta.mime, buf, buf.length, meta.width ?? null, meta.height ?? null, checksum]
-      );
-
-      /* users.photo_url لا يُكتب فيه شيء — عمداً وليس نسياناً.
-         مؤشر في users وبايتات في user_avatars مصدرا حقيقة، وأولهما
-         سيكذب يوم يفشل تحديثه. مكتوب في رأس الترحيل 010. */
+      const r = await storeAvatar(req.userId, req.body);
+      if (r.error) return res.status(r.error.status).json(r.error.body);
+      const rows = [r.row];
       res.json({ photo: { exists: true, version: rows[0].checksum, mime: rows[0].mime } });
     } catch (err) {
       /* حدّ الحجم لا يصل إلى هنا — يلتقطه معالج الخطأ الموضعي
@@ -1336,7 +1366,7 @@ userDataRouter.get("/plans", requireVerifiedUser, async (req, res) => {
 });
 
 /* ============================================================
-   12) ملخص التقدّم — مصدر شرط فتح "بوصلة تنفس"
+   12) ملخص التقدّم — مصدر شرط فتح "بوصلة تنفس بحرية"
 
    trackedDays يُحسب من الصفوف الفعلية لا من عدّاد في المتصفح. هذا
    هو السطر الذي يفتح ميزة مدفوعة كانت مغلقة على كل مستخدم.

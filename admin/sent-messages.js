@@ -1,6 +1,6 @@
 import express from "express";
 import { query } from "../db/pool.js";
-import { requireAdminAuth, requirePermission, requireReasonAndLog, fail } from "./middleware.js";
+import { requireAdminAuth, requirePermission, logSensitiveAccess, fail } from "./middleware.js";
 import { readPaging } from "./filters.js";
 
 /* ============================================================
@@ -18,7 +18,7 @@ import { readPaging } from "./filters.js";
      body_withheld = true ونص ثابت. لا كود تحقق ولا رابط إعادة تعيين.
    • سبب الفشل يُعاد بعد تقنيع أي عنوان بريد فيه (أخطاء SMTP تحمله أحياناً).
    • الفتح قراءة لبيانات شخصية: صلاحية notifications:view_sent، وسبب مكتوب
-     يُسجَّل في سجل الوصول قبل إعادة أي صف (requireReasonAndLog).
+     يُسجَّل في سجل الوصول قبل إعادة أي صف — بسبب تلقائي منذ KANAF-ORD-0013 §10.
    ============================================================ */
 
 export const sentMessagesRouter = express.Router();
@@ -48,7 +48,7 @@ const UNION = `
 
 const FILTERS = {
   source: ["campaign", "inbox", "system"],
-  channel: ["in_app", "email", "push"],
+  channel: ["in_app", "email", "push", "sms", "whatsapp"],
   status: ["queued", "processing", "sent", "delivered", "failed", "skipped"],
 };
 
@@ -56,7 +56,20 @@ const FILTERS = {
 sentMessagesRouter.get(
   "/sent-messages",
   requireAdminAuth, requirePermission("notifications:view_sent"),
-  requireReasonAndLog("view_sent_messages", { resolveTargetUserId: () => null }),
+  /* KANAF-ORD-0013 §10: لا مطالبة بسبب — المالك طلب ألّا يُسأل، لا أن يختفي الأثر.
+     فيُكتب صف في سجل الوصول **قبل** إعادة أي صف (كما كانت البوابة)، باسم المطّلع
+     ووقته، وبسبب تلقائي يذكر ما اطُّلع عليه (الصفحة والمرشّحات). فشل الكتابة يمنع
+     القراءة: لا اطّلاع بلا أثر. */
+  async (req, res, next) => {
+    try {
+      const parts = ["source", "channel", "status"].filter((k) => req.query[k]).map((k) => `${k}=${String(req.query[k]).slice(0, 20)}`);
+      await logSensitiveAccess({
+        adminUserId: req.admin.id, action: "view_sent_messages", ipAddress: req.ip,
+        reason: `فتح صفحة الرسائل المرسلة (صفحة ${Math.max(1, parseInt(req.query.page, 10) || 1)}${parts.length ? "، " + parts.join("، ") : ""})`,
+      });
+      next();
+    } catch (err) { return fail(res, err, "admin/sent-messages:access-log", req); }
+  },
   async (req, res) => {
     try {
       const { page, pageSize, offset } = readPaging(req, { defaultSize: 25, maxSize: 100 });
@@ -73,7 +86,7 @@ sentMessagesRouter.get(
       params.push(pageSize, offset);
       const { rows } = await query(
         `SELECT m.id, m.source, m.kind, m.channel, m.status, m.error_code, m.error_detail, m.at,
-                m.title, m.body, m.campaign_id, u.name AS user_name, ${MASK("u.email")} AS user_email_masked
+                m.title, m.body, m.campaign_id, m.user_id, u.name AS user_name, ${MASK("u.email")} AS user_email_masked
          FROM (${UNION}) m JOIN users u ON u.id = m.user_id
          ${w}
          ORDER BY m.at DESC, m.id
@@ -85,7 +98,7 @@ sentMessagesRouter.get(
           const withheld = r.source === "system";
           return {
             id: r.id, source: r.source, kind: r.kind, channel: r.channel, status: r.status, at: r.at,
-            recipient: { name: r.user_name, emailMasked: r.user_email_masked },
+            recipient: { id: r.user_id, name: r.user_name, emailMasked: r.user_email_masked }, // id: §4.2 الاسم رابط
             campaignId: r.campaign_id,
             title: withheld ? null : r.title,
             body: withheld ? null : r.body,

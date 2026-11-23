@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useLayoutEffect, useState, useCallback } from "react";
 import {
   LayoutDashboard, Users as UsersIcon, Mail, BookOpen, Bell, CreditCard,
-  FileText, ShieldAlert, UserCog, ScrollText, LogOut, Menu, X,
-  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug,
+  FileText, UserCog, ScrollText, LogOut, Menu, X,
+  SlidersHorizontal, History, Wallet, Sun, Moon, Send, ShoppingCart, TicketPercent, Plug, BadgeCheck, Bug, UserMinus, LayoutTemplate,
 } from "lucide-react";
 import { api } from "./api.js";
 import { C, ROLE_LABEL, canAny, sectionTone, readTheme, applyTheme } from "./theme.js";
 import { Spinner } from "./ui.jsx";
+import { Link, navigate, useSegments } from "./router.js";
 
 import Login from "./pages/Login.jsx";
 import Overview from "./pages/Overview.jsx";
@@ -17,7 +18,6 @@ import Notifications from "./pages/Notifications.jsx";
 import Plans from "./pages/Plans.jsx";
 import Invoices from "./pages/Invoices.jsx";
 import Billing, { BILLING_PERMS } from "./pages/Billing.jsx";
-import BreakGlass from "./pages/BreakGlass.jsx";
 import AdminUsers from "./pages/AdminUsers.jsx";
 import AccessLog from "./pages/AccessLog.jsx";
 import AuditLog from "./pages/AuditLog.jsx";
@@ -27,6 +27,10 @@ import SentMessages from "./pages/SentMessages.jsx";
 import Carts from "./pages/Carts.jsx";
 import Discounts from "./pages/Discounts.jsx";
 import Integrations from "./pages/Integrations.jsx";
+import Subscribers from "./pages/Subscribers.jsx";
+import SystemErrors from "./pages/SystemErrors.jsx";
+import Templates from "./pages/Templates.jsx";
+import CancelledMembers from "./pages/CancelledMembers.jsx";
 
 /* ============================================================
    هيكل اللوحة.
@@ -54,6 +58,8 @@ const GROUPS = [
   { key: "gov",   label: "الحوكمة" },
 ];
 
+export const PANEL_TITLE = "لوحة تنفس بحرية";
+
 const SECTIONS = [
   { key: "overview",     group: "watch", label: "نظرة عامة",     icon: LayoutDashboard,   perms: ["overview:view"] },
   { key: "users",        group: "watch", label: "المستخدمون",     icon: UsersIcon,         perms: ["users:view"] },
@@ -63,16 +69,19 @@ const SECTIONS = [
   { key: "notifications",group: "ops",   label: "الإشعارات والتسويق", icon: Bell,          perms: ["notifications:view"] },
   { key: "carts",        group: "ops",   label: "السلات المتروكة", icon: ShoppingCart,      perms: ["carts:view"] },
   { key: "plans",        group: "ops",   label: "الباقات",        icon: CreditCard,        perms: ["plans:view"] },
+  { key: "subscribers",  group: "ops",   label: "الاشتراكات",     icon: BadgeCheck,        perms: ["subscriptions:view"] }, // KANAF-ORD-0013 §6
+  { key: "cancelled-members", group: "watch", label: "الأعضاء الملغون", icon: UserMinus,      perms: ["members:view_cancelled"] }, // KANAF-ORD-0013 §8
   { key: "discounts",    group: "ops",   label: "أكواد الخصم",    icon: TicketPercent,     perms: ["discounts:view"] },
   { key: "invoices",     group: "ops",   label: "الفواتير",       icon: FileText,          perms: ["invoices:view", "credit_notes:view"] },
   // KANAF-ORD-0001 R15-09 — الشاشات المالية التي كانت مبنية في الخادم بلا واجهة
   { key: "billing",      group: "ops",   label: "المالية",        icon: Wallet,            perms: BILLING_PERMS },
-  { key: "break-glass",  group: "gov",   label: "الوصول الطارئ",  icon: ShieldAlert,       perms: ["break_glass:view", "break_glass:request"] },
   { key: "settings",     group: "gov",   label: "الإعدادات",      icon: SlidersHorizontal, perms: ["billing_settings:view", "tax_settings:view", "app_settings:view"] },
   { key: "integrations", group: "gov",   label: "التكاملات",      icon: Plug,              perms: ["integrations:manage"] },
   { key: "admin-users",  group: "gov",   label: "حسابات الإدارة", icon: UserCog,           perms: ["admins:view"] },
   { key: "audit-log",    group: "gov",   label: "سجل الإجراءات",  icon: History,           perms: ["audit_log:view_actions"] },
   { key: "access-log",   group: "gov",   label: "سجل الوصول",     icon: ScrollText,        perms: ["audit_log:view_reads"] },
+  { key: "templates",    group: "gov",   label: "قوالب الرسائل",  icon: LayoutTemplate,    perms: ["app_settings:view"] }, // KANAF-ORD-0013 §9
+  { key: "errors",       group: "gov",   label: "أخطاء النظام",   icon: Bug,               perms: ["errors:view"] }, // KANAF-ORD-0013 §11
 ];
 
 /* زر الوضع — الفاتح افتراضي، والاختيار يُحفظ في هذا المتصفّح وحده. */
@@ -95,11 +104,21 @@ export default function App() {
   );
   const [me, setMe] = useState(null);
   const [booting, setBooting] = useState(true);
-  const [section, setSection] = useState("overview");
+  /* KANAF-ORD-0013 §3.1: القسم من العنوان لا من الذاكرة — /<قسم>/<ما بعده> */
+  const segments = useSegments();
+  const section = segments[0] || "overview";
   const [navOpen, setNavOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [mode, setMode] = useState(readTheme);
   const toggleMode = () => setMode((m) => applyTheme(m === "dark" ? "light" : "dark"));
+  /* KANAF-ORD-0014 §2.7: عنوان التبويب لكل شاشة — كانت كل التبويبات والمفضّلات «لوحة تحكم تنفس بحرية»
+     فلا يُعرف أيّها أيّ. هنا عنوان القسم (useLayoutEffect)، والشاشة الأعمق (Screen في ui.jsx، useEffect
+     يعمل بعده) تكتب عنوانها هي فوقه. */
+  const path = segments.join("/");
+  useLayoutEffect(() => {
+    const label = SECTIONS.find((s) => s.key === section)?.label;
+    document.title = `${!me ? "تسجيل الدخول" : label || "نظرة عامة"} · ${PANEL_TITLE}`;
+  }, [section, path, me]);
 
   const toast = useCallback((m) => {
     setToastMsg(m);
@@ -126,11 +145,11 @@ export default function App() {
 
   const allowed = SECTIONS.filter((s) => canAny(me, s.perms));
 
-  /* لو تغيّرت الصلاحية وصار القسم المفتوح خارجها، نعود لأول مسموح. */
+  /* قسم غير معروف أو خارج الصلاحية: إلى أول مسموح، بلا إضافة إلى سجلّ «رجوع». */
   useEffect(() => {
-    if (me && !allowed.some((s) => s.key === section)) setSection(allowed[0]?.key || "overview");
+    if (me && !allowed.some((s) => s.key === section)) navigate(`/${allowed[0]?.key || "overview"}`, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me]);
+  }, [me, section]);
 
   const logout = async () => {
     try { await api.logout(); } catch { /* الخروج محلي على أي حال */ }
@@ -156,7 +175,8 @@ export default function App() {
   if (booting) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: C.bg }}><Spinner /></div>;
   }
-  if (!me) return <Login onDone={(a) => { setMe(a); setSection("overview"); }} />;
+  /* بعد الدخول نبقى على العنوان المطلوب أصلاً: رابط مفضَّل يفتح الشاشة نفسها بعد تسجيل الدخول. */
+  if (!me) return <Login onDone={(a) => setMe(a)} />;
 
   const Page = {
     overview: Overview,
@@ -169,9 +189,12 @@ export default function App() {
     content: Content,
     notifications: Notifications,
     plans: Plans,
+    subscribers: Subscribers,
+    errors: SystemErrors,
+    templates: Templates,
+    "cancelled-members": CancelledMembers,
     invoices: Invoices,
     billing: Billing,
-    "break-glass": BreakGlass,
     settings: SettingsPage,
     "admin-users": AdminUsers,
     "audit-log": AuditLog,
@@ -188,7 +211,7 @@ export default function App() {
         <button onClick={() => setNavOpen((v) => !v)} aria-label="القائمة">
           {navOpen ? <X size={18} color={C.text} /> : <Menu size={18} color={C.text} />}
         </button>
-        <span className="text-sm font-bold" style={{ color: C.text }}>لوحة تنفس</span>
+        <span className="text-sm font-bold" style={{ color: C.text }}>لوحة تنفس بحرية</span>
         <div className="flex items-center gap-2">
           <ThemeToggle mode={mode} onToggle={toggleMode} />
           <button onClick={logout} aria-label="خروج"><LogOut size={16} color={C.textMuted} /></button>
@@ -203,7 +226,7 @@ export default function App() {
           <div className="hidden lg:flex items-center gap-2.5 mb-6 px-1">
             <img src="/favicon.svg" alt="" width="36" height="36" className="shrink-0" />
             <div className="min-w-0">
-              <h1 className="text-base font-bold leading-tight" style={{ color: C.text }}>لوحة تنفس</h1>
+              <h1 className="text-base font-bold leading-tight" style={{ color: C.text }}>لوحة تنفس بحرية</h1>
               <p className="text-[11px] mt-0.5 truncate" style={{ color: C.textFaint }}>
                 {me.name} · {ROLE_LABEL[me.role] || me.role}
               </p>
@@ -223,7 +246,7 @@ export default function App() {
                       const on = s.key === section;
                       const tone = sectionTone(s.key);
                       return (
-                        <button key={s.key} onClick={() => { setSection(s.key); setNavOpen(false); }}
+                        <Link key={s.key} to={`/${s.key}`} onClick={() => setNavOpen(false)}
                           aria-current={on ? "page" : undefined}
                           className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-[13px] font-bold text-right"
                           style={{ background: on ? C.tealSoft : "transparent", color: on ? C.text : C.textMuted }}>
@@ -231,7 +254,7 @@ export default function App() {
                             <Icon size={16} strokeWidth={1.75} color={tone.fg} />
                           </span>
                           {s.label}
-                        </button>
+                        </Link>
                       );
                     })}
                   </div>
@@ -259,7 +282,8 @@ export default function App() {
             <ThemeToggle mode={mode} onToggle={toggleMode} />
           </div>
           <div className="p-4 lg:p-6">
-            <Page me={me} toast={toast} />
+            {/* key: الانتقال بين قسمين يبدأ الصفحة من جديد؛ route: ما بعد اسم القسم في المسار */}
+            <Page key={section} me={me} toast={toast} route={segments.slice(1)} />
           </div>
         </main>
       </div>

@@ -4,8 +4,9 @@ import { api } from "../api.js";
 import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Select, Textarea,
-  Spinner, ErrorBar, Table, Td, useAsync,
+  Spinner, ErrorBar, Table, Td, useAsync, Screen,
 } from "../ui.jsx";
+import { Link, navigate } from "../router.js";
 
 /* ============================================================
    الإعدادات.
@@ -18,7 +19,7 @@ import {
    مختبَر منذ المرحلة 3 — تغيير النسبة كان يحتاج نداءً مباشراً.
    والبيانات الضريبية داخل صفحة «الباقات»، وهو موضع غريب.
 
-   جمعها هنا يجعل سؤال «ما الذي يمكن ضبطه في تنفس؟» له مكان واحد
+   جمعها هنا يجعل سؤال «ما الذي يمكن ضبطه في تنفس بحرية؟» له مكان واحد
    يُجاب فيه.
 
    ------------------------------------------------------------
@@ -36,7 +37,7 @@ import {
    قائمة مكتوبة هنا، فلا تتقادم.
    ============================================================ */
 
-export default function Settings({ me, toast }) {
+export default function Settings({ me, toast, route = [] }) {
   const state = useAsync(() => api.settingsOverview(), []);
   const d = state.data;
 
@@ -44,6 +45,14 @@ export default function Settings({ me, toast }) {
   if (state.error) return <ErrorBar error={state.error} />;
 
   const registryFor = (key) => (d?.registry || []).find((r) => r.key === key);
+
+  /* KANAF-ORD-0013 §3.2: تعديل إعداد تشغيل صفحة /settings/app/<key> لا نافذة */
+  if (route[0] === "app" && route[1]) {
+    const setting = (d.sections?.app?.values || []).find((r) => r.key === route[1]);
+    if (!setting || !d.sections?.app?.canEdit) return <Screen title="الإعداد" back="/settings"><ErrorBar error="الإعداد غير موجود أو لا تملك تعديله." /></Screen>;
+    return <EditAppSetting setting={setting} entry={registryFor(setting.key)}
+      onClose={() => navigate("/settings")} onDone={() => { toast("حُفظ الإعداد."); navigate("/settings"); }} />;
+  }
 
   return (
     <div>
@@ -98,12 +107,10 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
   const [includes, setIncludes] = useState(!!v.prices_include_vat);
   const [currency, setCurrency] = useState(v.currency || "SAR");
   const [tz, setTz] = useState(v.reporting_timezone || "Asia/Riyadh");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const save = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب — يُسجَّل في سجل التدقيق."); return; }
     if (String(vatRate).trim() === "") { setErr("النسبة مطلوبة: 0.15 لخمسة عشر بالمئة."); return; }   // Number("") = 0
     const r = Number(vatRate);
     if (!Number.isFinite(r) || r < 0 || r >= 1) {
@@ -112,9 +119,8 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
     setBusy(true); setErr("");
     try {
       await api.saveBillingSettings({
-        vatRate: r, pricesIncludeVat: includes, currency, reportingTimezone: tz, reason: reason.trim(),
-      });
-      setReason(""); toast("حُفظ الإعداد المالي."); onSaved();
+        vatRate: r, pricesIncludeVat: includes, currency, reportingTimezone: tz, });
+ toast("حُفظ الإعداد المالي."); onSaved();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
@@ -155,9 +161,6 @@ function BillingSection({ section, registryFor, toast, onSaved }) {
 
       {section.canEdit ? (
         <div className="mt-4 grid gap-3">
-          <Field label="السبب" hint="إلزامي. يُحفظ في سجل التدقيق بالقيمة القديمة والجديدة.">
-            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div><Button onClick={save} busy={busy}><Save size={13} /> حفظ</Button></div>
         </div>
@@ -178,17 +181,15 @@ function TaxSection({ section, registryFor, toast, onSaved }) {
   const [legalName, setLegalName] = useState(v.legal_name || "");
   const [vatNumber, setVatNumber] = useState(v.vat_number || "");
   const [address, setAddress] = useState(v.address || "");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const save = async () => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     if (!/^\d{15}$/.test(vatNumber.trim())) { setErr("الرقم الضريبي خمسة عشر رقماً."); return; }
     setBusy(true); setErr("");
     try {
-      await api.saveTaxSettings({ legalName: legalName.trim(), vatNumber: vatNumber.trim(), address: address.trim(), reason: reason.trim() });
-      setReason(""); toast("حُفظت البيانات الضريبية."); onSaved();
+      await api.saveTaxSettings({ legalName: legalName.trim(), vatNumber: vatNumber.trim(), address: address.trim() });
+ toast("حُفظت البيانات الضريبية."); onSaved();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
@@ -216,7 +217,6 @@ function TaxSection({ section, registryFor, toast, onSaved }) {
 
       {section.canEdit ? (
         <div className="mt-4 grid gap-3">
-          <Field label="السبب"><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <ErrorBar error={err} onClose={() => setErr("")} />
           <div><Button onClick={save} busy={busy}><Save size={13} /> حفظ</Button></div>
         </div>
@@ -256,7 +256,6 @@ function SettingValue({ value }) {
 }
 
 function AppSection({ section, registryFor, toast, onSaved }) {
-  const [editing, setEditing] = useState(null);
   const rows = section.values || [];
   const unwired = rows.filter((r) => !registryFor(r.key)?.wired).length;
 
@@ -286,7 +285,7 @@ function AppSection({ section, registryFor, toast, onSaved }) {
               <Td>{r.updated_at ? fmtDateTime(r.updated_at) : "—"}</Td>
               <Td>
                 <div className="flex justify-end">
-                  {section.canEdit && <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>تعديل</Button>}
+                  {section.canEdit && <Link to={`/settings/app/${encodeURIComponent(r.key)}`}><Button size="sm" variant="ghost">تعديل</Button></Link>}
                 </div>
               </Td>
             </tr>
@@ -302,11 +301,7 @@ function AppSection({ section, registryFor, toast, onSaved }) {
         </div>
       ))}
 
-      {editing && (
-        <EditAppSetting setting={editing} entry={registryFor(editing.key)}
-          onClose={() => setEditing(null)}
-          onDone={() => { setEditing(null); toast("حُفظ الإعداد."); onSaved(); }} />
-      )}
+
     </Card>
   );
 }
@@ -327,7 +322,6 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   const isBool = typeof setting.value === "boolean";
   const [boolValue, setBoolValue] = useState(setting.value === true);
   const [value, setValue] = useState(isNumber ? String(setting.value) : String(setting.value ?? ""));
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -338,24 +332,20 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
   // التذييل التسويقي اختياري: مسحه = بلا تذييل؛ رابط إلغاء الاشتراك يُلحق بكل رسالة بث مستقلاً عنه (B-11)
   const nullable = setting.key === "whatsapp_number" || setting.key === "marketing_email_footer";
   const save = async (forceClear = false) => {
-    if (!reason.trim()) { setErr("السبب مطلوب."); return; }
     const clearing = nullable && (forceClear || !String(value).trim());
     if (!isBool && !clearing && !String(value).trim()) { setErr("القيمة لا تكون فارغة."); return; }
     setBusy(true); setErr("");
     try {
       const payload = clearing ? null : isBool ? boolValue : (isNumber ? Number(value) : value);
-      await api.updateAppSetting(setting.key, payload, reason.trim());
+      await api.updateAppSetting(setting.key, payload);
       onDone();
     } catch (e) { setErr(e?.arabic || "تعذّر الحفظ."); }
     finally { setBusy(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
-      style={{ background: C.overlay }} onClick={onClose}>
-      <div className="rounded-2xl w-full my-8 p-5" style={{ maxWidth: 480, background: C.surface, border: `1px solid ${C.line}` }}
-        onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>{entry?.label || setting.key}</h3>
+    <Screen title={entry?.label || setting.key} back="/settings" backLabel="الإعدادات">
+      <div style={{ maxWidth: 560 }}>
         {entry && !entry.wired && (
           <p className="text-[11px] leading-6 mb-3 rounded-xl px-3 py-2" style={{ background: C.amberSoft, color: C.amber }}>
             ⚠️ هذا الإعداد لا يؤثر بعد. {entry.note}
@@ -381,9 +371,6 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
               ? <Textarea rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
               : <Input value={value} inputMode={isNumber ? "numeric" : undefined} onChange={(e) => setValue(e.target.value)} />}
           </Field>
-          <Field label="السبب" hint="يُحفظ في سجل التدقيق بالقيمة القديمة والجديدة.">
-            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
           {nullable && (
             <p className="text-[11px] leading-5" style={{ color: C.textFaint }}>
               {setting.key === "whatsapp_number"
@@ -401,6 +388,6 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
           </div>
         </div>
       </div>
-    </div>
+    </Screen>
   );
 }

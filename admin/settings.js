@@ -151,7 +151,7 @@ export const SETTINGS_REGISTRY = [
     key: "app_public_name", label: "الاسم التجاري المعروض",
     source: "app_settings", editPerm: "app_settings:edit", wired: false,
     readBy: ["index.js (/api/support-info) — يُرسَل ولا يقرؤه التطبيق"],
-    note: "KANAF-ORD-0001 R15-19: غير مربوط عمداً. التطبيق لا يقرأ appName، و«تنفس» (كنف سابقاً) مكتوبة حرفياً في نصوص التطبيق والرسائل والفواتير. ربطه = قرار منتج بتغيير الاسم المعروض في كل تلك المواضع (لا يمسّ الاسم النظامي للبائع ولا معرّفات الترحيلات). حتى ذلك: تعديله لا يغيّر شيئاً.",
+    note: "KANAF-ORD-0001 R15-19: غير مربوط عمداً. التطبيق لا يقرأ appName، والاسم مكتوب حرفياً في نصوص التطبيق والرسائل والفواتير. ربطه = قرار منتج بتغيير الاسم المعروض في كل تلك المواضع (لا يمسّ الاسم النظامي للبائع ولا معرّفات الترحيلات). حتى ذلك: تعديله لا يغيّر شيئاً.",
   },
   {
     key: "marketing_email_footer", label: "تذييل رسائل البث",
@@ -244,6 +244,25 @@ export const SETTINGS_REGISTRY = [
     readBy: ["admin/auth.js (issueAccessToken + كوكي الوصول)"],
     note: "KANAF-ORD-0001 R15-19: مدة رمز الوصول الإداري وكوكيه عند كل دخول أو تجديد، من 5 إلى 60 دقيقة. الرموز القائمة تبقى بمدتها حتى تجديدها. رمز التجديد لا يتأثر. قيمة خارج الحد مرفوضة؛ تعذّر القراءة = ADMIN_JWT_EXPIRES_IN.",
   },
+  /* ---------- التجديد التلقائي (KANAF-ORD-0013 §7) — يُقرأ في كل مسح؛ والميزة كلها خلف AUTORENEW_ENABLED ---------- */
+  {
+    key: "autorenew_notice_days", label: "مهلة إشعار التجديد التلقائي (أيام)",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["billing/autorenew.js (autorenewSettings)"],
+    note: "§7.3: كم يوماً قبل الخصم يصل الإشعار، من 1 إلى 14. يدخل نصّ الموافقة الجديدة؛ الموافقات المحفوظة تبقى بنصّها. الخصم لا يقع قبل مرور المهلة كاملة على الإشعار المسلَّم.",
+  },
+  {
+    key: "autorenew_max_attempts", label: "حدّ محاولات الخصم لكل تجديد",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["billing/autorenew.js (autorenewSettings)"],
+    note: "§7.6: من 1 إلى 5. بعد آخر محاولة فاشلة يتوقف التجديد التلقائي ويُبلَّغ العضو، ويبقى اشتراكه إلى نهاية فترته.",
+  },
+  {
+    key: "autorenew_retry_hours", label: "الفاصل بين محاولات الخصم (ساعات)",
+    source: "app_settings", editPerm: "app_settings:edit", wired: true,
+    readBy: ["billing/autorenew.js (autorenewSettings)"],
+    note: "§7.6: من 6 إلى 72 ساعة بين محاولة فاشلة والتي تليها.",
+  },
 ];
 
 const REGISTRY_BY_KEY = Object.fromEntries(SETTINGS_REGISTRY.map((s) => [s.key, s]));
@@ -264,6 +283,9 @@ const REGISTRY_BY_KEY = Object.fromEntries(SETTINGS_REGISTRY.map((s) => [s.key, 
    طوله ويُكتب.
    ------------------------------------------------------------ */
 const APP_SETTING_VALIDATORS = {
+  autorenew_notice_days: (v) => (Number.isInteger(v) && v >= 1 && v <= 14 ? { value: v } : { error: "autorenew_notice_days_1_to_14" }),
+  autorenew_max_attempts: (v) => (Number.isInteger(v) && v >= 1 && v <= 5 ? { value: v } : { error: "autorenew_max_attempts_1_to_5" }),
+  autorenew_retry_hours: (v) => (Number.isInteger(v) && v >= 6 && v <= 72 ? { value: v } : { error: "autorenew_retry_hours_6_to_72" }),
   admin_session_minutes: (v) =>
     Number.isInteger(v) && v >= 5 && v <= 60 ? { value: v } : { error: "session_minutes_must_be_5_to_60" },
 
@@ -313,7 +335,7 @@ function normalizeHandle(v) {
   const handle = v.trim().replace(/^@+/, "");
   /* نفس القائمة البيضاء المستعملة في بناء الرابط في index.js.
      بدونها تقدر قيمة مثل "x.com/other" أو "../evil" أن تصنع رابطاً
-     لموقع آخر يظهر للمستخدم داخل تطبيق تنفس. */
+     لموقع آخر يظهر للمستخدم داخل تطبيق تنفس بحرية. */
   if (!/^[A-Za-z0-9._]{1,30}$/.test(handle)) return { error: "invalid_handle" };
   return { value: `@${handle}` };
 }

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Plus, Pencil, Power } from "lucide-react";
 import { api } from "../api.js";
+import { Link, navigate } from "../router.js";
 import { C, can } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Input, Textarea, Spinner, Empty,
-  ErrorBar, Modal, ReasonPrompt, Table, Td, useAsync,
+  ErrorBar, Screen, ConfirmPrompt, Table, Td, useAsync,
 } from "../ui.jsx";
 
 /* ============================================================
@@ -16,30 +17,41 @@ import {
    ضريبية تشير إلى شيء غير موجود.
    ============================================================ */
 
-export default function Plans({ me, toast }) {
+export default function Plans({ me, toast, route = [] }) {
+  /* KANAF-ORD-0013 §3.2: إنشاء الباقة وتعديلها صفحتان: /plans/new و /plans/<plan_key>/edit */
+  if (route[0]) return <PlanEditorScreen planKey={route[0] === "new" ? null : route[0]} toast={toast} />;
+  return <PlanList me={me} toast={toast} />;
+}
+
+function PlanEditorScreen({ planKey, toast }) {
+  const st = useAsync(() => (planKey ? api.listPlans() : Promise.resolve({ plans: [] })), [planKey]);
+  if (st.loading) return <div className="py-10 flex justify-center"><Spinner /></div>;
+  const plan = planKey ? (st.data?.plans || []).find((p) => p.plan_key === planKey) : {};
+  if (!plan) return <Screen title="الباقة" back="/plans"><ErrorBar error={st.error || "الباقة غير موجودة."} /></Screen>;
+  return <PlanEditor plan={plan} onClose={() => navigate("/plans")} onSaved={() => { toast("حُفظت الباقة."); navigate("/plans"); }} />;
+}
+
+function PlanList({ me, toast }) {
   const canEdit = can(me, "plans:edit");
   const state = useAsync(() => api.listPlans(), []);
-  const [editing, setEditing] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
   const plans = state.data?.plans || [];
 
-  /* KANAF-ORD-0001: الخادم يشترط سبباً مكتوباً (reason_required) لتشغيل
-     الباقة أو إيقافها، والزر كان يرسل { active } وحده فيفشل دائماً بـ400.
-     السبب يُطلب الآن كبقية الإجراءات المسجّلة في سجل التدقيق. */
+  /* تشغيل الباقة أو إيقافها بتأكيد بنقرة. السبب يولّده الخادم (ملحق KANAF-ORD-0013، قرار المالك 1). */
   const [toggling, setToggling] = useState(null);
   const toggle = (p) => setToggling(p);
-  const runToggle = async (reason) => {
+  const runToggle = async () => {
     const p = toggling;
     setBusyId(p.id);
-    try { await api.togglePlanActive(p.id, !p.is_active, reason); state.reload(); toast(p.is_active ? "أُوقفت الباقة." : "فُعّلت الباقة."); }
+    try { await api.togglePlanActive(p.id, !p.is_active); state.reload(); toast(p.is_active ? "أُوقفت الباقة." : "فُعّلت الباقة."); }
     finally { setBusyId(null); }
   };
 
   return (
     <div>
       <PageTitle title="الباقات" subtitle="السعر المعروض هنا هو ما يُحصَّل ويظهر في الفاتورة.">
-        {canEdit && <Button size="sm" onClick={() => setEditing({})}><Plus size={13} /> باقة جديدة</Button>}
+        {canEdit && <Link to="/plans/new"><Button size="sm"><Plus size={13} /> باقة جديدة</Button></Link>}
       </PageTitle>
 
       <Card className="mb-4">
@@ -67,7 +79,7 @@ export default function Plans({ me, toast }) {
                 <Td>
                   {canEdit && (
                     <div className="flex gap-1.5 justify-end">
-                      <Button size="sm" variant="ghost" onClick={() => setEditing(p)}><Pencil size={12} /> تعديل</Button>
+                      <Link to={`/plans/${encodeURIComponent(p.plan_key)}`}><Button size="sm" variant="ghost"><Pencil size={12} /> تعديل</Button></Link>
                       <Button size="sm" variant={p.is_active ? "warn" : "good"} busy={busyId === p.id}
                         onClick={() => toggle(p)}>
                         <Power size={12} /> {p.is_active ? "إيقاف" : "تفعيل"}
@@ -79,7 +91,7 @@ export default function Plans({ me, toast }) {
             ))}
           </Table>
         )}
-      <ReasonPrompt open={!!toggling}
+      <ConfirmPrompt open={!!toggling}
         title={toggling?.is_active ? `إيقاف باقة «${toggling?.name}»` : `تفعيل باقة «${toggling?.name || ""}»`}
         description={toggling?.is_active ? "الباقة الموقوفة تختفي من صفحة الاشتراك للمستخدمين الجدد. الاشتراكات القائمة والفواتير الصادرة لا تتأثر." : "الباقة المفعّلة تظهر في صفحة الاشتراك بسعرها الحالي."}
         confirmLabel={toggling?.is_active ? "إيقاف" : "تفعيل"} danger={!!toggling?.is_active}
@@ -87,10 +99,6 @@ export default function Plans({ me, toast }) {
       </Card>
 
 
-      {editing && (
-        <PlanEditor plan={editing} onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); state.reload(); toast("حُفظت الباقة."); }} />
-      )}
     </div>
   );
 }
@@ -103,14 +111,10 @@ function PlanEditor({ plan, onClose, onSaved }) {
   const [durationDays, setDurationDays] = useState(plan.duration_days ?? 30);
   const [features, setFeatures] = useState((Array.isArray(plan.features) ? plan.features : []).join("\n"));
   const [displayOrder, setDisplayOrder] = useState(plan.display_order ?? 0);
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  /* KANAF-ORD-0001: الخادم يشترط سبباً مكتوباً لإنشاء الباقة وتعديلها
-     (reason_required) والنموذج لم يكن يرسله — فكل حفظ كان يفشل بـ400. */
   const save = async () => {
-    if (!reason.trim()) { setErr("سبب التغيير مطلوب — يُسجَّل في سجل التدقيق."); return; }
     if (String(priceSar).trim() === "") { setErr("السعر مطلوب."); return; }   // Number("") = 0 — باقة مجانية بلا قصد
     setBusy(true); setErr("");
     const body = {
@@ -119,8 +123,7 @@ function PlanEditor({ plan, onClose, onSaved }) {
       durationDays: Number(durationDays),
       features: features.split("\n").map((s) => s.trim()).filter(Boolean),
       displayOrder: Number(displayOrder) || 0,
-      reason: reason.trim(),
-    };
+      };
     try {
       if (isNew) await api.createPlan({ ...body, planKey: planKey.trim() });
       else await api.updatePlan(plan.id, body);
@@ -130,7 +133,7 @@ function PlanEditor({ plan, onClose, onSaved }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={isNew ? "باقة جديدة" : `تعديل: ${plan.name}`}>
+    <Screen title={isNew ? "باقة جديدة" : `تعديل: ${plan.name}`} back="/plans" backLabel="الباقات">
       <div className="grid gap-3">
         <Field label="مفتاح الباقة"
           hint={isNew ? "حروف إنجليزية صغيرة وأرقام وشرطة سفلية فقط. لا يمكن تعديله بعد الإنشاء."
@@ -152,16 +155,13 @@ function PlanEditor({ plan, onClose, onSaved }) {
         <Field label="المزايا" hint="ميزة في كل سطر.">
           <Textarea rows={4} value={features} onChange={(e) => setFeatures(e.target.value)} />
         </Field>
-        <Field label="سبب التغيير" hint="يُحفظ في سجل التدقيق باسمك. تغيير السعر يظهر في الفواتير القادمة فقط؛ الصادرة لا تتغير.">
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-        </Field>
         <ErrorBar error={err} />
         <div className="flex gap-2">
           <Button onClick={save} busy={busy}>حفظ</Button>
           <Button variant="ghost" onClick={onClose} disabled={busy}>إلغاء</Button>
         </div>
       </div>
-    </Modal>
+    </Screen>
   );
 }
 

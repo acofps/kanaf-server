@@ -9,7 +9,7 @@ import {
   requireAdminAuth, requirePermission, requireReasonAndLog, requireUuidParam,
   logAdminAction, loadEffectiveAdmin, fail, httpError,
 } from "./middleware.js";
-import { permissionsFor, ROLE_LABEL } from "./permissions.js";
+import { permissionsFor, permissionsWithGrants, ROLE_LABEL } from "./permissions.js";
 import { generateAndStoreInvoice } from "../invoicing/generate.js";
 import { withDocumentSlot } from "../invoicing/slot.js";
 import { executeRefund } from "../payments/refund.js";
@@ -85,6 +85,7 @@ const refreshLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 120, standardH
 
 /** الشكل الذي تراه اللوحة عن نفسها — الدور وصلاحياته معاً.
     اللوحة لا تحمل مصفوفة صلاحيات خاصة بها؛ ترسم مما يصلها هنا. */
+const grantsOf = (a) => (Array.isArray(a.pageGrants) ? a.pageGrants : Array.isArray(a.page_grants) ? a.page_grants : null);
 function selfPayload(admin) {
   return {
     id: admin.id,
@@ -92,7 +93,9 @@ function selfPayload(admin) {
     email: admin.email,
     role: admin.role,
     roleLabel: ROLE_LABEL[admin.role] || admin.role,
-    permissions: permissionsFor(admin.role),
+    // ORD-0013 §5.2: req.admin يحمل pageGrants، وصف القاعدة يحمل page_grants — والاثنان يمرّان من هنا.
+    permissions: permissionsWithGrants(admin.role, grantsOf(admin)),
+    pageGrants: grantsOf(admin),
   };
 }
 
@@ -505,7 +508,7 @@ adminRouter.get(
       const { rows } = await query(
         `SELECT u.id, u.name, u.email, u.age_range, u.gender, u.confirmed_adult,
                 u.created_at, u.updated_at, u.email_verified_at, u.deleted_at,
-                u.reminders_on,
+                u.reminders_on, u.marketing_opt_out,
                 s.last_login_at, s.suspended_at, s.suspended_reason,
                 COALESCE(s.failed_login_count, 0) AS failed_login_count,
                 s.locked_until,
@@ -545,8 +548,10 @@ adminRouter.get(
          رقمين. */
       if (canSeeContact && row.phone_dial && row.phone_national) {
         row.phone = `+${row.phone_dial}${row.phone_national}`;
+        row.phone_parts = { dial: row.phone_dial, national: row.phone_national }; // ORD-0013 §4.3: لنموذج التعديل، بنفس الصلاحية
       } else if (canSeeContact) {
         row.phone = null;
+        row.phone_parts = null;
       }
       delete row.phone_dial;
       delete row.phone_national;
@@ -761,7 +766,7 @@ adminRouter.get(
         query(`SELECT kind, total, band_label, created_at FROM screenings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`, [userId]),
         // ملاحظة: screenings.answers (على مستوى البند) غير منتقاة هنا
         // عمداً — الدرجة والنطاق يكفيان لغرض الدعم. رؤية الإجابات
-        // الخام تحتاج طلب وصول طارئ.
+        // الخام لا تصل إلى الإدارة بأي مسار (الوصول الطارئ أُلغي).
       ]);
       res.json({ logs, screenings });
     } catch (err) { fail(res, err, "admin/users:sensitive", req); }
@@ -824,7 +829,7 @@ adminRouter.post(
         entity: "subscription", entityId: result.subscriptionId,
         oldValue: { status: result.previousStatus },
         newValue: { mode: result.mode, status: result.mode === "immediate" ? "canceled" : "canceling" },
-        reason: reason || "—", metadata: { user_id: req.params.id }, ipAddress: req.ip,
+        reason: reason || "إجراء على اشتراك العميل من اللوحة", metadata: { user_id: req.params.id }, ipAddress: req.ip,
       });
 
       res.json({ ok: true, ...result });
@@ -878,7 +883,7 @@ adminRouter.post(
         entity: "payment", entityId: payment.id,
         oldValue: { payment_status: payment.status, refunded_amount: Number(payment.refunded_amount) },
         newValue: { kind: result.kind, refunded_amount: result.totalRefunded, credit_note: result.creditNoteNumber },
-        reason: reason || "—", metadata: { user_id: req.params.id }, ipAddress: req.ip,
+        reason: reason || "إجراء على اشتراك العميل من اللوحة", metadata: { user_id: req.params.id }, ipAddress: req.ip,
       });
 
       res.json({ ok: true, kind: result.kind, amount: result.amount, creditNoteNumber: result.creditNoteNumber || null });
@@ -887,85 +892,12 @@ adminRouter.post(
 );
 
 /* ============================================================
-   الوصول الطارئ — وصول استثنائي للبيانات الخام (إجابات الفرز على
-   مستوى البند مثلاً)، بمعتمِد ثانٍ لا يكون هو الطالب أبداً (يفرضه
-   قيد CHECK في قاعدة البيانات أيضاً).
+   الوصول الطارئ — أُلغي بقرار المالك (ملحق KANAF-ORD-0013 الثاني، القرار 6).
+
+   كانت هنا ثلاثة مسارات (طلب، وقائمة معلّقة، واعتماد). لم يكن أي مسار آخر
+   يقرأ اعتماداً قائماً ليفتح شيئاً: الاعتماد كان يُكتب ولا يُستهلك.
+   جدول break_glass_requests باقٍ بما فيه (سجلّ تاريخي) وصار خاملاً: لا كتابة فيه.
    ============================================================ */
-
-adminRouter.post("/break-glass/request", requireAdminAuth, requirePermission("break_glass:request"), async (req, res) => {
-  try {
-    const { targetUserId, reason } = req.body || {};
-    if (!reason || !reason.trim()) return res.status(400).json({ error: "reason_required" });
-    if (targetUserId && !UUID_RE.test(String(targetUserId))) return res.status(400).json({ error: "invalid_target_user" });
-
-    const { rows } = await query(
-      `INSERT INTO break_glass_requests (requested_by, target_user_id, reason)
-       VALUES ($1, $2, $3) RETURNING id, status, created_at`,
-      [req.admin.id, targetUserId || null, reason.trim()]
-    );
-
-    await logAdminAction({
-      adminUserId: req.admin.id, targetUserId: targetUserId || null,
-      action: "break_glass_requested", entity: "break_glass", entityId: rows[0].id,
-      newValue: { status: "pending" }, reason: reason.trim(), ipAddress: req.ip,
-    });
-
-    res.status(201).json(rows[0]);
-  } catch (err) { fail(res, err, "admin/break-glass:request", req); }
-});
-
-adminRouter.get("/break-glass/pending", requireAdminAuth, requirePermission("break_glass:view"), async (req, res) => {
-  try {
-    const { rows } = await query(
-      `SELECT bg.id, bg.reason, bg.created_at, bg.target_user_id,
-              au.name AS requested_by_name, au.email AS requested_by_email
-         FROM break_glass_requests bg
-         JOIN admin_users au ON au.id = bg.requested_by
-        WHERE bg.status = 'pending'
-        ORDER BY bg.created_at ASC`
-    );
-    res.json({ requests: rows });
-  } catch (err) { fail(res, err, "admin/break-glass:pending", req); }
-});
-
-adminRouter.post(
-  "/break-glass/:id/approve",
-  requireAdminAuth, requirePermission("break_glass:approve"), requireUuidParam("id"),
-  async (req, res) => {
-    try {
-      const hoursValid = Math.min(Math.max(parseInt(req.body?.hoursValid, 10) || 4, 1), 24);
-      const approved = await withTransaction(async (client) => {
-        const { rows: existing } = await client.query(
-          `SELECT requested_by, status, target_user_id FROM break_glass_requests WHERE id = $1 FOR UPDATE`,
-          [req.params.id]
-        );
-        if (!existing[0]) throw httpError(404, "not_found");
-        if (existing[0].status !== "pending") throw httpError(409, "already_resolved");
-        if (existing[0].requested_by === req.admin.id) throw httpError(403, "cannot_self_approve");
-
-        const { rows } = await client.query(
-          `UPDATE break_glass_requests
-              SET status = 'approved', approved_by = $1, approved_at = now(),
-                  expires_at = now() + ($2 || ' hours')::interval
-            WHERE id = $3 RETURNING id, status, expires_at`,
-          [req.admin.id, hoursValid, req.params.id]
-        );
-        return { row: rows[0], targetUserId: existing[0].target_user_id, requestedBy: existing[0].requested_by };
-      });
-
-      await logAdminAction({
-        adminUserId: req.admin.id, targetUserId: approved.targetUserId,
-        action: "break_glass_approved", entity: "break_glass", entityId: approved.row.id,
-        oldValue: { status: "pending" },
-        newValue: { status: "approved", expires_at: approved.row.expires_at },
-        reason: `اعتماد وصول طارئ لمدة ${hoursValid} ساعة`,
-        metadata: { requested_by: approved.requestedBy }, ipAddress: req.ip,
-      });
-
-      res.json(approved.row);
-    } catch (err) { fail(res, err, "admin/break-glass:approve", req); }
-  }
-);
 
 /* ============================================================
    سجلا التدقيق
@@ -1031,9 +963,10 @@ adminRouter.get("/access-log", requireAdminAuth, requirePermission("audit_log:vi
       query(`SELECT count(*)::int AS n FROM admin_access_log al WHERE ($1::uuid IS NULL OR al.target_user_id = $1)`, [targetUserId]),
       query(
         `SELECT al.id, al.action, al.reason, al.created_at, al.ip_address, al.target_user_id,
-                au.name AS admin_name, au.email AS admin_email
+                au.name AS admin_name, au.email AS admin_email, tu.name AS target_user_name
            FROM admin_access_log al
            JOIN admin_users au ON au.id = al.admin_user_id
+           LEFT JOIN users tu ON tu.id = al.target_user_id -- ORD-0013 §4.2: الاسم رابط
           WHERE ($1::uuid IS NULL OR al.target_user_id = $1)
           ORDER BY al.created_at DESC
           LIMIT $2 OFFSET $3`,
@@ -1067,9 +1000,10 @@ adminRouter.get("/audit-log", requireAdminAuth, requirePermission("audit_log:vie
       `SELECT al.id, al.created_at, al.action, al.entity, al.entity_id,
               al.target_user_id, al.old_value, al.new_value, al.reason,
               al.metadata, al.ip_address,
-              au.name AS admin_name, au.email AS admin_email
+              au.name AS admin_name, au.email AS admin_email, tu.name AS target_user_name
          FROM admin_action_log al
          LEFT JOIN admin_users au ON au.id = al.admin_user_id
+         LEFT JOIN users tu ON tu.id = al.target_user_id -- ORD-0013 §4.2: الاسم رابط
          ${whereSql}
         ORDER BY al.created_at DESC, al.id DESC
         LIMIT ${limitP} OFFSET ${offsetP}`,
@@ -1367,7 +1301,7 @@ adminRouter.get("/invoices", requireAdminAuth, requirePermission("invoices:view"
     const { page, pageSize, offset } = readPaging(req, { defaultSize: 25, maxSize: 100 });
     const { rows } = await query(
       `SELECT i.id, i.zatca_invoice_number, i.plan_id, i.amount_sar, i.subtotal_sar, i.vat_sar,
-              i.status, i.zatca_issued_at, i.created_at, u.email AS user_email, u.name AS user_name
+              i.status, i.zatca_issued_at, i.created_at, i.user_id, u.email AS user_email, u.name AS user_name -- user_id: ORD-0013 §4.2
          FROM invoices i
          JOIN users u ON u.id = i.user_id
         WHERE i.status = 'paid'
@@ -1498,7 +1432,7 @@ adminRouter.get("/credit-notes", requireAdminAuth, requirePermission("credit_not
       query(`SELECT count(*)::int AS n FROM credit_notes`),
       query(
         `SELECT cn.id, cn.zatca_credit_note_number, cn.amount_sar, cn.reason, cn.zatca_issued_at,
-                i.zatca_invoice_number AS original_invoice_number, u.email AS user_email, u.name AS user_name
+                i.zatca_invoice_number AS original_invoice_number, cn.user_id, u.email AS user_email, u.name AS user_name -- user_id: ORD-0013 §4.2
            FROM credit_notes cn
            JOIN invoices i ON i.id = cn.original_invoice_id
            JOIN users u ON u.id = cn.user_id

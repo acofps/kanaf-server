@@ -1,6 +1,7 @@
 import { verifyToken } from "./auth.js";
 import { query } from "../db/pool.js";
-import { can, canAny, permissionsFor, isValidRole } from "./permissions.js";
+import { recordError } from "../ops/error-log.js";
+import { can, canAny, permissionsFor, isValidRole, canWithGrants, permissionsWithGrants } from "./permissions.js";
 
 /* ============================================================
    وسيطة الإدارة — المصادقة، والصلاحية، وسجل التدقيق.
@@ -23,7 +24,7 @@ import { can, canAny, permissionsFor, isValidRole } from "./permissions.js";
    نفسه لا على إسناد دوره.
    ------------------------------------------------------------ */
 const EFFECTIVE_ADMIN_SQL = `
-  SELECT au.id, au.name, au.email, au.active,
+  SELECT au.id, au.name, au.email, au.active, au.page_grants,
          COALESCE(ra.role, au.role) AS role,
          au.role                    AS base_role,
          ra.role                    AS assigned_role
@@ -97,14 +98,17 @@ export async function requireAdminAuth(req, res, next) {
       return res.status(403).json({ error: "unknown_role" });
     }
 
-    const permissions = permissionsFor(admin.role);
+    /* KANAF-ORD-0013 §5.2: منح الصفحات يضيّق ولا يوسّع — canWithGrants = الدور «و» الصفحة. */
+    const grants = Array.isArray(admin.page_grants) ? admin.page_grants : null;
+    const permissions = permissionsWithGrants(admin.role, grants);
     req.admin = {
       id: admin.id,
       name: admin.name,
       email: admin.email,
       role: admin.role,
+      pageGrants: grants,
       permissions,
-      can: (p) => can(admin.role, p),
+      can: (p) => canWithGrants(admin.role, grants, p),
     };
     next();
   } catch (err) {
@@ -137,7 +141,7 @@ export function requirePermission(permission) {
 /** يكفي امتلاك واحدة من عدة صلاحيات — لمسار يخدم غرضين. */
 export function requireAnyPermission(...permissions) {
   const mw = (req, res, next) => {
-    if (!canAny(req.admin?.role, permissions)) {
+    if (!permissions.some((p) => req.admin?.can(p))) { // ORD-0013 §5.2: عبر can المضيَّقة
       return res.status(403).json({ error: "insufficient_permission", requiredAny: permissions });
     }
     next();
@@ -213,8 +217,11 @@ export function requireUuidParam(name = "id") {
  * التطبيق، وهي خطوة يملكها مالك القاعدة وحده — موثّقة في
  * الترحيل 008 §5 وفي البند 12.19.
  */
+/* KANAF-ORD-0014 §2.6: سبب من شرطة وحدها («-» أو «—») فراغ مقنَّع — يُرفض كالفارغ. */
+const BLANK_REASON = (r) => !r || !String(r).trim() || /^[\s\-–—]+$/.test(String(r));
+
 export async function logSensitiveAccess({ adminUserId, targetUserId = null, action, reason, ipAddress = null }) {
-  if (!reason || !reason.trim()) {
+  if (BLANK_REASON(reason)) {
     throw new Error("logSensitiveAccess: a non-empty reason is required");
   }
   await query(
@@ -265,7 +272,7 @@ export async function logAdminAction({
   entity = null, entityId = null,
   oldValue = null, newValue = null, reason, metadata = null, ipAddress = null,
 }) {
-  if (!reason || !String(reason).trim()) {
+  if (BLANK_REASON(reason)) {
     throw new Error("logAdminAction: a non-empty reason is required");
   }
 
@@ -377,6 +384,8 @@ export function fail(res, err, where, req = null) {
     `admin=${req?.admin?.id || "-"} (${req?.admin?.role || "-"}): ${err?.message || err}`,
     err?.stack || ""
   );
+  // KANAF-ORD-0013 §11: منقّى، ولا يُنتظر ولا يرمي — لا يُسقط الطلب.
+  recordError(err, { location: `${where} · ${req?.method || ""} ${req?.originalUrl || ""}`, status: 500 });
 
   res.status(500).json({ error: "internal_error", message: ARABIC_FALLBACK });
 }

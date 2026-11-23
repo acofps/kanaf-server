@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Lock } from "lucide-react";
 import { api } from "../api.js";
+import { useQueryState } from "../router.js";
+import { UserLink } from "./Users.jsx";
 import { C, fmtDateTime, DELIVERY_STATUS, CHANNEL_LABEL } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Spinner, Empty, ErrorBar, Table, Td, Pager, Field, Input, Select, useAsync,
@@ -14,7 +16,7 @@ import {
    • رسائل النظام (تحقق، استعادة…) **لا نص لها في أي مكان** — يظهر
      بدله نوعها ونصّ ثابت. كود التحقق مفتاح دخول، وعرضه يعني أن من
      يصل إلى هذه الشاشة يستولي على الحساب.
-   • فتح الصفحة قراءة لبيانات شخصية: سبب مكتوب يُسجَّل في سجل الوصول.
+   • فتح الصفحة قراءة لبيانات شخصية: تُسجَّل في سجل الوصول بسبب تلقائي (§10).
    ============================================================ */
 
 const SOURCE_LABEL = { campaign: "حملة", inbox: "صندوق التطبيق", system: "رسالة نظام" };
@@ -28,43 +30,21 @@ const KIND_LABEL = {
 };
 
 export default function SentMessages() {
-  const [reasonDraft, setReasonDraft] = useState("");
-  const [reason, setReason] = useState("");
-  const [filters, setFilters] = useState({ source: "", channel: "", status: "" });
-  const [page, setPage] = useState(1);
-  const state = useAsync(
-    () => (reason ? api.listSentMessages({ reason, page, ...filters }) : Promise.resolve(null)),
-    [reason, page, filters.source, filters.channel, filters.status]
-  );
+  /* KANAF-ORD-0013 §10: تُعرض الرسائل مباشرةً بلا مطالبة بسبب. الوصول يُسجَّل في
+     سجل الوصول من الخادم صامتاً (المطّلع والوقت والصفحة والمرشّحات). والمرشّحات في العنوان. */
+  const [source, setSource] = useQueryState("source", "");
+  const [channel, setChannel] = useQueryState("channel", "");
+  const [status, setStatus] = useQueryState("status", "");
+  const [page, setPage] = useQueryState("page", 1);
+  const filters = { source, channel, status };
+  const state = useAsync(() => api.listSentMessages({ page, ...filters }), [page, source, channel, status]);
   const d = state.data;
   const rows = d?.messages || [];
-  const setF = (k) => (e) => { setFilters((f) => ({ ...f, [k]: e.target.value })); setPage(1); };
-
-  if (!reason) {
-    return (
-      <div>
-        <PageTitle title="الرسائل المرسلة" subtitle="كل رسالة خرجت إلى مستخدم: حملة، أو تذكير، أو رسالة نظام." />
-        <Card className="max-w-xl">
-          <p className="text-xs mb-4 leading-6" style={{ color: C.textMuted }}>
-            هذه الصفحة تعرض مراسلات المستخدمين، فالوصول إليها يُسجَّل في سجل الوصول مع سببه.
-            رسائل التحقق واستعادة كلمة المرور لا يُخزَّن نصّها، فلا تظهر هنا بحال.
-          </p>
-          <form onSubmit={(e) => { e.preventDefault(); if (reasonDraft.trim()) setReason(reasonDraft.trim()); }}>
-            <Field label="سبب الاطلاع">
-              <Input value={reasonDraft} onChange={(e) => setReasonDraft(e.target.value)} placeholder="مثلاً: متابعة شكوى عدم وصول رسالة" />
-            </Field>
-            <div className="mt-3"><Button type="submit" disabled={!reasonDraft.trim()}>عرض السجل</Button></div>
-          </form>
-        </Card>
-      </div>
-    );
-  }
+  const setF = (k) => (e) => { ({ source: setSource, channel: setChannel, status: setStatus })[k](e.target.value); setPage(1); };
 
   return (
     <div>
-      <PageTitle title="الرسائل المرسلة" subtitle={`سبب الاطلاع المسجَّل: ${reason}`}>
-        <Button size="sm" variant="ghost" onClick={() => { setReason(""); setReasonDraft(""); }}>تغيير السبب</Button>
-      </PageTitle>
+      <PageTitle title="الرسائل المرسلة" subtitle="كل رسالة خرجت إلى مستخدم: حملة، أو تذكير، أو رسالة نظام. فتح الصفحة يُسجَّل في سجل الوصول." />
 
       <Card>
         <div className="grid gap-3 sm:grid-cols-3 mb-4">
@@ -102,7 +82,7 @@ export default function SentMessages() {
                   <tr key={`${m.source}-${m.id}`}>
                     <Td>{fmtDateTime(m.at)}</Td>
                     <Td>
-                      <div className="font-bold">{m.recipient?.name || "—"}</div>
+                      <div><UserLink id={m.recipient?.id} name={m.recipient?.name} /></div>
                       <div className="text-[11px]" dir="ltr" style={{ color: C.textFaint }}>{m.recipient?.emailMasked}</div>
                     </Td>
                     <Td>

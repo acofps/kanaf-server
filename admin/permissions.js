@@ -99,6 +99,10 @@ export const PERMISSION_CATALOG = {
   "users:view_sensitive":     "درجات اليوميات ونتائج الفرز — بسبب مكتوب يُسجَّل",
   "users:view_actions":       "سجل الإجراءات الإدارية على مستخدم بعينه",
   "users:suspend":            "تعليق حساب ورفع التعليق",
+  /* KANAF-ORD-0013 §4.3: تعديل الملف. لا يفتح المحجوب (D-ADM-01): نص اليومية والدفاتر
+     ومحادثات سند والإجابات التفصيلية لا مسار تعديل ولا قراءة لها هنا أصلاً.
+     والجوال والدولة يشترطان users:view_contact معه — من لا يرى الحقل لا يعدّله. */
+  "users:edit":               "تعديل بيانات العميل: الاسم والبريد والفئة العمرية والجنس والصورة والتذكير (والجوال والدولة مع users:view_contact)",
 
   /* --- الرسائل --- */
   "messages:view":            "رسائل التواصل الواردة",
@@ -138,6 +142,10 @@ export const PERMISSION_CATALOG = {
   /* --- المالية --- */
   "subscriptions:view":       "قائمة الاشتراكات",
   "subscriptions:cancel":     "إلغاء اشتراك يدوياً",
+  "subscriptions:edit":       "تعديل باقة الاشتراك ومدته وحالته يدوياً (بلا حركة مال، ويُسجَّل بالقيمتين)",
+  "errors:view":              "سجلّ أخطاء النظام المنقّى (KANAF-ORD-0013 §11) — للمالك والمدير وحدهما",
+  "members:view_cancelled":   "الأعضاء الملغون — سجلات مجهولة بلا هوية (KANAF-ORD-0013 §8)",
+  "members:purge":            "إتمام الحذف النهائي لحساب طلب صاحبه حذفه — للمالك وحده، ولا رجعة فيه",
   "payments:view":            "قائمة المدفوعات",
   "payments:refund":          "تنفيذ استرداد — نقل مال حقيقي",
   /* المطابقة تسأل المزوّد عن حالة الدفعة الحقيقية وتطبّقها. صلاحية
@@ -168,9 +176,6 @@ export const PERMISSION_CATALOG = {
   "admins:deactivate":        "تفعيل أو تعطيل حساب إدارة",
   "audit_log:view_reads":     "سجل الوصول — من قرأ بيانات حساسة ولماذا",
   "audit_log:view_actions":   "سجل الإجراءات — من غيّر ماذا، من أي قيمة إلى أي قيمة",
-  "break_glass:request":      "طلب وصول طارئ",
-  "break_glass:view":         "عرض طلبات الوصول الطارئ المعلّقة",
-  "break_glass:approve":      "اعتماد طلب وصول طارئ",
   /* --- التشغيل — KANAF-ORD-0001 R15-07: للمالك وحده (ALL_PERMISSIONS) --- */
   "system:diagnostics":       "تشخيص سلسلة الوكلاء وعنوان العميل كما يراه الخادم (بلا أسرار ولا رموز)",
 };
@@ -271,13 +276,12 @@ const MATRIX = {
        billing_settings:edit  تغيير النسبة يغيّر كل فاتورة قادمة
        app_settings:edit   إعداد يظهر للمستخدم النهائي
        content:bulk_publish  نشر 64 عنصراً بضغطة لا يُترك لدور تشغيلي
-       break_glass:approve المعتمِد يجب أن يكون غير الطالب — وadmin هو الطالب
        webhooks:view_payload  الحمولة الخام قد تحمل تفاصيل وسيلة دفع
        exports:audit       تصدير سجل التدقيق يخرجه من حراسة الخادم
   */
   admin: [
     "overview:view", "overview:view_revenue",
-    "users:view", "users:view_sensitive", "users:view_actions", "users:suspend",
+    "users:view", "users:view_sensitive", "users:view_actions", "users:suspend", "users:edit",
     "messages:view", "messages:update_status",
     "content:view", "content:edit_presentation", "content:review",
     "content:toggle_launch", "content:schedule", "content:change_tier",
@@ -285,14 +289,14 @@ const MATRIX = {
     "notifications:cancel", "notifications:sweep",
     "plans:view", "plans:edit",
     "tax_settings:view", "billing_settings:view", "app_settings:view",
-    "subscriptions:view", "subscriptions:cancel",
+    "subscriptions:view", "subscriptions:cancel", "subscriptions:edit",
     "payments:view", "payments:refund", "payments:reconcile", "billing:view_user",
     "invoices:view", "invoices:regenerate",
     "credit_notes:view", "refunds:view",
     "webhooks:view", "webhooks:replay",
     "reports:view_kpis", "reports:view_integrity",
     "exports:billing", "exports:users",
-    "break_glass:request", "break_glass:view",
+    "errors:view", "members:view_cancelled",
   ],
 
   /* المالك — كل ما في السجل. تُحسب من ALL_PERMISSIONS لا تُكتب
@@ -339,6 +343,70 @@ export const ROLE_PERMISSIONS = Object.freeze(
 /* ------------------------------------------------------------
    5) الواجهة
    ------------------------------------------------------------ */
+
+/* ------------------------------------------------------------
+   منح الصفحات — KANAF-ORD-0013 §5.2: طبقة **تضييق** فوق الدور، لا توسيع.
+
+   كل صلاحية تنتمي إلى الصفحة (أو الصفحات) التي تُستعمل فيها. للحساب قائمة
+   صفحات اختيارية (admin_users.page_grants): NULL = بلا تضييق (كل ما يسمح به
+   دوره). والصلاحية الفعلية = يملكها الدور **و** إحدى صفحاتها ممنوحة.
+   🔴 التأشير لا يمنح صلاحية لا يملكها الدور بحال — الشرط «و» لا «أو».
+   والتحقق في الخادم (req.admin.can) لا في الواجهة وحدها.
+   كل صلاحية في السجل لها صفحة هنا؛ test-38 يفشل إن أُضيفت صلاحية بلا صفحة.
+   ------------------------------------------------------------ */
+export const PANEL_PAGES = [
+  ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["messages", "الرسائل"], ["sent", "الرسائل المرسلة"],
+  ["content", "المحتوى"], ["notifications", "الإشعارات والتسويق"], ["carts", "السلات المتروكة"],
+  ["plans", "الباقات"], ["subscribers", "الاشتراكات"], ["discounts", "أكواد الخصم"], ["invoices", "الفواتير"],
+  ["billing", "المالية"], ["settings", "الإعدادات"], ["integrations", "التكاملات"],
+  ["admin-users", "حسابات الإدارة"], ["audit-log", "سجل الإجراءات"], ["access-log", "سجل الوصول"],
+  ["templates", "قوالب الرسائل"], ["errors", "أخطاء النظام"], ["cancelled-members", "الأعضاء الملغون"],
+].map(([key, label]) => ({ key, label }));
+
+export const PERMISSION_PAGES = {
+  "overview:view": ["overview"], "overview:view_revenue": ["overview"],
+  "users:view": ["users"], "users:view_contact": ["users"], "users:view_sensitive": ["users"],
+  "users:view_actions": ["users"], "users:suspend": ["users"], "users:edit": ["users"],
+  "billing:view_user": ["users"], "exports:users": ["users"],
+  "messages:view": ["messages"], "messages:update_status": ["messages"],
+  "notifications:view_sent": ["sent"],
+  "content:view": ["content"], "content:edit_presentation": ["content"], "content:review": ["content"],
+  "content:toggle_launch": ["content"], "content:schedule": ["content"], "content:change_tier": ["content"], "content:bulk_publish": ["content"],
+  /* صلاحية القائمة لصفحتها وحدها: لو رُبطت notifications:view بـ«المستخدمون» لصار من مُنح
+     «المستخدمون» يقرأ قائمة الحملات كلها — تسرّب من التضييق (وجده test-38). فالمراسلة من
+     ملف العضو أو من «الاشتراكات» تحتاج صفحة «الإشعارات والتسويق» ممنوحة أيضاً. */
+  "notifications:view": ["notifications"], "notifications:create": ["notifications"],
+  "notifications:send": ["notifications"], "notifications:cancel": ["notifications"], "notifications:sweep": ["notifications"],
+  "carts:view": ["carts"],
+  "plans:view": ["plans", "subscribers", "discounts"], "plans:edit": ["plans"],
+  "subscriptions:view": ["subscribers", "billing"], "subscriptions:cancel": ["users", "subscribers"], "subscriptions:edit": ["users", "subscribers"],
+  "discounts:view": ["discounts"], "discounts:edit": ["discounts"],
+  "invoices:view": ["invoices", "billing"], "invoices:regenerate": ["invoices"], "credit_notes:view": ["invoices", "billing"],
+  "exports:billing": ["invoices", "billing"],
+  // payments:view لصفحة المالية وحدها؛ تبويب «الاشتراك» في ملف العضو يقرأ بـbilling:view_user.
+  "payments:view": ["billing"], "payments:refund": ["billing", "users"], "payments:reconcile": ["billing"],
+  "refunds:view": ["billing"], "webhooks:view": ["billing"], "webhooks:view_payload": ["billing"], "webhooks:replay": ["billing"],
+  "reports:view_kpis": ["billing", "overview"], "reports:view_integrity": ["billing"],
+  "tax_settings:view": ["settings"], "tax_settings:edit": ["settings"], "billing_settings:view": ["settings"], "billing_settings:edit": ["settings"],
+  "app_settings:view": ["settings", "templates"], "app_settings:edit": ["settings", "templates"], "system:diagnostics": ["settings"],
+  "integrations:manage": ["integrations"],
+  "admins:view": ["admin-users"], "admins:invite": ["admin-users"], "admins:change_role": ["admin-users"], "admins:deactivate": ["admin-users"],
+  "audit_log:view_actions": ["audit-log"], "exports:audit": ["audit-log"], "audit_log:view_reads": ["access-log"],
+  "errors:view": ["errors"],
+  "members:view_cancelled": ["cancelled-members"], "members:purge": ["users"],
+};
+export const PAGE_KEYS = PANEL_PAGES.map((p) => p.key);
+export const isValidPageList = (v) => Array.isArray(v) && v.length > 0 && v.every((k) => PAGE_KEYS.includes(k));
+
+/** الصلاحية الفعلية: الدور يملكها، والحساب ممنوح إحدى صفحاتها (أو بلا تضييق). */
+export function canWithGrants(role, grants, permission) {
+  if (!can(role, permission)) return false;
+  if (!Array.isArray(grants)) return true;
+  return (PERMISSION_PAGES[permission] || []).some((pg) => grants.includes(pg));
+}
+export function permissionsWithGrants(role, grants) {
+  return permissionsFor(role).filter((p) => canWithGrants(role, grants, p));
+}
 
 /** هل يملك هذا الدور هذه الصلاحية؟ دور مجهول ← لا شيء. */
 export function can(role, permission) {
