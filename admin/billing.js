@@ -14,6 +14,7 @@ import { executeRefund, issueCreditNoteDocument, releaseStaleRefundHolds } from 
 import { settlePaymentEvent } from "../payments/webhook.js";
 import { fetchProviderPayment, providerRefundedTotal } from "../payments/verify.js";
 import { fetchPayment } from "../payments/moyasar.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const billingRouter = express.Router();
 
@@ -620,8 +621,7 @@ billingRouter.post(
     } catch (err) {
       await query(`UPDATE webhook_events SET status = 'failed', error = $1, attempts = attempts + 1 WHERE id = $2`,
         [String(err?.message || err).slice(0, 2000), req.params.id]).catch(() => {});
-      console.error("[admin/billing] replay failed:", err);
-      res.status(500).json({ error: "replay_failed", detail: String(err?.message || err) });
+      return serverError(res, err, "admin/billing:replay", req, { body: { error: "replay_failed", detail: String(err?.message || err) } });
     }
   }
 );
@@ -673,8 +673,7 @@ billingRouter.post(
 
       res.json({ ok: !result.held, providerStatus: providerPayment.status, outcome: result.outcome, held: Boolean(result.held), holdReason: result.holdReason || null, releasedHolds: result.releasedHolds || 0 });
     } catch (err) {
-      console.error("[admin/billing] reconcile failed:", err);
-      res.status(500).json({ error: "reconcile_failed", detail: String(err?.message || err) });
+      return serverError(res, err, "admin/billing:reconcile", req, { body: { error: "reconcile_failed", detail: String(err?.message || err) } });
     }
   }
 );
@@ -729,8 +728,7 @@ billingRouter.get("/payment-holds", requireAdminAuth, requirePermission("payment
       status === "all" ? [] : [status]);
     res.json({ holds: rows.map(holdOut) });
   } catch (err) {
-    console.error("[admin/billing] holds list failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/billing:holds-list", req);
   }
 });
 
@@ -761,7 +759,8 @@ billingRouter.post(
             oldValue: { status: h.status, reason: h.reason }, newValue: { outcome: "provider_unavailable", held: true },
             reason: String(req.body?.reason || req.query?.reason), metadata: { hold_id: h.id, provider_checked: false, provider_error: f.error }, ipAddress: req.ip,
           });
-          return res.status(503).json({ error: "provider_unavailable", held: true, detail: f.error });
+          return serverError(res, Object.assign(new Error(`provider unavailable: ${f.error}`), { code: "provider_unavailable" }), "admin/billing:hold-recheck", req,
+            { status: 503, body: { error: "provider_unavailable", held: true, detail: f.error } });
         }
         providerData = f.data;
         body = { id: null, type: h.event_type, data: f.data };
@@ -783,8 +782,7 @@ billingRouter.post(
       res.json({ ok: !stillHeld, outcome: result.outcome, held: stillHeld, holdStatus: after?.status || null,
         holdReason: result.holdReason || (stillHeld ? result.outcome : null), providerChecked: Boolean(providerData) });
     } catch (err) {
-      console.error("[admin/billing] hold recheck failed:", err);
-      res.status(500).json({ error: "recheck_failed" });
+      return serverError(res, err, "admin/billing:hold-recheck", req, { body: { error: "recheck_failed" } });
     }
   }
 );
@@ -807,8 +805,7 @@ billingRouter.post(
       });
       res.json({ ok: true });
     } catch (err) {
-      console.error("[admin/billing] hold dismiss failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, "admin/billing:hold-dismiss", req);
     }
   }
 );

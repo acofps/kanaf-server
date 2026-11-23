@@ -3,6 +3,7 @@ import { query } from "../db/pool.js";
 import { requireAdminAuth, requirePermission, logAdminAction, fail } from "./middleware.js";
 import { INTEGRATIONS, isKnownField } from "../integrations/catalog.js";
 import { encryptionConfigured, encryptSecret, decryptSecret, last4 } from "../integrations/crypto.js";
+import { expectedUnavailable } from "../ops/http-errors.js";
 
 /* ============================================================
    التكاملات — صفحة اعتمادات لا تكامل (KANAF-ORD-0008 §7)
@@ -53,7 +54,7 @@ integrationsRouter.put("/integrations/:service/:key", requireAdminAuth, requireP
     if (!value || value.length > 1000) return res.status(400).json({ error: "invalid_value" });
     const allowed = ENUMS[`${service}.${key}`];
     if (allowed && !allowed.includes(value)) return res.status(400).json({ error: "invalid_value", allowed });
-    if (!encryptionConfigured()) return res.status(503).json({ error: "encryption_not_configured", message: "ضع INTEGRATIONS_ENC_KEY في بيئة الخادم أولاً." });
+    if (!encryptionConfigured()) return expectedUnavailable(res, 503, { error: "encryption_not_configured", message: "ضع INTEGRATIONS_ENC_KEY في بيئة الخادم أولاً." });
     const { ciphertext, iv, authTag } = encryptSecret(value);
     const { rows: [old] } = await query(`SELECT 1 FROM integration_credentials WHERE service = $1 AND key_name = $2`, [service, key]);
     await query(
@@ -123,8 +124,8 @@ integrationsRouter.post("/integrations/:service/test", requireAdminAuth, require
     if (!def) return res.status(404).json({ error: "unknown_service" });
     const reason = reasonOf(req);
     if (!reason) return res.status(400).json({ error: "reason_required" });
-    if (!def.test) return res.status(501).json({ error: "test_not_available", message: "لا فحص اتصال لهذه الخدمة قبل اعتماد توثيق مزوّدها." });
-    if (!encryptionConfigured()) return res.status(503).json({ error: "encryption_not_configured" });
+    if (!def.test) return expectedUnavailable(res, 501, { error: "test_not_available", message: "لا فحص اتصال لهذه الخدمة قبل اعتماد توثيق مزوّدها." });
+    if (!encryptionConfigured()) return expectedUnavailable(res, 503, { error: "encryption_not_configured" });
     const result = await TESTS[def.test](await loadValues(req.params.service));
     await logAdminAction({ adminUserId: req.admin.id, action: "integration_connection_test",
       entity: "integration_credential", entityId: req.params.service, newValue: result, reason, ipAddress: req.ip });

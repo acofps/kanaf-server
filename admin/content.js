@@ -2,6 +2,7 @@ import express from "express";
 import { query, withTransaction } from "../db/pool.js";
 import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction } from "./middleware.js";
 import { getAdminCatalog, recordContentChange } from "../content/catalog.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const adminContentRouter = express.Router();
 
@@ -71,8 +72,7 @@ adminContentRouter.get("/content", requireAdminAuth, requirePermission("content:
        حتى تُبنى اللوحة من جديد. */
     res.json({ ...result, content: result.items });
   } catch (err) {
-    console.error("[admin/content] list failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/content:list", req);
   }
 });
 
@@ -98,8 +98,7 @@ adminContentRouter.get("/content/:type/:key", requireAdminAuth, requirePermissio
 
     res.json({ item, history });
   } catch (err) {
-    console.error("[admin/content] detail failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/content:detail", req);
   }
 });
 
@@ -161,8 +160,7 @@ adminContentRouter.post("/content/:id/review", requireAdminAuth, requirePermissi
     res.json(result.next);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/content] review failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/content:review", req);
   }
 });
 
@@ -227,8 +225,7 @@ adminContentRouter.post("/content/:id/toggle-launch", requireAdminAuth, requireP
     res.json(result.next);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/content] toggle-launch failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/content:toggle-launch", req);
   }
 });
 
@@ -326,8 +323,7 @@ adminContentRouter.patch(
       res.json(result.next);
     } catch (err) {
       if (err.status) return res.status(err.status).json({ error: err.message });
-      console.error("[admin/content] presentation update failed:", err);
-      res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, "admin/content:presentation-update", req);
     }
   }
 );
@@ -407,8 +403,7 @@ adminContentRouter.post("/content/:type/:key/schedule", requireAdminAuth, requir
     res.json(result.next);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error("[admin/content] schedule failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/content:schedule", req);
   }
 });
 
@@ -498,7 +493,6 @@ adminContentRouter.post("/content/bulk-publish", requireAdminAuth, requirePermis
       note: "العناصر المرفوضة سريرياً لم تُمس — تُراجَع كل واحدة على حدة.",
     });
   } catch (err) {
-    console.error("[admin/content] bulk publish failed:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/content:bulk-publish", req);
   }
 });

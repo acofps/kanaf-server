@@ -12,6 +12,7 @@ import {
   checkSendRate, CODE_CONSTANTS,
 } from "./codes.js";
 import { requireUserAuth } from "./middleware.js";
+import { serverError } from "../ops/http-errors.js";
 
 export const authRouter = express.Router();
 
@@ -207,8 +208,7 @@ authRouter.post("/register", async (req, res) => {
       // The row exists and the code is stored, so the account is
       // recoverable via resend — but say so plainly rather than
       // returning ok and leaving the user staring at an empty inbox.
-      console.error("verification email failed:", err.message);
-      return res.status(502).json({ error: "email_send_failed", next: "verify" });
+      return serverError(res, err, "auth:register-email", req, { status: 502, body: { error: "email_send_failed", next: "verify" } });
     }
 
     res.status(201).json({ ok: true, next: "verify" });
@@ -217,8 +217,7 @@ authRouter.post("/register", async (req, res) => {
       // Lost the race against a concurrent insert on idx_users_email_lower.
       return res.status(201).json({ ok: true, next: "verify" });
     }
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -268,8 +267,7 @@ authRouter.post("/verify-email", async (req, res) => {
     const session = await issueSession(user, req);
     res.json({ ok: true, user: publicUser(user), ...session });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -302,14 +300,12 @@ authRouter.post("/resend-code", async (req, res) => {
     try {
       await sendSystemMessageEmail("email_verification", cleanEmail, { name: user.name, code, minutes: ttlMinutes });
     } catch (err) {
-      console.error("resend failed:", err.message);
-      return res.status(502).json({ error: "email_send_failed" });
+      return serverError(res, err, "auth:resend-email", req, { status: 502, body: { error: "email_send_failed" } });
     }
 
     res.json({ ok: true, cooldownSeconds: CODE_CONSTANTS.RESEND_COOLDOWN_SECONDS });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -393,8 +389,7 @@ authRouter.post("/login", async (req, res) => {
     const session = await issueSession(user, req);
     res.json({ ok: true, user: publicUser(user), ...session });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -430,8 +425,7 @@ authRouter.post("/refresh", async (req, res) => {
       expiresIn: ACCESS_TOKEN_TTL,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -443,8 +437,7 @@ authRouter.post("/logout", async (req, res) => {
     await revokeRefreshToken(req.body?.refreshToken);
     res.json({ ok: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -461,8 +454,7 @@ authRouter.get("/me", requireUserAuth, async (req, res) => {
     if (!rows[0]) return res.status(401).json({ error: "account_not_found" });
     res.json({ user: publicUser(rows[0]) });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -559,8 +551,7 @@ authRouter.post("/reset-password", async (req, res) => {
     const session = await issueSession(user, req);
     res.json({ ok: true, user: publicUser(user), ...session });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });
 
@@ -595,7 +586,6 @@ authRouter.post("/change-password", requireUserAuth, async (req, res) => {
     const session = await issueSession({ id: user.id }, req);
     res.json({ ok: true, ...session });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "auth/routes", req);
   }
 });

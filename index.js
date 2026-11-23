@@ -48,10 +48,13 @@ import { assistantGate } from "./assistant/guard.js";
 import { internalRouter } from "./ops/internal.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import { serverError, record5xxNet } from "./ops/http-errors.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+/* KANAF-ORD-0015 §2.2.3: شبكة أمان — أي ردّ ≥500 لم يمرّ بـserverError يُسجَّل بموضعه. أول وسيط عمداً. */
+app.use(record5xxNet);
 // Render (and most PaaS hosts) terminates TLS and proxies requests
 // through their own edge — exactly one hop. Trusting that specific
 // hop (not an arbitrary number) lets express-rate-limit correctly
@@ -483,8 +486,7 @@ app.post("/api/chat", crisisFirewall, requireVerifiedUser, assistantGate("chat")
     }
     res.json({ reply: reply || "عذراً، ما قدرت أرد الحين. جرب مرة ثانية." });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "chat", req);
   }
 });
 
@@ -641,16 +643,15 @@ app.post("/api/plan", crisisFirewall, requireVerifiedUser, assistantGate("plan")
     } catch (providerErr) {
       // فشل المزوّد ليس عطباً في خادمنا، ورمزه يجب أن يقول ذلك —
       // الواجهة تعرض رسالة إعادة محاولة، والسجل يعرف أين المشكلة.
-      console.error("[plan] فشل نداء المزوّد:", providerErr?.status || "", providerErr?.message || providerErr);
-      return res.status(502).json({ error: "plan_provider_failed" });
+      return serverError(res, providerErr, "plan:provider", req, { status: 502, body: { error: "plan_provider_failed" } });
     }
 
     const raw = response.content.filter((c) => c.type === "text").map((c) => c.text).join("").trim();
     const parsed = normalizePlan(extractJsonObject(raw));
     if (!parsed) {
       // ⚠️ الطول والسبب فقط. نص الرد محتوى نفسي لا يُكتب في سجل.
-      console.error(`[plan] رد المزوّد غير مطابق للشكل المطلوب — طول النص: ${raw.length}`);
-      return res.status(502).json({ error: "plan_invalid_response" });
+      return serverError(res, new Error(`plan provider reply did not match the required shape (length ${raw.length})`), "plan:invalid-response", req,
+        { status: 502, body: { error: "plan_invalid_response" } });
     }
 
     /* -------- الحفظ: أرشفة القديمة وإدراج الجديدة في معاملة واحدة --------
@@ -722,8 +723,7 @@ app.post("/api/plan", crisisFirewall, requireVerifiedUser, assistantGate("plan")
       plan: saved,
     });
   } catch (err) {
-    console.error("[plan]", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "plan", req);
   } finally {
     planInFlight.delete(req.userId);
   }
@@ -783,8 +783,7 @@ app.post("/api/contact", async (req, res) => {
 
     res.json({ ok: true, id: rows[0].id });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "contact", req);
   }
 });
 
@@ -958,8 +957,7 @@ app.post("/api/unsubscribe", express.urlencoded({ extended: false }), async (req
     res.send(`<!DOCTYPE html><html dir="rtl" lang="ar"><body style="font-family:Arial;text-align:center;padding:40px;">
       <p>تم إلغاء اشتراكك. ما بتوصلك رسائل تسويقية بعد الآن.</p></body></html>`);
   } catch (err) {
-    console.error(err);
-    res.status(500).send("internal_error");
+    serverError(res, err, "unsubscribe", req, { body: { error: "internal_error" } });
   }
 });
 
@@ -1051,8 +1049,7 @@ app.post("/api/setup/create-first-admin", async (req, res) => {
     );
     res.status(201).json({ ok: true, admin: rows[0] });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "setup:create-first-admin", req);
   }
 });
 /* ---------------------------------------------------------
@@ -1074,8 +1071,7 @@ app.get("/api/setup/migration-status", async (req, res) => {
 
     res.json({ migrations: await migrationStatus() });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error", detail: err.message });
+    return serverError(res, err, "setup:migration-status", req, { body: { error: "internal_error", detail: err.message } });
   }
 });
 
@@ -1089,10 +1085,10 @@ app.post("/api/setup/run-migrations", async (req, res) => {
 
     const results = await runMigrations();
     const failed = results.find((r) => r.status === "failed");
-    res.status(failed ? 500 : 200).json({ ok: !failed, results });
+    if (failed) return serverError(res, new Error(`migration ${failed.filename} failed: ${failed.error}`), "setup:run-migrations", req, { body: { ok: false, results } });
+    res.status(200).json({ ok: true, results });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "internal_error", detail: err.message });
+    return serverError(res, err, "setup:run-migrations", req, { body: { error: "internal_error", detail: err.message } });
   }
 });
 
@@ -1137,9 +1133,12 @@ app.use(["/admin", "/api"], (req, res) => res.status(404).json({ error: "not_fou
 --------------------------------------------------------- */
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  console.error("[unhandled]", req.method, req.originalUrl, err);
-  if (!(err?.status && err.status < 500)) recordError(err, { location: `${req.method} ${req.originalUrl}`, status: 500 }); // ORD-0013 §11
-  res.status(err?.status && err.status < 600 ? err.status : 500).json({ error: "internal_error" });
+  if (err?.status && err.status < 500) {
+    console.error("[unhandled]", req.method, req.originalUrl, err?.message || err);
+    return res.status(err.status).json({ error: "internal_error" });
+  }
+  // ORD-0013 §11 + ORD-0015 §2.2.3: يُسجَّل بالطريق الموحّد.
+  return serverError(res, err, "unhandled", req, { status: err?.status >= 500 && err.status < 600 ? err.status : 500, body: { error: "internal_error" } });
 });
 
 const PORT = process.env.PORT || 3001;

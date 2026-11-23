@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import express from "express";
 import { query, withTransaction } from "../db/pool.js";
-import { recordError } from "../ops/error-log.js";
+import { serverError } from "../ops/http-errors.js";
 import { requireVerifiedUser } from "../auth/middleware.js";
 import { getUserSubscription } from "../billing/subscription.js";
 import { assertContentAvailable } from "../content/catalog.js";
@@ -78,9 +78,7 @@ function sendCreated(res, { row, replayed }) {
 
 function fail(res, err, where) {
   if (err.status) return res.status(err.status).json({ error: err.message });
-  console.error(`[userdata/${where}]`, err);
-  recordError(err, { location: `userdata/${where}`, status: 500 }); // KANAF-ORD-0013 §11
-  return res.status(500).json({ error: "internal_error" });
+  return serverError(res, err, `userdata/${where}`, null, { body: { error: "internal_error" } }); // KANAF-ORD-0015 §2.2.3
 }
 
 /* ============================================================

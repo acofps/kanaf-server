@@ -1,5 +1,6 @@
 import { verifyAccessToken } from "./tokens.js";
 import { query } from "../db/pool.js";
+import { serverError } from "../ops/http-errors.js";
 
 /**
  * Gate for any route that acts on behalf of a signed-in app user.
@@ -61,8 +62,7 @@ export async function requireVerifiedUser(req, res, next) {
       req.user = user;
       return next();
     } catch (err) {
-      console.error(err);
-      return res.status(500).json({ error: "internal_error" });
+      return serverError(res, err, "auth/middleware", req);
     }
   });
 }

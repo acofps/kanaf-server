@@ -1,7 +1,7 @@
 import { verifyToken } from "./auth.js";
 import { query } from "../db/pool.js";
-import { recordError } from "../ops/error-log.js";
 import { can, canAny, permissionsFor, isValidRole, canWithGrants, permissionsWithGrants } from "./permissions.js";
+import { serverError } from "../ops/http-errors.js";
 
 /* ============================================================
    وسيطة الإدارة — المصادقة، والصلاحية، وسجل التدقيق.
@@ -112,8 +112,7 @@ export async function requireAdminAuth(req, res, next) {
     };
     next();
   } catch (err) {
-    console.error("[admin/auth] تعذّر قراءة حساب الإدارة:", err);
-    res.status(500).json({ error: "internal_error" });
+    return serverError(res, err, "admin/auth:load-admin", req);
   }
 }
 
@@ -344,8 +343,7 @@ export function requireReasonAndLog(action, options = {}) {
       });
       next();
     } catch (err) {
-      console.error("[admin/audit] تعذّر كتابة سجل الوصول:", err);
-      res.status(500).json({ error: "audit_log_failed" });
+      return serverError(res, err, "admin/audit:access-log-write", req, { body: { error: "audit_log_failed" } });
     }
   };
 }
@@ -379,15 +377,8 @@ export function fail(res, err, where, req = null) {
     });
   }
 
-  console.error(
-    `[${where}] ${req?.method || ""} ${req?.originalUrl || ""} ` +
-    `admin=${req?.admin?.id || "-"} (${req?.admin?.role || "-"}): ${err?.message || err}`,
-    err?.stack || ""
-  );
-  // KANAF-ORD-0013 §11: منقّى، ولا يُنتظر ولا يرمي — لا يُسقط الطلب.
-  recordError(err, { location: `${where} · ${req?.method || ""} ${req?.originalUrl || ""}`, status: 500 });
-
-  res.status(500).json({ error: "internal_error", message: ARABIC_FALLBACK });
+  // KANAF-ORD-0013 §11 / ORD-0015 §2.2.3: السجل النصّي وسجلّ الأخطاء المنقّى بطريق واحد للخادم كله.
+  return serverError(res, err, where, req, { body: { error: "internal_error", message: ARABIC_FALLBACK } });
 }
 
 /** خطأ متوقَّع بحالة HTTP — يُرمى من المعالج ويلتقطه fail(). */
