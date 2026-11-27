@@ -370,7 +370,8 @@ function EditAppSetting({ setting, entry, onClose, onDone }) {
           </p>
         )}
         <div className="grid gap-3">
-          <Field label="القيمة">
+          {/* KANAF-ORD-0022 ملحق §2-3: ملاحظة الإعداد المربوط (ومنها لأي موضع هو) تحت حقله. */}
+          <Field label="القيمة" hint={entry?.wired ? entry?.note : undefined}>
             {isBool ? (
               <div className="flex gap-2">
                 {[[true, "مفعّل"], [false, "مطفأ"]].map(([v, label]) => (
