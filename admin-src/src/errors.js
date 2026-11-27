@@ -205,6 +205,19 @@ export const ERROR_AR = {
   payment_provider_not_configured: "إعداد الدفع ناقص على الخادم — راجع «أخطاء النظام».",
   payment_provider_rejected: "رفض مزوّد الدفع الطلب — راجع «أخطاء النظام».",
   payment_provider_unreachable: "مزوّد الدفع لم يردّ في الوقت المحدّد — حاول بعد دقائق.",
+  /* واجهة الموقع — KANAF-ORD-0022 ب-2: الخادم يردّ site_front_invalid ومعه fields
+     {حقل: {code, message}}، فتظهر رسالة كل حقل تحته. وهذه نصوص الرموز نفسها. */
+  values_required: "لم يصل شيء للحفظ — أعد تحميل الصفحة ثم احفظ.",
+  site_front_invalid: "لم يُحفظ شيء: في الحقول المعلَّمة خطأ — صحّحه ثم احفظ.",
+  site_front_value_must_be_string: "القيمة يجب أن تكون نصاً.",
+  site_front_url_invalid: "الرابط غير صالح — انسخه كاملاً من المتصفح.",
+  site_front_url_must_be_https: "يُقبل رابط يبدأ بـ https:// وحده.",
+  site_front_url_too_long: "الرابط أطول من 300 حرف.",
+  site_front_url_host_not_allowed: "رابط المتجر يجب أن يكون من موقع المتجر الرسمي (apps.apple.com أو play.google.com).",
+  site_front_email_invalid: "صيغة البريد غير صحيحة.",
+  site_front_text_too_long: "النصّ أطول من 60000 حرف.",
+  site_front_field_not_editable: "وقت آخر تعديل يضبطه الخادم وحده — لا يُرسل في الطلب.",
+  site_front_unknown_field: "حقل غير معروف في واجهة الموقع.",
 };
 
 /** فاصل الرمز في نصّ الخطأ — يرسمه ErrorBar بخط صغير. */

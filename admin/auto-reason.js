@@ -39,6 +39,7 @@ export const AUTO_REASONS = [
   ["POST",   "/billing/payment-holds/:id/dismiss",      "صرف دفعة معلّقة من اللوحة"],
   ["PUT",    "/billing/settings",               "تعديل الإعداد المالي من اللوحة"],
   ["PUT",    "/tax-settings",                   "تعديل الإعداد الضريبي من اللوحة"],
+  ["PUT",    "/site-front",                     "تعديل واجهة الموقع (روابطها ونصّيها القانونيين) من اللوحة"],
   ["POST",   "/invoices/:id/regenerate",        "إعادة توليد مستند فاتورة من اللوحة"],
   // الباقات والخصم
   ["POST",   "/plans/:id/toggle-active",        "تفعيل باقة أو إيقافها من اللوحة"],

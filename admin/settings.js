@@ -6,8 +6,15 @@ import {
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
 import { refreshAdminSessionMinutes } from "./auth.js";
+import { SITE_FRONT_KEYS } from "./site-front.js";
 
 export const adminSettingsRouter = express.Router();
+
+/* KANAF-ORD-0022: مفاتيح «واجهة الموقع» تُحرَّر من صفحتها وحدها (admin/site-front.js)،
+   بحدودها هي (نصّ حتى 60000 حرف). فلا تظهر في قائمة إعدادات التشغيل العامة، وإلا عُرضت
+   هنا بلا مسار تعديل عام. ويُستثنى منها رابطا المتجرين: إعدادان قائمان في السجلّ أدناه
+   يقرؤهما تذييل البريد، ويقرؤهما الموقع الآن أيضاً. */
+const SITE_FRONT_ONLY_KEYS = SITE_FRONT_KEYS.filter((k) => k !== "app_store_url" && k !== "google_play_url");
 
 /* ============================================================
    الإعدادات — البند 6 من المرحلة 5
@@ -409,7 +416,8 @@ adminSettingsRouter.get(
 
       if (req.admin.can("app_settings:view")) {
         const { rows } = await query(
-          `SELECT key, value, category, description, updated_at FROM app_settings ORDER BY category, key`
+          `SELECT key, value, category, description, updated_at FROM app_settings
+            WHERE NOT (key = ANY($1)) ORDER BY category, key`, [SITE_FRONT_ONLY_KEYS]
         );
         sections.app = {
           canEdit: req.admin.can("app_settings:edit"),
@@ -445,7 +453,8 @@ adminSettingsRouter.get(
                 au.name AS updated_by_name
            FROM app_settings s
            LEFT JOIN admin_users au ON au.id = s.updated_by
-          ORDER BY s.category, s.key`
+          WHERE NOT (s.key = ANY($1))
+          ORDER BY s.category, s.key`, [SITE_FRONT_ONLY_KEYS]
       );
       res.json({
         settings: rows.map((r) => ({

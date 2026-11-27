@@ -7,6 +7,7 @@ import {
   Spinner, ErrorBar, Table, Td, useAsync, Screen,
 } from "../ui.jsx";
 import { Link, navigate } from "../router.js";
+import SiteFront from "./SiteFront.jsx";
 
 /* ============================================================
    الإعدادات.
@@ -46,6 +47,12 @@ export default function Settings({ me, toast, route = [] }) {
 
   const registryFor = (key) => (d?.registry || []).find((r) => r.key === key);
 
+  /* KANAF-ORD-0022 ب-4: «واجهة الموقع» صفحة /settings/site-front بصلاحية إعدادات التشغيل */
+  if (route[0] === "site-front") {
+    if (!d.sections?.app) return <Screen title="واجهة الموقع" back="/settings"><ErrorBar error="صلاحيتك لا تسمح بهذا الإجراء." /></Screen>;
+    return <SiteFront toast={toast} />;
+  }
+
   /* KANAF-ORD-0013 §3.2: تعديل إعداد تشغيل صفحة /settings/app/<key> لا نافذة */
   if (route[0] === "app" && route[1]) {
     const setting = (d.sections?.app?.values || []).find((r) => r.key === route[1]);
@@ -66,6 +73,17 @@ export default function Settings({ me, toast, route = [] }) {
       )}
       {d.sections?.tax && (
         <TaxSection section={d.sections.tax} registryFor={registryFor} toast={toast} onSaved={state.reload} />
+      )}
+      {d.sections?.app && (
+        <Card>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-bold" style={{ color: C.text }}>واجهة الموقع</h3>
+              <p className="text-[11px] leading-6" style={{ color: C.textMuted }}>روابط صفحات tanfs.net العامة (المتجران، والحسابات، والبريد) ونصّا سياسة الخصوصية وشروط الاستخدام.</p>
+            </div>
+            <Link to="/settings/site-front"><Button size="sm" variant="ghost">{d.sections.app.canEdit ? "تعديل" : "عرض"}</Button></Link>
+          </div>
+        </Card>
       )}
       {d.sections?.app && (
         <AppSection section={d.sections.app} registryFor={registryFor} toast={toast} onSaved={state.reload} />

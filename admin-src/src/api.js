@@ -215,6 +215,9 @@ export const api = {
   listAppSettings: () => req("/app-settings"),
   updateAppSetting: (key, value) =>
     req(`/app-settings/${encodeURIComponent(key)}`, { method: "PUT", body: { value } }),
+  /* KANAF-ORD-0022 ب-4: «واجهة الموقع» — روابط tanfs.net ونصّاها القانونيان */
+  siteFront: () => req("/site-front"),
+  saveSiteFront: (values) => req("/site-front", { method: "PUT", body: { values } }),
   getBillingSettings: () => req("/billing/settings"),
   saveBillingSettings: (body) => req("/billing/settings", { method: "PUT", body }),
 

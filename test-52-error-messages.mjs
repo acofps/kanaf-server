@@ -20,6 +20,10 @@ export const PANEL_EXEMPT = {
   wrong_token_type: "401: كالسابق — مسار تجديد الجلسة لا نصّ خطأ.",
   no_refresh_cookie: "401 من /auth/refresh نفسه: يُطلق حدث انتهاء الجلسة وشاشة الدخول.",
   invalid_or_expired_refresh_token: "401 من /auth/refresh نفسه: كالسابق.",
+  rate_limited: "KANAF-ORD-0022 ب-3: يردّه /api/public/* (صفحات tanfs.net العامة) لا مسارات اللوحة؛ الملف في admin/ لأنه يشارك مفاتيح واجهة الموقع.",
+  temporarily_unavailable: "KANAF-ORD-0022 ب-3: 503 السريع من /api/public/* للصفحات العامة، لا يصل اللوحة.",
+  method_not_allowed: "KANAF-ORD-0022 ب-3: 405 لغير GET على /api/public/* (الصفحات العامة)، لا يصل اللوحة.",
+  site_front_db_timeout: "KANAF-ORD-0022 ب-3: خطأ داخلي في سباق المهلة لـ/api/public/* يتحوّل إلى 503 temporarily_unavailable ولا يخرج رمزاً.",
   reason_required: "قرار المالك D1 (ملحق ORD-0013): لا سبب مكتوب في اللوحة — admin/auto-reason.js يملأ السبب في كل طلب إداري قبل المسار، فلا يصل الرمز واجهةً. ونصّ «السبب مطلوب» ممنوع في الحزمة (test-44 P3).",
 };
 const { all, panel } = extractCodes();
