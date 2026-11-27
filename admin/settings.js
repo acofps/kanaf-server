@@ -6,7 +6,7 @@ import {
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
 import { refreshAdminSessionMinutes } from "./auth.js";
-import { SITE_FRONT_KEYS } from "./site-front.js";
+import { SITE_FRONT_OWN_KEYS } from "./site-front.js";
 
 export const adminSettingsRouter = express.Router();
 
@@ -14,7 +14,7 @@ export const adminSettingsRouter = express.Router();
    بحدودها هي (نصّ حتى 60000 حرف). فلا تظهر في قائمة إعدادات التشغيل العامة، وإلا عُرضت
    هنا بلا مسار تعديل عام. ويُستثنى منها رابطا المتجرين: إعدادان قائمان في السجلّ أدناه
    يقرؤهما تذييل البريد، ويقرؤهما الموقع الآن أيضاً. */
-const SITE_FRONT_ONLY_KEYS = SITE_FRONT_KEYS.filter((k) => k !== "app_store_url" && k !== "google_play_url");
+const SITE_FRONT_ONLY_KEYS = SITE_FRONT_OWN_KEYS;
 
 /* ============================================================
    الإعدادات — البند 6 من المرحلة 5
@@ -146,7 +146,7 @@ export const SETTINGS_REGISTRY = [
     key: "support_email", label: "بريد الدعم المعروض",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "يظهر أسفل نموذج «تواصل معنا» في التطبيق. شوهد على الشاشة بعد نشر 10 أغسطس 2026.",
+    note: "لنموذج «تواصل معنا» في التطبيق ولفوتر موقع tanfs.net معاً: هو نفسه «بريد التواصل» في صفحة «واجهة الموقع» (KANAF-ORD-0022 ملحق §2-2)، فتعديله من أيّ الصفحتين يغيّره في الموضعين. شوهد في التطبيق بعد نشر 10 أغسطس 2026.",
   },
   {
     key: "support_hours", label: "أوقات عمل الدعم",
@@ -204,13 +204,13 @@ export const SETTINGS_REGISTRY = [
     key: "social_x_handle", label: "حساب X",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "المعرّف وحده، وقائمة محارف بيضاء تمنع أن يتحوّل الإعداد إلى رابط لموقع آخر. كان مكتوباً في التطبيق بالاسم القديم للمشروع (@marsah_app) فكان تغييره يحتاج بناءً ورفعاً.",
+    note: "لنموذج «تواصل معنا» في التطبيق — لا لموقع tanfs.net (رابطه الكامل في «واجهة الموقع»). المعرّف وحده، وقائمة محارف بيضاء تمنع أن يتحوّل الإعداد إلى رابط لموقع آخر. كان مكتوباً في التطبيق بالاسم القديم للمشروع (@marsah_app) فكان تغييره يحتاج بناءً ورفعاً.",
   },
   {
     key: "social_instagram_handle", label: "حساب إنستقرام",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "كسابقه. كان @marsah.app في الكود.",
+    note: "لنموذج «تواصل معنا» في التطبيق — لا لموقع tanfs.net (رابطه الكامل في «واجهة الموقع»). كسابقه: المعرّف وحده. كان @marsah.app في الكود.",
   },
   /* KANAF-ORD-0008 §9.2 — روابط تذييل البريد. فارغة حتى يضبطها المالك؛ والزر مخفيّ ما دامت فارغة. */
   {

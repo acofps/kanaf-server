@@ -25,6 +25,12 @@ import { serverError } from "../ops/http-errors.js";
    اثنان منها قائمان قبل هذا الأمر: app_store_url وgoogle_play_url
    (KANAF-ORD-0008 §9.2، يقرؤهما تذييل البريد). تُقرأ القيمة نفسها هنا،
    وبالمدقّق نفسه: https والمضيف الرسمي بعينه.
+
+   و**contact_email لا مفتاح له** (ملحق ORD-0022 §2-2): اسم في الردّ
+   وفي اللوحة فقط، وقيمته support_email القائم — البريد نفسه الذي يظهر
+   تحت «تواصل معنا» في التطبيق. فللبريد مصدر واحد لا مصدران يفترقان.
+   أمّا x_url وinstagram_url فمنفصلان عن social_*_handle عمداً (§2-3):
+   رابط كامل لموقع tanfs.net مقابل معرّف لنموذج «تواصل معنا».
    ============================================================ */
 
 /** الروابط والبريد — GET /api/public/landing */
@@ -39,6 +45,12 @@ const STAMP_OF = { privacy_text: "privacy_text_updated_at", terms_text: "terms_t
 /** ما تقبله اللوحة في الحفظ — حقلا الوقت ليسا منه، فإرسالهما يُرفض */
 export const EDITABLE_KEYS = [...LANDING_KEYS, ...TEXT_KEYS];
 export const SITE_FRONT_KEYS = [...LANDING_KEYS, ...LEGAL_KEYS];
+/** الاسم المعروض ← المفتاح المخزَّن، حيث يختلفان. */
+export const STORAGE_KEY = { contact_email: "support_email" };
+const storageKey = (k) => STORAGE_KEY[k] || k;
+/** مفاتيح لا يحرّرها إلا «واجهة الموقع» — تُخفى من جدول «إعدادات التشغيل» القديم.
+    مفتاحا المتجر وsupport_email مشتركة، فتبقى هناك أيضاً. */
+export const SITE_FRONT_OWN_KEYS = SITE_FRONT_KEYS.filter((k) => !["app_store_url", "google_play_url"].includes(k) && !STORAGE_KEY[k]);
 
 export const URL_MAX = 300;
 export const TEXT_MAX = 60000;
@@ -138,9 +150,9 @@ const asText = (v) => (v === null || v === undefined ? "" : typeof v === "string
 
 /** يقرأ المفاتيح المطلوبة؛ الغائب والفارغ والـnull كلها "". */
 export async function readSiteFront(keys = SITE_FRONT_KEYS) {
-  const { rows } = await query(`SELECT key, value FROM app_settings WHERE key = ANY($1)`, [keys]);
+  const { rows } = await query(`SELECT key, value FROM app_settings WHERE key = ANY($1)`, [keys.map(storageKey)]);
   const found = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  return Object.fromEntries(keys.map((k) => [k, asText(found[k])]));
+  return Object.fromEntries(keys.map((k) => [k, asText(found[storageKey(k)])]));
 }
 
 /* ============================================================
@@ -278,22 +290,26 @@ adminSiteFrontRouter.put(
       const changed = await withTransaction(async (client) => {
         const keys = Object.keys(checked.values);
         const { rows } = await client.query(
-          `SELECT key, value FROM app_settings WHERE key = ANY($1) FOR UPDATE`, [keys]
+          `SELECT key, value FROM app_settings WHERE key = ANY($1) FOR UPDATE`, [keys.map(storageKey)]
         );
         const before = Object.fromEntries(rows.map((r) => [r.key, asText(r.value)]));
         const out = [];
+        /* يكتب في المفتاح المخزَّن. والصف القائم يُحدَّث في قيمته وحدها (فئته ووصفه كما هما)؛
+           وsupport_email الفارغ null كما يكتبه «إعدادات التشغيل»، فيبقى /api/support-info على معناه. */
         const write = (key, value) => client.query(
           `INSERT INTO app_settings (key, value, category, description, updated_by, updated_at)
-           VALUES ($1, $2::jsonb, 'general', $3, $4, now())
+           VALUES ($1, $2::jsonb, $3, $4, $5, now())
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-          [key, JSON.stringify(value), `واجهة الموقع — ${FIELD_LABEL[key] || key}`, req.admin.id]
+          [key, JSON.stringify(key === "support_email" && value === "" ? null : value),
+           key === "support_email" ? "support" : "general", `واجهة الموقع — ${FIELD_LABEL[key] || key}`, req.admin.id]
         );
-        for (const key of keys) {
+        for (const field of keys) {
+          const key = storageKey(field);
           const old = before[key] ?? "";
-          const value = checked.values[key];
+          const value = checked.values[field];
           if (old === value) continue;
           await write(key, value);
-          out.push({ key, old, value });
+          out.push({ key, field, old, value });
           if (STAMP_OF[key]) {
             const { rows: [{ now }] } = await client.query(`SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`);
             await write(STAMP_OF[key], now);
@@ -311,7 +327,7 @@ adminSiteFrontRouter.put(
         });
       }
 
-      res.json({ values: await readSiteFront(), changed: changed.map((c) => c.key) });
+      res.json({ values: await readSiteFront(), changed: changed.map((c) => c.field) });
     } catch (err) { fail(res, err, "admin/site-front:update", req); }
   }
 );

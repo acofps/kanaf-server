@@ -46,6 +46,9 @@ async function call(method, path, { body, cookie, origin, xff } = {}) {
   return { status: r.status, body: json, raw, headers: r.headers, ms: Date.now() - t0 };
 }
 const ALL12 = [...SF.LANDING_KEYS, ...SF.LEGAL_KEYS];
+/* المفاتيح المخزَّنة فعلاً: contact_email لا مفتاح له، قيمته support_email (ملحق ORD-0022 §2-2). */
+const STORED = ALL12.map((k) => (k === "contact_email" ? "support_email" : k));
+const NO_EMAIL = ALL12.filter((k) => k !== "contact_email");
 const allEmpty = (o, keys) => keys.every((k) => o[k] === "") && Object.keys(o).length === keys.length;
 const exactKeys = (o, keys) => JSON.stringify(Object.keys(o).sort()) === JSON.stringify([...keys].sort());
 
@@ -63,23 +66,27 @@ try {
 
   // ما في القاعدة المعزولة قبل أي حفظ: مفتاحا المتجر من الهجرة 020 بقيمة null، والعشرة غائبة.
   const { rows: pre } = await query(`SELECT key, value FROM app_settings WHERE key = ANY($1) ORDER BY key`, [ALL12]);
-  const settingsBefore = (await query(`SELECT key, value::text v, category, updated_at FROM app_settings WHERE NOT (key = ANY($1)) ORDER BY key`, [ALL12])).rows;
+  const settingsBefore = (await query(`SELECT key, value::text v, category, updated_at FROM app_settings WHERE NOT (key = ANY($1)) ORDER BY key`, [STORED])).rows;
+  const { rows: [seedRow] } = await query(`SELECT value, category, description FROM app_settings WHERE key = 'support_email'`);
+  const SEED_EMAIL = seedRow.value;
   const taxBefore = (await query(`SELECT * FROM tax_settings ORDER BY 1`).catch(() => ({ rows: ["(no table)"] }))).rows;
   let r = await call("GET", "/api/public/landing");
   let r2 = await call("GET", "/api/public/legal");
-  ok(`K1 قبل أي حفظ (${pre.length} مفتاح موجود، كلها null): landing ثمانية مفاتيح فارغة`, r.status === 200 && allEmpty(r.body, SF.LANDING_KEYS), r.raw);
+  ok(`K1 قبل أي حفظ (${pre.length} مفتاح موجود، كلها null): landing سبعة فارغة، وcontact_email = support_email القائم (${SEED_EMAIL})`,
+    r.status === 200 && exactKeys(r.body, SF.LANDING_KEYS) && SF.LANDING_KEYS.filter((k) => k !== "contact_email").every((k) => r.body[k] === "") && r.body.contact_email === SEED_EMAIL, r.raw);
   ok("K2 قبل أي حفظ: legal أربعة مفاتيح فارغة", r2.status === 200 && allEmpty(r2.body, SF.LEGAL_KEYS), r2.raw);
-  ok("K3 الردّ قبل أي حفظ بالحرف", r.raw === JSON.stringify(Object.fromEntries(SF.LANDING_KEYS.map((k) => [k, ""]))), r.raw);
+  ok("K3 الردّ قبل أي حفظ بالحرف", r.raw === JSON.stringify(Object.fromEntries(SF.LANDING_KEYS.map((k) => [k, k === "contact_email" ? SEED_EMAIL : ""]))), r.raw);
 
-  // ولا مفتاح أصلاً (ولا صفّا الهجرة): لا رمي، فارغ.
-  await query(`DELETE FROM app_settings WHERE key = ANY($1)`, [ALL12]);
+  // ولا مفتاح أصلاً (ولا صفّا الهجرة ولا support_email): لا رمي، فارغ.
+  await query(`DELETE FROM app_settings WHERE key = ANY($1)`, [STORED]);
   r = await call("GET", "/api/public/landing"); r2 = await call("GET", "/api/public/legal");
   ok("K4 بلا أي صفّ من الاثني عشر: 200 وفارغة ولا رمي", r.status === 200 && allEmpty(r.body, SF.LANDING_KEYS) && r2.status === 200 && allEmpty(r2.body, SF.LEGAL_KEYS), r.raw + r2.raw);
   // قيم غير نصية مخزّنة يدوياً (رقم، كائن JSON null) لا تُسقط القراءة
   await query(`INSERT INTO app_settings (key, value, category) VALUES ('x_url','null'::jsonb,'general'), ('tiktok_url','""'::jsonb,'general')`);
   r = await call("GET", "/api/public/landing");
   ok("K5 null وسلسلة فارغة مخزّنتان تُقرآن \"\"", r.status === 200 && r.body.x_url === "" && r.body.tiktok_url === "", r.raw);
-  await query(`DELETE FROM app_settings WHERE key = ANY($1)`, [ALL12]);
+  await query(`DELETE FROM app_settings WHERE key = ANY($1)`, [STORED]);
+  await query(`INSERT INTO app_settings (key, value, category, description) VALUES ('support_email', $1::jsonb, $2, $3)`, [JSON.stringify(SEED_EMAIL), seedRow.category, seedRow.description]);
   await query(`INSERT INTO app_settings (key, value, category, description) VALUES
     ('app_store_url','null'::jsonb,'general','رابط التطبيق في App Store (apps.apple.com). فارغ = الزر مخفيّ'),
     ('google_play_url','null'::jsonb,'general','رابط التطبيق في Google Play (play.google.com). فارغ = الزر مخفيّ')`);
@@ -116,7 +123,7 @@ try {
 
   /* ================= A) اللوحة: قراءة وRBAC ================= */
   r = await call("GET", "/admin/site-front", { cookie: owner.cookie });
-  ok("A1 المالك يقرأ: القيم الاثنتا عشرة فارغة وcanEdit", r.status === 200 && allEmpty(r.body.values, ALL12) && r.body.canEdit === true && r.body.limits.urlMax === 300 && r.body.limits.textMax === 60000, r.raw.slice(0, 300));
+  ok("A1 المالك يقرأ: القيم فارغة عدا بريد التواصل (= support_email)، وcanEdit", r.status === 200 && exactKeys(r.body.values, ALL12) && NO_EMAIL.every((k) => r.body.values[k] === "") && r.body.values.contact_email === SEED_EMAIL && r.body.canEdit === true && r.body.limits.urlMax === 300 && r.body.limits.textMax === 60000, r.raw.slice(0, 300));
   r = await call("GET", "/admin/site-front", { cookie: admin.cookie });
   ok("A2 المدير (app_settings:view بلا edit) يقرأ للعرض فقط", r.status === 200 && r.body.canEdit === false, r.raw.slice(0, 200));
   r = await call("PUT", "/admin/site-front", { cookie: admin.cookie, body: { values: { x_url: "https://x.com/a" } } });
@@ -164,8 +171,8 @@ try {
   r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { secret_key: "x", x_url: "https://x.com/a" } } });
   ok("V3 مفتاح غير معروف يُرفض ولا يُحفظ معه شيء", r.status === 400 && r.body.fields?.secret_key?.code === "site_front_unknown_field" && !r.body.fields?.x_url, r.raw.slice(0, 200));
   r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { x_url: "https://x.com/ok", instagram_url: "javascript:1", contact_email: "bad" } } });
-  const { rows: [{ n: partial }] } = await query(`SELECT count(*)::int n FROM app_settings WHERE key = ANY($1)`, [ALL12]);
-  ok("V4 حقلان خاطئان مع صحيح: خطأ كل حقل في مكانه، ولا يُحفظ الصحيح وحده", r.status === 400 && r.body.fields.instagram_url && r.body.fields.contact_email && !r.body.fields.x_url && partial === 2, `${partial} ${r.raw.slice(0, 200)}`);
+  const { rows: [{ n: partial }] } = await query(`SELECT count(*)::int n FROM app_settings WHERE key = ANY($1)`, [STORED]);
+  ok("V4 حقلان خاطئان مع صحيح: خطأ كل حقل في مكانه، ولا يُحفظ الصحيح وحده", r.status === 400 && r.body.fields.instagram_url && r.body.fields.contact_email && !r.body.fields.x_url && partial === 3, `${partial} ${r.raw.slice(0, 200)}`);
   r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { x_url: "https://" + "a".repeat(288) + ".com" } } });
   ok("V5 رابط من 300 حرف بالضبط مقبول", r.status === 200 && r.body.values.x_url.length === 300, `${r.status} ${r.raw.slice(0, 120)}`);
   r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: {} });
@@ -191,8 +198,21 @@ try {
   r2 = await call("GET", "/api/public/legal", { origin: "https://tanfs.net" });
   ok("F2 legal مملوءة، أربعة مفاتيح لا غير", r2.status === 200 && exactKeys(r2.body, SF.LEGAL_KEYS) && r2.body.privacy_text === filled.privacy_text && r2.body.terms_text === filled.terms_text && r2.body.privacy_text_updated_at === pStamp, r2.raw.slice(0, 300));
   ok("T2 <script> مخزّن نصاً ويخرج سلسلة JSON كما هو (لا تنفيذ في الخادم ولا رابط سكربت)", typeof r2.body.privacy_text === "string" && r2.body.privacy_text.includes("<script>alert('x')</script>") && /^application\/json/.test(r2.headers.get("content-type")), r2.headers.get("content-type"));
-  const { rows: stored } = await query(`SELECT key, jsonb_typeof(value) t, category FROM app_settings WHERE key = ANY($1)`, [ALL12]);
-  ok("T3 كل قيمة مخزّنة سلسلة JSON في app_settings (فئة general)", stored.length === 12 && stored.every((s) => s.t === "string" && s.category === "general"), JSON.stringify(stored));
+  const { rows: stored } = await query(`SELECT key, jsonb_typeof(value) t, category FROM app_settings WHERE key = ANY($1)`, [STORED]);
+  ok("T3 كل قيمة مخزّنة سلسلة JSON في app_settings (الجديدة general، وsupport_email باقٍ على فئته support)", stored.length === 12 && stored.every((s) => s.t === "string" && s.category === (s.key === "support_email" ? "support" : "general")), JSON.stringify(stored));
+
+  /* ================= U) بريد التواصل مصدر واحد: support_email (ملحق §2-2) ================= */
+  const { rows: [{ n: ce }] } = await query(`SELECT count(*)::int n FROM app_settings WHERE key = 'contact_email'`);
+  const { rows: [{ v: se }] } = await query(`SELECT value #>> '{}' v FROM app_settings WHERE key = 'support_email'`);
+  ok("U1 🔴 الحفظ من «واجهة الموقع» كتب في support_email، ولا صفّ contact_email في القاعدة", ce === 0 && se === filled.contact_email, `contact_email rows=${ce} support_email=${se}`);
+  r = await call("GET", "/api/support-info");
+  ok("U2 «تواصل معنا» في التطبيق (/api/support-info) يقرأ البريد نفسه", r.status === 200 && r.body.supportEmail === filled.contact_email, r.raw.slice(0, 200));
+  r = await call("PUT", "/admin/app-settings/support_email", { cookie: owner.cookie, body: { value: "team@tanfs.net" } });
+  r2 = await call("GET", "/api/public/landing");
+  ok("U3 🔴 تعديل support_email من «إعدادات التشغيل» يظهر في landing تحت contact_email", r.status === 200 && r2.body.contact_email === "team@tanfs.net", `${r.status} ${r2.raw}`);
+  r = await call("GET", "/admin/site-front", { cookie: owner.cookie });
+  ok("U4 وتقرؤه صفحة «واجهة الموقع» نفسها", r.body.values?.contact_email === "team@tanfs.net", JSON.stringify(r.body.values?.contact_email));
+  await call("PUT", "/admin/app-settings/support_email", { cookie: owner.cookie, body: { value: filled.contact_email } });
 
   // الصفحة العامة: لا شيء غير مفاتيحها — لا بيانات مستخدم ولا سرّ ولا مدير
   const pubRaw = (await call("GET", "/api/public/landing")).raw + (await call("GET", "/api/public/legal")).raw;
@@ -218,13 +238,20 @@ try {
   r2 = await call("GET", "/api/public/legal");
   ok("T8 إفراغ نصّ مقبول ويقرأ \"\" في النقطة العامة", r.status === 200 && r2.body.terms_text === "" && r2.body.privacy_text === filled.privacy_text, r2.raw.slice(0, 120));
   r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { x_url: "" } } });
+  ok("V7 رابط فارغ مقبول (يخفي الأيقونة)", r.status === 200 && r.body.values.x_url === "", r.raw.slice(0, 100));
   r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { instagram_url: null } } });
   ok("V8 null يُعامل فراغاً (لا رمي)", r.status === 200 && r.body.values.instagram_url === "", r.raw.slice(0, 100));
-  ok("V7 رابط فارغ مقبول (يخفي الأيقونة)", r.status === 200 && r.body.values.x_url === "", r.raw.slice(0, 100));
+  r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { contact_email: "" } } });
+  const { rows: [{ t: seType }] } = await query(`SELECT jsonb_typeof(value) t FROM app_settings WHERE key = 'support_email'`);
+  r2 = await call("GET", "/api/support-info");
+  ok("U5 إفراغ بريد التواصل يكتب support_email = null كما يكتبه «إعدادات التشغيل»، فيبقى /api/support-info على معناه", r.status === 200 && r.body.values.contact_email === "" && seType === "null" && r2.body.supportEmail === null, `${seType} ${r2.raw.slice(0, 120)}`);
+  r = await call("PUT", "/admin/site-front", { cookie: owner.cookie, body: { values: { contact_email: filled.contact_email } } });
+  const { rows: [{ n: ce2 }] } = await query(`SELECT count(*)::int n FROM app_settings WHERE key = 'contact_email'`);
+  ok("U6 بعد كل الحفظ: لا صفّ contact_email أبداً", ce2 === 0, String(ce2));
 
   /* ================= A) السجل والسبب والمسّ بغير المفاتيح ================= */
   const { rows: log } = await query(`SELECT action, entity, entity_id, old_value, new_value, reason FROM admin_action_log WHERE admin_user_id = $1 AND action = 'site_front_updated' ORDER BY id`, [owner.id]);
-  ok(`A6 سطر تدقيق لكل مفتاح تغيّر (${log.length} سطراً)`, log.length === 1 + 10 + 1 + 1 + 2 + 1 + 1 && log.every((l) => l.entity === "app_setting"), JSON.stringify(log.map((l) => l.entity_id)));
+  ok(`A6 سطر تدقيق لكل مفتاح تغيّر (${log.length} سطراً)`, log.length === 1 + 10 + 1 + 1 + 2 + 1 + 1 + 2 && log.every((l) => l.entity === "app_setting"), JSON.stringify(log.map((l) => l.entity_id)));
   const txtLog = log.find((l) => l.entity_id === "privacy_text" && l.old_value.length === 0);
   ok("A7 النصّ الطويل يُسجَّل طوله وبصمته لا متنه، والرابط كما هو", txtLog && txtLog.new_value.length === filled.privacy_text.length && /^[0-9a-f]{16}$/.test(txtLog.new_value.sha256) && !JSON.stringify(txtLog).includes("لا نبيع") && log.some((l) => l.entity_id === "x_url" && l.new_value.value === filled.x_url), JSON.stringify(txtLog));
   ok("A8 السبب التلقائي (auto-reason) مكتوب في كل سطر", log.every((l) => /واجهة الموقع/.test(l.reason || "")), log[0]?.reason);
@@ -232,12 +259,12 @@ try {
   ok(`A9 requireReasonAndLog قيّد كل طلب حفظ في admin_access_log (${gate[0].n}) بسببه التلقائي`, gate[0].n >= 8 && gate[0].r === true, JSON.stringify(gate[0]));
   const { rows: [{ n: denied }] } = await query(`SELECT count(*)::int n FROM admin_access_log WHERE action = 'update_site_front' AND admin_user_id = $1`, [admin.id]);
   ok("A9b طلب المدير المرفوض بـ403 لم يُقيَّد كحفظ", denied === 0, String(denied));
-  const settingsAfter = (await query(`SELECT key, value::text v, category, updated_at FROM app_settings WHERE NOT (key = ANY($1)) ORDER BY key`, [ALL12])).rows;
+  const settingsAfter = (await query(`SELECT key, value::text v, category, updated_at FROM app_settings WHERE NOT (key = ANY($1)) ORDER BY key`, [STORED])).rows;
   const taxAfter = (await query(`SELECT * FROM tax_settings ORDER BY 1`).catch(() => ({ rows: ["(no table)"] }))).rows;
   ok(`A10 لا مسّ بأي مفتاح قائم آخر (${settingsBefore.length} مفتاحاً) ولا بـtax_settings`, JSON.stringify(settingsBefore) === JSON.stringify(settingsAfter) && JSON.stringify(taxBefore) === JSON.stringify(taxAfter), "");
   r = await call("GET", "/admin/app-settings", { cookie: owner.cookie });
   const listed = JSON.stringify(r.body);
-  ok("A11 المفاتيح العشرة الجديدة لا تظهر مكرّرة في «إعدادات التشغيل» القديمة", r.status === 200 && ["x_url", "privacy_text", "contact_email", "terms_text_updated_at"].every((k) => !listed.includes(`"${k}"`)), `${r.status}`);
+  ok("A11 مفاتيح «واجهة الموقع» وحدها لا تظهر في «إعدادات التشغيل»، والمشتركة (support_email ومفتاحا المتجر) باقية فيه", r.status === 200 && ["x_url", "instagram_url", "privacy_text", "contact_email", "terms_text_updated_at"].every((k) => !listed.includes(`"${k}"`)) && ["support_email", "app_store_url", "social_x_handle"].every((k) => listed.includes(`"${k}"`)), `${r.status}`);
 
   /* ================= F) 503 سريع ================= */
   const realQuery = pool.query.bind(pool);

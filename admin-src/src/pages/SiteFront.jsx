@@ -18,12 +18,12 @@ import { Card, Button, Field, Input, Textarea, Spinner, ErrorBar, useAsync, Scre
 const LINKS = [
   { key: "app_store_url", label: "رابط التطبيق في App Store", hint: "رابط صفحة التطبيق على apps.apple.com. يظهر زرّ التنزيل في الرئيسية." },
   { key: "google_play_url", label: "رابط التطبيق في Google Play", hint: "رابط صفحة التطبيق على play.google.com. يظهر زرّ التنزيل في الرئيسية." },
-  { key: "x_url", label: "حساب إكس", hint: "رابط الحساب كاملاً، مثل https://x.com/… ويظهر في الفوتر." },
-  { key: "instagram_url", label: "حساب إنستقرام", hint: "رابط الحساب كاملاً، مثل https://instagram.com/… ويظهر في الفوتر." },
+  { key: "x_url", label: "حساب إكس", hint: "لموقع tanfs.net: رابط الحساب كاملاً، مثل https://x.com/… ويظهر في فوتر الموقع. (معرّف «تواصل معنا» في التطبيق منفصل، في «إعدادات التشغيل».)" },
+  { key: "instagram_url", label: "حساب إنستقرام", hint: "لموقع tanfs.net: رابط الحساب كاملاً، مثل https://instagram.com/… ويظهر في فوتر الموقع. (معرّف «تواصل معنا» في التطبيق منفصل، في «إعدادات التشغيل».)" },
   { key: "whatsapp_url", label: "رابط واتساب", hint: "رابط المحادثة، مثل https://wa.me/9665XXXXXXXX ويظهر في الفوتر." },
   { key: "tiktok_url", label: "حساب تيك توك", hint: "رابط الحساب كاملاً، مثل https://www.tiktok.com/@… ويظهر في الفوتر." },
   { key: "snapchat_url", label: "حساب سناب شات", hint: "رابط الحساب كاملاً، مثل https://www.snapchat.com/add/… ويظهر في الفوتر." },
-  { key: "contact_email", label: "بريد التواصل", hint: "البريد المعروض في فوتر الصفحات للتواصل." },
+  { key: "contact_email", label: "بريد التواصل", hint: "البريد نفسه المستعمل في «تواصل معنا» في التطبيق (بريد الدعم المعروض): يظهر في فوتر tanfs.net وفي التطبيق معاً، وتعديله هنا يغيّره في الموضعين." },
 ];
 
 const TEXTS = [
