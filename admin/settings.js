@@ -6,8 +6,15 @@ import {
 } from "./middleware.js";
 import { getBillingSettings } from "../billing/config.js";
 import { refreshAdminSessionMinutes } from "./auth.js";
+import { SITE_FRONT_OWN_KEYS } from "./site-front.js";
 
 export const adminSettingsRouter = express.Router();
+
+/* KANAF-ORD-0022: مفاتيح «واجهة الموقع» تُحرَّر من صفحتها وحدها (admin/site-front.js)،
+   بحدودها هي (نصّ حتى 60000 حرف). فلا تظهر في قائمة إعدادات التشغيل العامة، وإلا عُرضت
+   هنا بلا مسار تعديل عام. ويُستثنى منها رابطا المتجرين: إعدادان قائمان في السجلّ أدناه
+   يقرؤهما تذييل البريد، ويقرؤهما الموقع الآن أيضاً. */
+const SITE_FRONT_ONLY_KEYS = SITE_FRONT_OWN_KEYS;
 
 /* ============================================================
    الإعدادات — البند 6 من المرحلة 5
@@ -139,7 +146,7 @@ export const SETTINGS_REGISTRY = [
     key: "support_email", label: "بريد الدعم المعروض",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "يظهر أسفل نموذج «تواصل معنا» في التطبيق. شوهد على الشاشة بعد نشر 10 أغسطس 2026.",
+    note: "لنموذج «تواصل معنا» في التطبيق ولفوتر موقع tanfs.net معاً: هو نفسه «بريد التواصل» في صفحة «واجهة الموقع» (KANAF-ORD-0022 ملحق §2-2)، فتعديله من أيّ الصفحتين يغيّره في الموضعين. شوهد في التطبيق بعد نشر 10 أغسطس 2026.",
   },
   {
     key: "support_hours", label: "أوقات عمل الدعم",
@@ -197,13 +204,13 @@ export const SETTINGS_REGISTRY = [
     key: "social_x_handle", label: "حساب X",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "المعرّف وحده، وقائمة محارف بيضاء تمنع أن يتحوّل الإعداد إلى رابط لموقع آخر. كان مكتوباً في التطبيق بالاسم القديم للمشروع (@marsah_app) فكان تغييره يحتاج بناءً ورفعاً.",
+    note: "لنموذج «تواصل معنا» في التطبيق — لا لموقع tanfs.net (رابطه الكامل في «واجهة الموقع»). المعرّف وحده، وقائمة محارف بيضاء تمنع أن يتحوّل الإعداد إلى رابط لموقع آخر. كان مكتوباً في التطبيق بالاسم القديم للمشروع (@marsah_app) فكان تغييره يحتاج بناءً ورفعاً.",
   },
   {
     key: "social_instagram_handle", label: "حساب إنستقرام",
     source: "app_settings", editPerm: "app_settings:edit", wired: true,
     readBy: ["index.js (/api/support-info)"],
-    note: "كسابقه. كان @marsah.app في الكود.",
+    note: "لنموذج «تواصل معنا» في التطبيق — لا لموقع tanfs.net (رابطه الكامل في «واجهة الموقع»). كسابقه: المعرّف وحده. كان @marsah.app في الكود.",
   },
   /* KANAF-ORD-0008 §9.2 — روابط تذييل البريد. فارغة حتى يضبطها المالك؛ والزر مخفيّ ما دامت فارغة. */
   {
@@ -409,7 +416,8 @@ adminSettingsRouter.get(
 
       if (req.admin.can("app_settings:view")) {
         const { rows } = await query(
-          `SELECT key, value, category, description, updated_at FROM app_settings ORDER BY category, key`
+          `SELECT key, value, category, description, updated_at FROM app_settings
+            WHERE NOT (key = ANY($1)) ORDER BY category, key`, [SITE_FRONT_ONLY_KEYS]
         );
         sections.app = {
           canEdit: req.admin.can("app_settings:edit"),
@@ -445,7 +453,8 @@ adminSettingsRouter.get(
                 au.name AS updated_by_name
            FROM app_settings s
            LEFT JOIN admin_users au ON au.id = s.updated_by
-          ORDER BY s.category, s.key`
+          WHERE NOT (s.key = ANY($1))
+          ORDER BY s.category, s.key`, [SITE_FRONT_ONLY_KEYS]
       );
       res.json({
         settings: rows.map((r) => ({

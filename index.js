@@ -41,6 +41,7 @@ import { integrationsRouter } from "./admin/integrations.js";
 import { adminAccountsRouter } from "./admin/accounts.js";
 import { adminExportsRouter } from "./admin/exports.js";
 import { adminSettingsRouter, getAppSettings } from "./admin/settings.js";
+import { publicSiteFrontRouter, adminSiteFrontRouter } from "./admin/site-front.js";
 import { sweepMiddleware } from "./notifications/scheduler.js";
 import { requireVerifiedUser } from "./auth/middleware.js";
 import { userAccountRouter } from "./userdata/account.js";
@@ -134,6 +135,10 @@ if (allowedOrigins.length === 0) {
 --------------------------------------------------------- */
 app.use(
   cors((req, cb) => {
+    /* KANAF-ORD-0022 ب-3: نقطتا واجهة الموقع العامتان لهما CORS خاص بهما (أصلا tanfs.net
+       وحدهما، بلا credentials) في admin/site-front.js. فيتنحّى هذا عنهما تماماً، وإلا
+       عكس هنا كل أصل في ALLOWED_ORIGINS ومعه credentials. */
+    if (req.path.startsWith("/api/public/")) return cb(null, { origin: false });
     const origin = req.headers.origin;
     const selfOrigin = `${req.protocol}://${req.get("host")}`;
     const ok =
@@ -212,7 +217,11 @@ app.use(
            كان يعني أن إقلاع التطبيق نفسه قد يُرفض. ولا بيانات
            شخصية فيهما، وكلاهما قراءة واحدة من جدول صغير. */
         u.startsWith("/api/countries") ||
-        u.startsWith("/api/support-info")
+        u.startsWith("/api/support-info") ||
+        /* KANAF-ORD-0022 ب-3: نقطتا واجهة الموقع لهما محدِّدهما المستقل (120 في الدقيقة لكل
+           عنوان، admin/site-front.js). عدّهما هنا كان سيجعل زوار الصفحات العامة يستنزفون رصيد
+           الدخول والتسجيل لكل من يشاركهم العنوان. */
+        u.startsWith("/api/public/")
       );
     },
   })
@@ -919,6 +928,8 @@ app.get("/api/support-info", async (req, res) => {
 });
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+/* واجهة الموقع — KANAF-ORD-0022 ب-3: GET /api/public/landing و/api/public/legal، عامتان بلا مصادقة. */
+app.use("/api/public", publicSiteFrontRouter);
 /* مشغّل المجدول الخارجي المحمي + الجاهزية — KANAF-ORD-0001 R15-14/R15-15/X10.
    معطّل ما لم يُضبط SWEEP_TRIGGER_TOKEN (انظر ops/internal.js). */
 app.use("/api/internal", internalRouter);
@@ -982,6 +993,7 @@ app.use("/admin", autoReasonMiddleware);
 app.use("/admin", adminAccountsRouter);
 app.use("/admin", adminExportsRouter);
 app.use("/admin", adminSettingsRouter);
+app.use("/admin", adminSiteFrontRouter); // KANAF-ORD-0022 ب-4 — «واجهة الموقع» تحت الإعدادات
 app.use("/admin", adminContentRouter);
 app.use("/admin", adminNotificationsRouter);
 app.use("/admin", sentMessagesRouter); // KANAF-ORD-0008 §3
