@@ -166,6 +166,11 @@ export async function readSiteFront(keys = SITE_FRONT_KEYS) {
    المحدِّد العام في index.js يتنحّى عن /api/public (انظر هناك).
    ============================================================ */
 export const PUBLIC_ORIGINS = ["https://tanfs.net", "https://www.tanfs.net"];
+/* KANAF-ORD-0023 ملحق §1: التطبيق (app.tanfs.net) يعرض نصّي الخصوصية والشروط من المصدر نفسه،
+   فيُسمح له بـ/legal وحدها. /landing تبقى للموقع وحده. لا «*» ولا أصل آخر. */
+export const APP_ORIGIN = "https://app.tanfs.net";
+export const LEGAL_ORIGINS = [...PUBLIC_ORIGINS, APP_ORIGIN];
+const originsFor = (req) => (req.path === "/legal" ? LEGAL_ORIGINS : PUBLIC_ORIGINS);
 /** مهلة القراءة: عند عطل في القاعدة يُردّ 503 بعدها لا يُترك الطلب معلّقاً. */
 export const PUBLIC_DB_TIMEOUT_MS = 2500;
 
@@ -195,7 +200,7 @@ publicSiteFrontRouter.use(rateLimit({
 function setPublicCors(req, res) {
   res.setHeader("Vary", "Origin");
   const origin = req.headers.origin;
-  if (origin && PUBLIC_ORIGINS.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
+  if (origin && originsFor(req).includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
 }
 
 function publicEndpoint(keys) {
