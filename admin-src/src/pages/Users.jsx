@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Eye, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download, User as UserIcon, Bell, Compass, Mail, Smartphone, MessageCircle, MessageSquare, ExternalLink } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Eye, EyeOff, Ban, RotateCcw, ShieldAlert, ScrollText, CreditCard, Download, User as UserIcon, Bell, Compass, Mail, Smartphone, MessageCircle, MessageSquare, ExternalLink, X, KeyRound, Wand2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { api } from "../api.js";
 import { C, can, fmtDate, fmtDateTime } from "../theme.js";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../ui.jsx";
 import { Link, useQueryState, navigate, href } from "../router.js";
 import { Compose } from "./Notifications.jsx";
+import { DocActions, STATUS as INVOICE_STATUS } from "./Invoices.jsx";
 
 /* ============================================================
    المستخدمون.
@@ -374,12 +375,67 @@ function BulkMessage({ toast }) {
 
 /* ------------------------------------------------------------ */
 
+/* ------------------------------------------------------------
+   سطر حقل — KANAF-ORD-0023 ب-1.
+   كان سطراً بعرض الشاشة: العنوان في أقصى اليمين والقيمة في أقصى اليسار
+   (فراغ بينهما بلغ 1538 بكسلاً على 1920). الآن داخل <dl className="kv">:
+   العنوان ملاصق لقيمته (16 بكسلاً)، والبطاقة لا تتجاوز 720، والسطور
+   متناوبة؛ وعلى الجوال يُرصّ العنوان فوق قيمته. الحقول وقيمها كما هي.
+   ------------------------------------------------------------ */
 function Row({ label, children }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-2 text-xs" style={{ borderTop: `1px solid ${C.line}` }}>
-      <span style={{ color: C.textMuted }}>{label}</span>
-      <span className="text-left" style={{ color: C.text }}>{children ?? "—"}</span>
+    <div className="kv-row">
+      <dt>{label}</dt>
+      <dd>{children ?? "—"}</dd>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------
+   الصورة الشخصية مكبَّرة — KANAF-ORD-0023 ب-2.
+   تُفتح بالضغط على الصورة وحدها (لا على الحرف الأول)، وتُغلق بالضغط خارجها
+   وبـEsc وبزرّ «إغلاق» ظاهر، وتعود البؤرة إلى الصورة بعد الإغلاق.
+   العنوان نفسه (/admin/users/:id/avatar) خلف users:view كالصورة الصغيرة —
+   ولا يقيّده المسار القائم في سجلّ الوصول، فلا تقييد جديد هنا.
+   ------------------------------------------------------------ */
+function ProfilePhoto({ id, name, hasPhoto }) {
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
+  const trigger = useRef(null);
+  const closeBtn = useRef(null);
+  const close = () => { setOpen(false); window.requestAnimationFrame(() => trigger.current?.focus()); };
+  useEffect(() => {
+    if (!open) return undefined;
+    closeBtn.current?.focus();
+    const h = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open]);
+  if (!hasPhoto || failed) return <Avatar id={id} name={name} size={56} hasPhoto={false} />;
+  const label = `تكبير صورة ${name || "العميل"}`;
+  return (
+    <>
+      <button ref={trigger} type="button" onClick={() => setOpen(true)} aria-label={label} title={label} aria-haspopup="dialog"
+        className="kt-act rounded-full shrink-0" style={{ width: 56, height: 56, padding: 0, border: 0, background: "none", cursor: "zoom-in" }}
+        data-avatar-zoom>
+        <img src={`/admin/users/${id}/avatar`} alt="" width={56} height={56} onError={() => setFailed(true)}
+          style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", display: "block" }} />
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: C.overlay }}
+          onClick={close} data-avatar-backdrop>
+          <div role="dialog" aria-modal="true" aria-label={`صورة ${name || "العميل"}`} onClick={(e) => e.stopPropagation()}
+            className="rounded-2xl p-3 flex flex-col items-center gap-3" style={{ background: C.surface, border: `1px solid ${C.line}`, maxWidth: "min(92vw, 560px)" }}>
+            <img src={`/admin/users/${id}/avatar`} alt={`صورة ${name || "العميل"}`}
+              style={{ display: "block", width: "min(520px, 84vw)", height: "auto", maxHeight: "72vh", objectFit: "contain", borderRadius: 12 }} />
+            <button ref={closeBtn} type="button" onClick={close} className="kt-act inline-flex items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
+              style={{ minHeight: 44, minWidth: 44, background: C.surfaceAlt, color: C.text }} data-avatar-close>
+              <X size={16} aria-hidden="true" /> إغلاق
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -416,6 +472,8 @@ function UserDetail({ id, tab, me, toast }) {
 
   return (
     <Screen title={u ? (u.name || u.email) : "ملف المستخدم"} back="/users" backLabel="المستخدمون">
+      {/* KANAF-ORD-0023 ب-1(6): لمس 44×44 لكل زرّ وتبويب في صفحة المستخدم (u-touch في index.css). */}
+      <div className="u-touch">
       {state.loading ? <div className="py-10 flex justify-center"><Spinner /></div> : state.error ? (
         <ErrorBar error={state.error} />
       ) : (
@@ -431,7 +489,7 @@ function UserDetail({ id, tab, me, toast }) {
             ].filter(([, , show]) => show).map(([k, label]) => (
               <Link key={k} to={`/users/${id}${k === "profile" ? "" : `/${k}`}`} replace
                 aria-current={tab === k ? "page" : undefined}
-                className="px-3 py-1.5 rounded-xl text-xs font-bold"
+                className="u-tab px-3 py-1.5 rounded-xl text-xs font-bold"
                 style={{
                   background: tab === k ? C.tealSoft : C.surfaceAlt,
                   color: tab === k ? C.teal : C.textMuted,
@@ -444,7 +502,7 @@ function UserDetail({ id, tab, me, toast }) {
           {tab === "profile" && (
             <div>
               <div className="flex items-center gap-3 pb-3">
-                <Avatar id={u.id} name={u.name} size={56} hasPhoto={u.has_photo === true} />
+                <ProfilePhoto id={u.id} name={u.name} hasPhoto={u.has_photo === true} />
                 <div>
                   <div className="text-sm font-bold" style={{ color: C.text }}>{u.name || "—"}</div>
                   <div className="text-[11px]" style={{ color: C.textFaint }}>
@@ -453,7 +511,8 @@ function UserDetail({ id, tab, me, toast }) {
                 </div>
               </div>
 
-              <Row label="المعرّف"><code className="text-[10px]">{u.id}</code></Row>
+              <dl className="kv">
+              <Row label="المعرّف"><code className="text-[11px]" dir="ltr">{u.id}</code></Row>
               <Row label="البريد">{u.email}</Row>
 
               {/* الجوال يظهر للمالك وحده. والخادم لا يرسل الحقل أصلاً
@@ -526,6 +585,7 @@ function UserDetail({ id, tab, me, toast }) {
                   )}
                 </Row>
               )}
+              </dl>
 
               {/* KANAF-ORD-0013 §8: المحو النهائي لحساب طلب صاحبه حذفه — للمالك وحده، ولا رجعة. */}
               {u.account_status === "deleted" && can(me, "members:purge") && (
@@ -568,6 +628,7 @@ function UserDetail({ id, tab, me, toast }) {
           {tab === "actions" && <Actions id={id} />}
         </>
       )}
+      </div>
 
       <ConfirmPrompt
         open={!!pending} title={pending?.title || ""} description={pending?.description}
@@ -667,6 +728,20 @@ function Sensitive({ id }) {
   );
 }
 
+/* KANAF-ORD-0023 ب-5: الفاعل بالاسم والبريد. admin_action_log يحفظ admin_user_id وحده (NOT NULL منذ 003)،
+   والاسم والبريد من admin_users — وحساب الإدارة لا يُحذف بل يُعطَّل، فيبقى. فإن لم يُعثر عليه عُرض المعرّف كما هو
+   بلا تخمين، والسطر بلا معرّف «—». */
+export function Actor({ id, name, email }) {
+  if (!id && !name && !email) return <span style={{ color: C.textFaint }}>—</span>;
+  if (!name && !email) return <code className="text-[11px]" dir="ltr" title="حساب إدارة غير موجود — المعرّف كما في السجلّ">{id}</code>;
+  return (
+    <div className="leading-5" data-actor>
+      <div className="font-bold" style={{ color: C.text }}>{name || "—"}</div>
+      {email && <div dir="ltr" className="text-[11px]" style={{ color: C.textMuted, textAlign: "right" }}>{email}</div>}
+    </div>
+  );
+}
+
 function Actions({ id }) {
   const state = useAsync(() => api.getUserActions(id), [id]);
   const rows = state.data?.actions || [];
@@ -674,10 +749,11 @@ function Actions({ id }) {
   if (state.error) return <ErrorBar error={state.error} />;
   if (!rows.length) return <Empty>لا إجراءات إدارية على هذا الحساب.</Empty>;
   return (
-    <Table head={["الإجراء", "قبل ← بعد", "السبب", "التاريخ"]}>
+    <Table head={["الإجراء", "الفاعل", "قبل ← بعد", "السبب", "التاريخ"]}>
       {rows.map((a) => (
         <tr key={a.id}>
           <Td className="font-bold">{a.action}</Td>
+          <Td><Actor id={a.admin_user_id} name={a.admin_name} email={a.admin_email} /></Td>
           <Td><ValueDiff oldValue={a.old_value} newValue={a.new_value} /></Td>
           <Td className="max-w-xs"><span style={{ color: C.textMuted }}>{a.reason || "—"}</span></Td>
           <Td dir="ltr">{fmtDateTime(a.created_at)}</Td>
@@ -705,19 +781,61 @@ function Billing({ user, me, toast, onChanged }) {
   const canRefundIt = can(me, "payments:refund");
   const full = useAsync(() => api.userBilling(user.id), [user.id]);
   const t = full.data?.totals;
+  /* KANAF-ORD-0023 ب-6: معاينة الفاتورة وتنزيلها خلف invoices:view كصفحة الفواتير — لا توسيع. */
+  const canInvoices = can(me, "invoices:view");
+  const invoices = full.data?.invoices || [];
+  /* ب-6-2: تأكيد الإلغاء يقول إن الإلغاء لا يُعيد مالاً، وزرّه ينقل البؤرة إلى بطاقة الاسترداد ويُبرزها. */
+  const refundCard = useRef(null);
+  const [flash, setFlash] = useState(false);
+  const goRefund = () => {
+    setPending(null);
+    window.requestAnimationFrame(() => {
+      const el = refundCard.current; if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.focus({ preventScroll: true });
+      setFlash(true); window.setTimeout(() => setFlash(false), 4000);
+    });
+  };
 
   const has = !!user.subscription_status;
 
   return (
     <div>
+      <dl className="kv">
       <Row label="الحالة">{user.subscription_status || "لا يوجد اشتراك"}</Row>
       <Row label="الباقة">{user.subscription_plan}</Row>
       <Row label="ينتهي / يتجدد">{user.subscription_renews_at ? fmtDateTime(user.subscription_renews_at) : "—"}</Row>
       {t && <Row label="إجمالي ما دفع / المسترد / الصافي"><span dir="ltr">{t.lifetimeGross.toFixed(2)} / {t.lifetimeRefunded.toFixed(2)} / {t.lifetimeNet.toFixed(2)} ر.س</span></Row>}
       {full.data && <Row label="دفعات · فواتير · إشعارات دائنة">{full.data.payments.length} · {full.data.invoices.length} · {full.data.creditNotes.length}</Row>}
+      </dl>
+
+      {/* ب-6-1: فواتير العميل كلها — لا عدداً مجرّداً. */}
+      <h4 className="text-xs font-bold mt-5 mb-2" style={{ color: C.text }}>الفواتير{full.data ? ` (${invoices.length})` : ""}</h4>
+      {full.loading ? <div className="py-4"><Spinner /></div> : full.error ? <ErrorBar error={full.error} /> : invoices.length === 0 ? (
+        <Empty>لا فواتير لهذا العميل.</Empty>
+      ) : (
+        <div style={{ maxWidth: 720 }} data-user-invoices>
+          <Table caption={`فواتير ${user.name || user.email}`} minWidth={560}
+            head={["رقم الفاتورة", "التاريخ", "المبلغ", "الحالة", "معاينة / تنزيل"]} align={[, , , , "end"]}>
+            {invoices.map((inv) => (
+              <tr key={inv.id}>
+                <Td dir="ltr">{inv.invoice_number ? <code className="text-[12px] font-bold">{inv.invoice_number}</code> : <Badge color="amber">بلا رقم</Badge>}</Td>
+                <Td dir="ltr">{fmtDate(inv.zatca_issued_at || inv.created_at)}</Td>
+                <Td className="font-bold">{Number(inv.amount_sar ?? 0).toFixed(2)} ر.س</Td>
+                <Td><Badge color={inv.status === "paid" ? "green" : inv.status === "pending" ? "amber" : "textFaint"}>{INVOICE_STATUS[inv.status] || inv.status}</Badge></Td>
+                <Td>
+                  {canInvoices && inv.invoice_number && inv.has_pdf
+                    ? <DocActions pdfUrl={api.invoicePdfUrl(inv.id)} label={`الفاتورة ${inv.invoice_number}`} minHeight={44} />
+                    : <span style={{ color: C.textFaint }}>{canInvoices ? "—" : "يحتاج صلاحية الفواتير"}</span>}
+                </Td>
+              </tr>
+            ))}
+          </Table>
+        </div>
+      )}
 
       {has && (
-        <div className="mt-4 grid gap-3">
+        <div className="mt-4 grid gap-3" style={{ maxWidth: 720 }}>
           {canCancel && <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
             <p className="text-xs font-bold mb-2" style={{ color: C.text }}>إلغاء الاشتراك</p>
             <p className="text-[11px] leading-6 mb-2" style={{ color: C.textFaint }}>
@@ -728,7 +846,7 @@ function Billing({ user, me, toast, onChanged }) {
               يبقى الوصول حتى نهاية المدة المدفوعة
             </label>
             <Button size="sm" variant="warn" onClick={() => setPending({
-              title: "إلغاء الاشتراك", confirmLabel: "إلغاء الاشتراك",
+              title: "إلغاء الاشتراك", confirmLabel: "إلغاء الاشتراك", cancel: true,
               run: async () => {
                 const res = await api.cancelSubscription(user.id, atPeriodEnd);
                 toast(res.mode === "at_period_end" ? `يُلغى في ${fmtDate(res.accessUntil)}` : "أُلغي الاشتراك فوراً.");
@@ -739,7 +857,8 @@ function Billing({ user, me, toast, onChanged }) {
             </Button>
           </div>}
 
-          {canRefundIt && <div className="rounded-xl p-3" style={{ background: C.surfaceAlt }}>
+          {canRefundIt && <div ref={refundCard} tabIndex={-1} className="rounded-xl p-3" data-refund-card
+            style={{ background: C.surfaceAlt, outline: flash ? `3px solid ${C.amber}` : "none", outlineOffset: 2, transition: "outline-color .2s" }}>
             <p className="text-xs font-bold mb-2" style={{ color: C.text }}>استرداد مبلغ</p>
             <p className="text-[11px] leading-6 mb-2" style={{ color: C.textFaint }}>
               يحرّك مالاً فعلاً ويصدر إشعاراً دائناً بترقيم رسمي. اتركه فارغاً لاسترداد كامل.
@@ -767,7 +886,19 @@ function Billing({ user, me, toast, onChanged }) {
         open={!!pending} title={pending?.title || ""} description={pending?.description}
         confirmLabel={pending?.confirmLabel} danger={pending?.danger}
         onConfirm={() => pending.run()} onClose={() => setPending(null)}
-      />
+      >
+        {pending?.cancel && (
+          <div className="rounded-xl px-3 py-2.5 mb-3 text-xs leading-6" role="note" data-cancel-refund-note
+            style={{ background: C.amberSoft, color: C.amber, border: `1px solid ${C.amber}` }}>
+            <b>الإلغاء لا يُعيد مالاً.</b> لاسترداد المبلغ استخدم «استرداد مبلغ» — فعلٌ منفصل يحرّك مالاً ويُصدر إشعاراً دائناً.
+            {canRefundIt && (
+              <div className="mt-2">
+                <Button size="sm" variant="ghost" onClick={goRefund}>الانتقال إلى «استرداد مبلغ»</Button>
+              </div>
+            )}
+          </div>
+        )}
+      </ConfirmPrompt>
     </div>
   );
 }
@@ -875,7 +1006,80 @@ function EditUser({ u, toast, onSaved }) {
       </Field>
       <ErrorBar error={err} />
       <div><Button onClick={save} busy={busy}>حفظ التعديلات</Button></div>
+      <SetPassword u={u} />
     </div>
+  );
+}
+
+/* ============================================================
+   تعيين كلمة مرور العميل — KANAF-ORD-0023 ب-3
+   بخطوة واحدة، تسري فوراً، ولا يُطلب من العميل تغييرها. الحقل للكتابة فقط:
+   فارغ عند فتح الصفحة، ويُفرَّغ بعد الحفظ، والخادم لا يُعيدها في أي ردّ.
+   «ولّد كلمة قوية» يملأ الحقل أمام المسؤول وحده — لا شيء يُرسل قبل «تعيين».
+   ============================================================ */
+function strongPassword() {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const out = []; const r = new Uint32Array(20); crypto.getRandomValues(r);
+  for (const n of r) out.push(A[n % A.length]);
+  return out.join("").replace(/(.{5})(?=.)/g, "$1-");
+}
+
+function SetPassword({ u }) {
+  const [pw, setPw] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(null);
+  const submit = async () => {
+    if (!pw) { setErr("اكتب كلمة المرور أو ولّد واحدة."); return; }
+    setBusy(true); setErr(""); setDone(null);
+    try {
+      const r = await api.setUserPassword(u.id, pw);
+      setPw(""); setShow(false);
+      setDone(r);
+    } catch (e) { setErr(e?.arabic || "تعذّر التعيين."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="mt-6 pt-4 grid gap-3" style={{ borderTop: `1px solid ${C.line}` }} data-set-password>
+      <div>
+        <h4 className="text-xs font-bold flex items-center gap-1.5" style={{ color: C.text }}><KeyRound size={13} /> كلمة المرور</h4>
+        <p className="text-[11px] leading-6 mt-1" style={{ color: C.textFaint }}>
+          تكتبها هنا فتسري فوراً، وتُنهى جلسات العميل المفتوحة كلها، ويصله بريد بأن الدعم غيّرها — بلا الكلمة.
+          لا يُطلب منه تغييرها، وله ذلك من حسابه. القاعدة قاعدة العميل نفسها: ثمانية أحرف على الأقل، وليست شائعة.
+          ولا تُعرض بعد الحفظ في أي شاشة.
+        </p>
+      </div>
+      <Field label="كلمة المرور الجديدة">
+        <div className="flex gap-2 items-stretch flex-wrap">
+          <div className="flex-1" style={{ minWidth: 220 }}>
+            <Input type={show ? "text" : "password"} value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); }}
+              autoComplete="new-password" name="member-new-password" dir="ltr" spellCheck={false} aria-describedby="pw-hint" />
+          </div>
+          <button type="button" onClick={() => setShow((x) => !x)} aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+            className="kt-act inline-flex items-center justify-center rounded-xl" style={{ minWidth: 44, minHeight: 44, background: C.surfaceAlt, color: C.textMuted }}>
+            {show ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+          <Button variant="ghost" onClick={() => { setPw(strongPassword()); setShow(true); setErr(""); }}><Wand2 size={13} /> ولّد كلمة قوية</Button>
+        </div>
+        <p id="pw-hint" className="text-[11px] mt-1" style={{ color: C.textFaint }}>تُرسل إلى الخادم بالضغط على «تعيين» وحده.</p>
+      </Field>
+      <ErrorBar error={err} />
+      {done && (
+        <div role="status" className="rounded-xl px-3 py-2.5 text-xs leading-6 flex items-start justify-between gap-2" data-password-result
+          style={{ background: done.email === "sent" ? C.greenSoft : C.amberSoft, color: done.email === "sent" ? C.green : C.amber }}>
+          <span>
+            <b>عُيّنت كلمة المرور وسرت الآن.</b> أُنهيت {done.sessionsRevoked} جلسة مفتوحة.{" "}
+            {done.email === "sent"
+              ? "وأُرسل إلى العميل بريد بأن الدعم غيّرها (بلا الكلمة)."
+              : <>لكن <b>لم يصل بريد الإخطار إلى العميل</b>{done.emailError === "mail_not_configured" ? " — البريد غير مضبوط على الخادم" : ""}. التغيير سارٍ، وسُجّل الفشل؛ أبلغ العميل بنفسك.</>}
+          </span>
+          <button type="button" onClick={() => setDone(null)} aria-label="إغلاق الرسالة" className="inline-flex items-center justify-center rounded-xl"
+            style={{ minWidth: 44, minHeight: 44 }}><X size={14} /></button>
+        </div>
+      )}
+      <div><Button onClick={submit} busy={busy}><KeyRound size={13} /> تعيين كلمة المرور</Button></div>
+    </section>
   );
 }
 

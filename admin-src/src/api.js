@@ -93,6 +93,8 @@ export const api = {
   getUser: (id) => req(`/users/${id}`),
   /* KANAF-ORD-0013 §4.3 — تعديل الملف يُسجَّل بالقيمتين، والسبب تلقائي من الخادم (ملحق القرار 1) */
   editUserProfile: (id, body) => req(`/users/${id}/profile`, { method: "PATCH", body }),
+  /* KANAF-ORD-0023 ب-3: للكتابة فقط — الردّ لا يحمل الكلمة. */
+  setUserPassword: (id, password) => req(`/users/${id}/password`, { method: "POST", body: { password } }),
   setUserAvatar: (id, file) => req(`/users/${id}/avatar`, { method: "PUT", raw: file }),
   deleteUserAvatar: (id) => req(`/users/${id}/avatar`, { method: "DELETE" }),
   editUserSubscription: (id, body) => req(`/users/${id}/subscription`, { method: "PATCH", body }),

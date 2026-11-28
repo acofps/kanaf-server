@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Download, ChevronDown, ChevronLeft } from "lucide-react";
 import { api } from "../api.js";
 import { useQueryState } from "../router.js";
-import { UserLink } from "./Users.jsx";
+import { UserLink, Actor } from "./Users.jsx";
 import { C, can, fmtDateTime } from "../theme.js";
 import {
   Card, PageTitle, Button, Badge, Field, Select, Input, Spinner, Empty,
@@ -156,7 +156,8 @@ export default function AuditLog({ me, toast }) {
                 <React.Fragment key={r.id}>
                   <tr>
                     <Td dir="ltr">{fmtDateTime(r.created_at)}</Td>
-                    <Td className="font-bold">{r.admin_name || "—"}</Td>
+                    {/* KANAF-ORD-0023 ب-5: الفاعل بالاسم والبريد في عموده (كان البريد في التفاصيل المطويّة وحدها). */}
+                    <Td><Actor id={r.admin_user_id} name={r.admin_name} email={r.admin_email} /></Td>
                     <Td>
                       <Badge color={HIGH_STAKES.has(r.action) ? "amber" : "textMuted"}>
                         {ACTION_LABEL[r.action] || r.action}

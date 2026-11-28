@@ -737,7 +737,7 @@ adminRouter.get(
   async (req, res) => {
     try {
       const { rows } = await query(
-        `SELECT al.id, al.admin_user_id, au.name AS admin_name, al.action,
+        `SELECT al.id, al.admin_user_id, au.name AS admin_name, au.email AS admin_email, al.action,
                 al.entity, al.entity_id, al.old_value, al.new_value,
                 al.reason, al.metadata, al.created_at
            FROM admin_action_log al
@@ -1015,7 +1015,7 @@ adminRouter.get("/audit-log", requireAdminAuth, requirePermission("audit_log:vie
     const limitP = next(pageSize);
     const offsetP = next(offset);
     const { rows } = await query(
-      `SELECT al.id, al.created_at, al.action, al.entity, al.entity_id,
+      `SELECT al.id, al.created_at, al.action, al.entity, al.entity_id, al.admin_user_id,
               al.target_user_id, al.old_value, al.new_value, al.reason,
               al.metadata, al.ip_address,
               au.name AS admin_name, au.email AS admin_email, tu.name AS target_user_name

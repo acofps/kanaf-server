@@ -100,6 +100,17 @@ const RENEWAL_STOPPED = `أهلاً {{name}}،
 
 فريق تنفس بحرية`;
 
+/* KANAF-ORD-0023 ب-3: إخطار العميل بأن الدعم عيّن كلمة مروره — بلا الكلمة نفسها ولا أي جزء منها. */
+const PASSWORD_SET_BY_SUPPORT = `أهلاً {{name}}،
+
+غيّر فريق الدعم كلمة مرور حسابك في تنفس بحرية بطلبٍ منك، وأُنهيت جلساتك المفتوحة على كل الأجهزة.
+
+ادخل بكلمة المرور التي أبلغك بها الدعم، وتقدر تغيّرها متى شئت من صفحتك في التطبيق.
+
+إذا ما طلبت هذا، راسلنا فوراً بالرد على هذه الرسالة.
+
+فريق تنفس بحرية`;
+
 /** السجلّ. audience: member (عضو) أو staff (موظف). push/in_app يستعملان subject عنواناً وbody نصاً. */
 export const MESSAGES = {
   email_verification: { label: "كود التحقق من البريد", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "كود التحقق — تنفس بحرية", body: VERIFY, vars: ["name", "code", "minutes"], must: ["code"], sample: { name: "سارة", code: "482913", minutes: 10 } },
@@ -111,6 +122,7 @@ export const MESSAGES = {
   renewal_notice: { label: "إشعار قبل التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تجديد اشتراكك قريباً — تنفس بحرية", body: RENEWAL_NOTICE, vars: ["name", "plan", "date", "amount", "card_last4"], must: ["date", "amount"], sample: { name: "سارة", plan: "الباقة الشهرية", date: "2026-12-20", amount: "29.00 ر.س", card_last4: "4242" } },
   renewal_succeeded: { label: "تمّ التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تجدّد اشتراكك — تنفس بحرية", body: RENEWAL_SUCCEEDED, vars: ["name", "plan", "date", "amount", "invoice_number"], must: ["invoice_number"], sample: { name: "سارة", plan: "الباقة الشهرية", date: "2027-01-20", amount: "29.00 ر.س", invoice_number: "TNFS-INV-000042" } },
   renewal_failed: { label: "فشل التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "تعذّر تجديد اشتراكك — تنفس بحرية", body: RENEWAL_FAILED, vars: ["name", "plan", "card_last4", "next_attempt"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية", card_last4: "4242", next_attempt: "2026-12-22" } },
+  password_set_by_support: { label: "تغيير كلمة المرور من الدعم", audience: "member", allowed: ["email"], required: ["email"], defaults: ["email"], subject: "تغيّرت كلمة مرور حسابك — تنفس بحرية", body: PASSWORD_SET_BY_SUPPORT, vars: ["name"], must: [], sample: { name: "سارة" } },
   renewal_stopped: { label: "توقّف التجديد التلقائي", audience: "member", allowed: ["email", "in_app", "push", "whatsapp", "sms"], required: ["email"], defaults: ["email", "in_app"], subject: "توقّف التجديد التلقائي — تنفس بحرية", body: RENEWAL_STOPPED, vars: ["name", "plan"], must: [], sample: { name: "سارة", plan: "الباقة الشهرية" } },
 };
 

@@ -26,7 +26,7 @@ import {
    ============================================================ */
 
 const sar = (v) => `${Number(v ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ر.س`;
-const STATUS = { paid: "مدفوعة", pending: "معلّقة", failed: "فاشلة", refunded: "مستردة", all: "كل الحالات" };
+export const STATUS = { paid: "مدفوعة", pending: "معلّقة", failed: "فاشلة", refunded: "مستردة", all: "كل الحالات" };
 
 export default function Invoices({ me, toast, route = [] }) {
   const tab = route[0] === "credit" ? "credit" : "invoices"; // ORD-0013 §3.1: /invoices و /invoices/credit
@@ -170,18 +170,20 @@ function SummaryHeader({ s, tab, values, kind }) {
   );
 }
 
-function DocActions({ pdfUrl, label }) {
+/* يُستورد في صفحة المستخدم (تبويب «الاشتراك») — KANAF-ORD-0023 ب-6: القائم نفسه لا نظير له.
+   minHeight: 36 في جدول الفواتير كما كان، و44 حيث يُطلب لمس 44. */
+export function DocActions({ pdfUrl, label, minHeight = 36 }) {
   return (
     <div className="flex gap-1.5 justify-end">
       {/* معاينة: الملف نفسه للقراءة في المتصفّح (inline)، خلف جلسة الإدارة كالتنزيل */}
       <a href={pdfUrl} target="_blank" rel="noreferrer" aria-label={`معاينة ${label}`}
         className="kt-act inline-flex items-center gap-1.5 rounded-xl font-bold px-3 text-xs"
-        style={{ minHeight: 36, background: C.tealSoft, color: C.teal }} data-preview>
+        style={{ minHeight, background: C.tealSoft, color: C.teal }} data-preview>
         <Eye size={13} aria-hidden="true" /> معاينة
       </a>
       <a href={`${pdfUrl}?download=1`} aria-label={`تنزيل ${label} PDF`}
         className="kt-act inline-flex items-center gap-1.5 rounded-xl font-bold px-3 text-xs"
-        style={{ minHeight: 36, background: C.surfaceAlt, color: C.textMuted }} data-download>
+        style={{ minHeight, background: C.surfaceAlt, color: C.textMuted }} data-download>
         <Download size={13} aria-hidden="true" /> PDF
       </a>
     </div>

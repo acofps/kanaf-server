@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Send, Ban, Eye, Plus, RefreshCw, Clock, AlertTriangle } from "lucide-react";
+import { Send, Ban, Eye, Plus, RefreshCw, Clock, AlertTriangle, CheckCircle2, XCircle, X } from "lucide-react";
 import { api } from "../api.js";
 import { can } from "../theme.js";
 import {
@@ -345,9 +345,12 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
   const [counting, setCounting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  /* KANAF-ORD-0023 ب-4: نتيجة الإرسال تبقى ظاهرة فوق الزرّ حتى تُغلق. */
+  const [result, setResult] = useState(null);
 
   useEffect(() => {
     if (!open) return;
+    setResult(null);
     setTitle(""); setBody(""); setAudience(fixedUserIds ? "selected_users" : initialAudience); setAccountStatus("active");
     setInactiveDays(30); setMarketing(false); setOptedOut(null);
     setUserIds(fixedUserIds ? fixedUserIds.join(",") : ""); setChannels(initialChannels); setWhen("now"); setScheduledAt("");
@@ -396,20 +399,32 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
     if (isMarketing) payload.audienceFilter = { ...(payload.audienceFilter || {}), marketing: true };
     if (fixedUserIds) { payload.audience = "selected_users"; payload.audienceFilter = { ...(payload.audienceFilter || {}), userIds: fixedUserIds }; payload.expectedCount = fixedUserIds.length; }
 
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setResult(null);
+    /* KANAF-ORD-0023 ب-4 — السبب المقيس: كان التأكيد يظهر (بعد 150–165 مللي ثانية، داخل مجال النظر، 4.5 ثانية)
+       لكنه شريط رمادي 12 بكسلاً بلون الحقول، بعيد عن الزرّ، نصّه «أُرسل 1 · فشل 0 · متجاوَز 0» لا يقول ما أُرسل
+       ولا بأي قناة، والنموذج يبقى مملوءاً كما كان فلا يتغيّر شيء حيث ينظر المسؤول. الآن: لوحة نتيجة فوق الزرّ
+       تذكر العنوان والمستلمين والقنوات، خضراء للنجاح وحمراء للفشل، تبقى حتى تُغلق، والنموذج يُفرَّغ بعد النجاح. */
+    const chLabel = channels.map((c) => CHANNEL_LABEL[c] || c).join(" و");
+    const what = `«${payload.title}»`;
     try {
       const res = await api.createCampaign(payload);
       const d = res.dispatch;
-      onDone(
-        d?.accepted
-          ? `بدأ الإرسال${d.recipients != null ? ` لـ ${d.recipients} مستلم` : ""} ويستمر في الخلفية — تابع حالته في القائمة.`
-          : d && d.skipped !== true
-          ? `أُرسل ${d.sent ?? 0} · فشل ${d.failed ?? 0} · متجاوَز ${d.skipped ?? 0}`
-          : d && d.skipped === true ? `لم تُنفَّذ: ${d.reason}`
-          : when === "schedule" ? "جُدولت الحملة." : "حُفظت كمسودة."
-      );
+      const n = d?.recipients ?? d?.total ?? res.audienceCount ?? count;
+      let r;
+      if (d?.accepted) r = { tone: "ok", head: "بدأ الإرسال", text: `${what} إلى ${n} مستلم عبر ${chLabel} — يستمر في الخلفية، وحالته في «الإشعارات والتسويق».` };
+      else if (d && d.skipped === true) r = { tone: "fail", head: "لم تُرسَل الرسالة", text: `${what}: ${d.reason || "لم تُنفَّذ"}.` };
+      else if (d) {
+        const sent = d.sent ?? 0, failed = d.failed ?? 0, skipped = d.skipped ?? 0;
+        const tally = `أُرسل ${sent} · فشل ${failed} · متجاوَز ${skipped}`;
+        r = sent > 0 && failed === 0 ? { tone: "ok", head: "أُرسلت الرسالة", text: `${what} إلى ${sent} من ${n} مستلم عبر ${chLabel}.${skipped ? ` (${tally})` : ""}` }
+          : sent > 0 ? { tone: "warn", head: "أُرسلت جزئياً", text: `${what} عبر ${chLabel}: ${tally}. التفاصيل في «الإشعارات والتسويق».` }
+          : { tone: "fail", head: "لم تُرسَل الرسالة", text: `${what} عبر ${chLabel}: ${tally}. السبب في تفاصيل الحملة في «الإشعارات والتسويق».` };
+      } else r = { tone: "ok", head: when === "schedule" ? "جُدولت الرسالة" : "حُفظت مسودة", text: `${what} إلى ${n} مستلم عبر ${chLabel}.` };
+      setResult(r);
+      if (r.tone !== "fail") { setTitle(""); setBody(""); }
+      onDone(`${r.head}: ${r.text}`);
       onClose();
-    } catch (e) { setErr(e?.arabic || "تعذّر الإنشاء."); }
+    } catch (e) { setResult({ tone: "fail", head: "لم تُرسَل الرسالة", text: e?.arabic || "تعذّر الإنشاء." }); }
     finally { setBusy(false); }
   };
 
@@ -500,6 +515,22 @@ export function Compose({ open, onClose, onDone, initialAudience = "all", back, 
         </div>
 
         <ErrorBar error={err} />
+        {result && (
+          <div role={result.tone === "fail" ? "alert" : "status"} data-send-result={result.tone}
+            className="rounded-xl px-3 py-3 flex items-start justify-between gap-2"
+            style={{
+              background: result.tone === "ok" ? C.greenSoft : result.tone === "warn" ? C.amberSoft : C.crisisSoft,
+              color: result.tone === "ok" ? C.green : result.tone === "warn" ? C.amber : C.crisis,
+              border: `1px solid ${result.tone === "ok" ? C.green : result.tone === "warn" ? C.amber : C.crisis}`,
+            }}>
+            <div className="flex items-start gap-2 text-sm leading-6">
+              {result.tone === "fail" ? <XCircle size={18} className="mt-0.5 shrink-0" /> : result.tone === "warn" ? <AlertTriangle size={18} className="mt-0.5 shrink-0" /> : <CheckCircle2 size={18} className="mt-0.5 shrink-0" />}
+              <span><b>{result.head}</b> — {result.text}</span>
+            </div>
+            <button type="button" onClick={() => setResult(null)} aria-label="إغلاق رسالة النتيجة"
+              className="inline-flex items-center justify-center rounded-xl shrink-0" style={{ minWidth: 44, minHeight: 44 }}><X size={16} /></button>
+          </div>
+        )}
         <div className="flex gap-2">
           <Button onClick={submit} busy={busy} disabled={count === 0}>
             {when === "now" ? "إرسال الآن" : when === "schedule" ? "جدولة" : "حفظ مسودة"}

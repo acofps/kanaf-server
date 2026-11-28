@@ -104,6 +104,16 @@ try {
   const leaks = [];
   for (const o of bad) { const x = await call("GET", "/api/public/landing", { origin: o }); if (x.headers.get("access-control-allow-origin") || x.status !== 200) leaks.push(`${o}→${x.status}/${x.headers.get("access-control-allow-origin")}`); }
   ok(`P7 أصل غير مسموح (${bad.length} حالات، منها أصل اللوحة نفسه): بلا Access-Control-Allow-Origin`, leaks.length === 0, leaks.join(" "));
+  /* KANAF-ORD-0023 ملحق §1: التطبيق يقرأ /legal وحدها */
+  r = await call("GET", "/api/public/legal", { origin: "https://app.tanfs.net" });
+  r2 = await call("GET", "/api/public/landing", { origin: "https://app.tanfs.net" });
+  ok("P7b 🔴 app.tanfs.net يُقبل على legal (Access-Control-Allow-Origin بأصله، بلا credentials، Vary: Origin)",
+    r.status === 200 && r.headers.get("access-control-allow-origin") === "https://app.tanfs.net" && !r.headers.get("access-control-allow-credentials") && /origin/i.test(r.headers.get("vary") || ""), `${r.status} ${r.headers.get("access-control-allow-origin")}`);
+  ok("P7c 🔴 ويُرفض على landing (بلا Access-Control-Allow-Origin)", r2.status === 200 && !r2.headers.get("access-control-allow-origin"), String(r2.headers.get("access-control-allow-origin")));
+  const appLike = ["http://app.tanfs.net", "https://evil.app.tanfs.net", "https://app.tanfs.net.evil.example", "https://app.tanfs.net:8443"];
+  const appLeaks = [];
+  for (const o of appLike) { const x = await call("GET", "/api/public/legal", { origin: o }); if (x.headers.get("access-control-allow-origin")) appLeaks.push(`${o}→${x.headers.get("access-control-allow-origin")}`); }
+  ok(`P7d أشباه أصل التطبيق (${appLike.length}) لا تُقبل على legal`, appLeaks.length === 0, appLeaks.join(" "));
   r = await call("GET", "/api/public/landing");
   ok("P8 لا `*` في أي ردّ", r.headers.get("access-control-allow-origin") !== "*" && !r.raw.includes("Access-Control"), r.headers.get("access-control-allow-origin"));
   const methods = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
