@@ -13,7 +13,7 @@ export const PANEL_SHARED = ["billing/discounts.js", "payments/refund.js", "noti
   "notifications/push.js", "integrations/crypto.js", "invoicing/slot.js", "auth/tokens.js", "billing/autorenew.js"];
 /* الرموز المبنية بقالب، بقيمها: admin/user-edit (أعلام منطقية)، admin/content (وقتا الجدولة)، admin/sent-messages (الفلاتر). */
 export const DYNAMIC = {
-  "admin/user-edit.js": ["invalid_remindersOn", "invalid_marketingOptOut"],
+  "admin/user-edit.js": ["invalid_remindersOn", "invalid_marketingOptOut", "member_password_too_short", "member_password_too_long", "member_password_too_common"],
   "admin/content.js": ["invalid_publish_at", "invalid_unpublish_at"],
   "admin/sent-messages.js": ["invalid_source", "invalid_channel", "invalid_status"],
 };

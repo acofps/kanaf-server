@@ -22,6 +22,7 @@ export const AUTO_REASONS = [
   ["PATCH",  "/users/:id/profile",              "تعديل ملف العميل من اللوحة"],
   ["PUT",    "/users/:id/avatar",               "تغيير صورة العميل من اللوحة"],
   ["DELETE", "/users/:id/avatar",               "حذف صورة العميل من اللوحة"],
+  ["POST",   "/users/:id/password",             "تعيين كلمة مرور العميل من اللوحة بطلب الدعم"],
   ["PATCH",  "/users/:id/subscription",         "تعديل اشتراك العميل يدوياً من اللوحة"],
   ["POST",   "/users/:id/subscription/cancel",  "إلغاء اشتراك العميل من اللوحة"],
   ["POST",   "/users/:id/subscription/refund",  "استرداد اشتراك العميل من اللوحة"],

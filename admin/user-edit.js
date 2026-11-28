@@ -4,7 +4,8 @@ import { requireAdminAuth, requirePermission, requireUuidParam, logAdminAction, 
 import { validateProfilePatch, writeProfilePatch, storeAvatar, isKnownTimeZone } from "../userdata/routes.js";
 import { normalizeEmail, isPlausibleEmail } from "../auth/codes.js";
 import { sendVerificationEmail } from "../auth/routes.js";
-import { revokeAllUserSessions } from "../auth/tokens.js";
+import { revokeAllUserSessions, validatePassword, hashPassword } from "../auth/tokens.js";
+import { sendSystemMessageEmail } from "../notifications/system-log.js";
 
 /* ============================================================
    تعديل ملف العميل من اللوحة — KANAF-ORD-0013 §4.3
@@ -215,6 +216,73 @@ userEditRouter.delete("/users/:id/avatar", requireAdminAuth, requirePermission("
     }
     res.json({ ok: true, deleted: rows.length });
   } catch (err) { return fail(res, err, "admin/users:avatar-delete", req); }
+});
+
+/* ------------------------------------------------------------
+   POST /admin/users/:id/password  { password, reason }   — KANAF-ORD-0023 ب-3
+
+   تكتب الإدارة كلمة مرور العميل بخطوة واحدة، فتسري فوراً، ولا يُطلب منه
+   تغييرها (له أن يغيّرها من حسابه). الحرّاس:
+   1. users:edit وحدها — الصلاحية القائمة لتعديل المستخدمين، بلا توسيع.
+   2. سطر في سجلّ الإجراءات: الفاعل والعميل والوقت — بلا الكلمة ولا بصمتها.
+   3. تُنهى جلسات العميل كلها (revokeAllUserSessions، كإعادة الضبط والتغيير).
+   4. قاعدة القوة هي قاعدة المستخدم نفسها (validatePassword) لا أضعف.
+   5. التشفير هو نفسه (hashPassword = bcrypt بجولات المستخدم).
+   6. للكتابة فقط: لا تُعاد في أي ردّ ولا تُقرأ بعد الحفظ.
+   7. بريد للعميل عبر سجلّ الرسائل (password_set_by_support) بلا الكلمة.
+      وفشله لا يُسقط التغيير: يُسجَّل في السطر نفسه ويُبلَّغ المسؤول في الردّ.
+
+   رموز الرفض خاصة بهذا المسار (member_password_*): نصّ password_too_short
+   في اللوحة يقول قاعدة الإدارة (15 حرفاً)، وقاعدة العميل 8 — فلا يُخلط بينهما.
+   ------------------------------------------------------------ */
+userEditRouter.post("/users/:id/password", requireAdminAuth, requirePermission("users:edit"), requireUuidParam("id"), async (req, res) => {
+  const reason = reasonOf(req);
+  if (!reason) return res.status(400).json({ error: "reason_required" });
+  const password = req.body?.password;
+  const check = validatePassword(password);
+  if (!check.ok) {
+    return res.status(400).json({
+      error: `member_password_${String(check.error).replace(/^password_/, "")}`,
+      ...(check.minChars ? { minChars: check.minChars } : {}),
+      ...(check.maxBytes ? { maxBytes: check.maxBytes } : {}),
+    });
+  }
+  try {
+    const { rows } = await query(`SELECT id, name, email FROM users WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: "not_found" });
+
+    const passwordHash = await hashPassword(password);
+    const revoked = await withTransaction(async (client) => {
+      await client.query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [passwordHash, user.id]);
+      // كمسار إعادة الضبط: من قُفل بمحاولات فاشلة يدخل بالكلمة الجديدة فوراً.
+      await client.query(
+        `UPDATE user_auth_state SET failed_login_count = 0, locked_until = NULL, updated_at = now() WHERE user_id = $1`, [user.id]);
+      const r = await client.query(`UPDATE user_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [user.id]);
+      return r.rowCount;
+    });
+
+    /* البريد بعد أن سرى التغيير. فشله لا يُرجِعه. */
+    let email = "sent", emailError = null;
+    try {
+      const r = await sendSystemMessageEmail("password_set_by_support", user.email, { name: user.name || "" });
+      if (r && r.dev) { email = "failed"; emailError = "mail_not_configured"; }
+    } catch (err) {
+      email = "failed"; emailError = String(err?.code || err?.responseCode || "send_error").slice(0, 60);
+      console.error("[admin/users:password] تعذّر إرسال بريد الإخطار:", emailError);
+    }
+
+    await logAdminAction({
+      adminUserId: req.admin.id, targetUserId: user.id, action: "user_password_set_by_admin",
+      entity: "user", entityId: user.id,
+      oldValue: null, newValue: { password: "changed" },
+      reason, metadata: { sessions_revoked: revoked, notify_email: email, ...(emailError ? { notify_error: emailError } : {}) },
+      ipAddress: req.ip,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, sessionsRevoked: revoked, email, ...(emailError ? { emailError } : {}) });
+  } catch (err) { return fail(res, err, "admin/users:password-set", req); }
 });
 
 /* ------------------------------------------------------------

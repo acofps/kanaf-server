@@ -122,7 +122,7 @@ export default function App() {
 
   const toast = useCallback((m) => {
     setToastMsg(m);
-    window.setTimeout(() => setToastMsg((cur) => (cur === m ? "" : cur)), 4500);
+    window.setTimeout(() => setToastMsg((cur) => (cur === m ? "" : cur)), 6000);
   }, []);
 
   /* استعادة الجلسة من الكوكي — لا رمز في التخزين المحلي. */
@@ -289,7 +289,7 @@ export default function App() {
       </div>
 
       {toastMsg && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 rounded-xl px-4 py-3 text-xs font-bold shadow-lg"
+        <div role="status" className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 rounded-xl px-4 py-3 text-xs font-bold shadow-lg"
           style={{ background: C.surfaceAlt, color: C.text, border: `1px solid ${C.line}` }}>
           {toastMsg}
         </div>

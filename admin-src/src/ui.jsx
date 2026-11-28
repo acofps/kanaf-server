@@ -209,7 +209,7 @@ export function Screen({ title, back, backLabel = "رجوع", children, actions 
    يبقى تأكيد بنقرة واحدة للأفعال التي كانت تمرّ بالمطالبة — لا كتابة
    فيه — حتى لا تُنفَّذ نقرةٌ خاطئة استرداداً أو حذفاً.
    ------------------------------------------------------------ */
-export function ConfirmPrompt({ open, title, description, confirmLabel = "تأكيد", danger, onConfirm, onClose }) {
+export function ConfirmPrompt({ open, title, description, confirmLabel = "تأكيد", danger, onConfirm, onClose, children }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -225,6 +225,7 @@ export function ConfirmPrompt({ open, title, description, confirmLabel = "تأك
   return (
     <Modal open={open} onClose={onClose} title={title}>
       {description && <p className="text-xs leading-6 mb-3" style={{ color: C.textMuted }}>{description}</p>}
+      {children}
       <ErrorBar error={err} />
       <div className="flex gap-2 mt-4">
         <Button onClick={submit} busy={busy} variant={danger ? "danger" : "primary"}>{confirmLabel}</Button>
